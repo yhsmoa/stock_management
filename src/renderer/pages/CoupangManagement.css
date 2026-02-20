@@ -1,0 +1,298 @@
+.coupang-management-container {
+  padding: 20px;
+  max-width: 1400px;
+  margin: 0 auto;
+}
+
+.coupang-management-title {
+  font-size: 24px;
+  font-weight: bold;
+  margin-bottom: 20px;
+  color: #333;
+}
+
+/* Action Buttons Top */
+.coupang-action-buttons-top {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+  margin-bottom: 20px;
+}
+
+/* Search Section */
+.coupang-search-section {
+  background: white;
+  border-radius: 8px;
+  padding: 20px;
+  margin-bottom: 20px;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
+}
+
+/* Filter Buttons */
+.coupang-filter-buttons {
+  display: flex;
+  gap: 10px;
+}
+
+.coupang-filter-btn {
+  padding: 8px 20px;
+  border: 1px solid #ddd;
+  background: white;
+  border-radius: 20px;
+  cursor: pointer;
+  transition: all 0.3s;
+  font-size: 14px;
+}
+
+.coupang-filter-btn:hover {
+  background: #f5f5f5;
+}
+
+.coupang-filter-btn.active {
+  background: #4CAF50;
+  color: white;
+  border-color: #4CAF50;
+}
+
+/* Search Form */
+.coupang-search-form {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex: 1;
+}
+
+.coupang-search-select {
+  padding: 8px 12px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  font-size: 14px;
+  background: white;
+  cursor: pointer;
+}
+
+.coupang-search-input {
+  flex: 1;
+  padding: 8px 12px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  font-size: 14px;
+}
+
+.coupang-search-input:focus {
+  outline: none;
+  border-color: #4CAF50;
+}
+
+/* Buttons */
+.coupang-btn {
+  padding: 10px 20px;
+  border: none;
+  border-radius: 4px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.3s;
+}
+
+.coupang-btn-search {
+  background-color: #4CAF50;
+  color: white;
+}
+
+.coupang-btn-search:hover {
+  background-color: #45a049;
+}
+
+.coupang-btn-upload {
+  background-color: #4CAF50;
+  color: white;
+  display: inline-block;
+}
+
+.coupang-btn-upload:hover {
+  background-color: #45a049;
+}
+
+.coupang-btn-export {
+  background-color: #4CAF50;
+  color: white;
+}
+
+.coupang-btn-export:hover {
+  background-color: #45a049;
+}
+
+/* 분류 일괄 변경 버튼 — 체크박스 선택 시에만 활성화 */
+.coupang-btn-classify {
+  background-color: #6366f1;
+  color: white;
+}
+
+.coupang-btn-classify:hover:not(:disabled) {
+  background-color: #4f46e5;
+}
+
+.coupang-btn-classify:disabled {
+  background-color: #c7d2fe;
+  color: #a5b4fc;
+  cursor: not-allowed;
+}
+
+/* 엑셀 분류 업로드 버튼 — 틸 컬러로 분류 버튼(인디고)과 구분 */
+.coupang-btn-excel-classify {
+  background-color: #0891b2;
+  color: white;
+  display: inline-block;
+}
+
+.coupang-btn-excel-classify:hover {
+  background-color: #0e7490;
+}
+
+/* 버튼 구분선 */
+.coupang-btn-divider {
+  width: 1px;
+  background-color: #d1d5db;
+  align-self: stretch;
+  margin: 0 4px;
+}
+
+/* Table Section */
+.coupang-table-section {
+  background: white;
+  border-radius: 8px;
+  padding: 20px;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.coupang-table-wrapper {
+  overflow-x: auto;
+}
+
+.coupang-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.coupang-table thead {
+  background-color: #f5f5f5;
+}
+
+.coupang-table th {
+  padding: 12px;
+  text-align: left;
+  font-weight: 600;
+  color: #333;
+  border-bottom: 2px solid #ddd;
+}
+
+.coupang-table td {
+  padding: 12px;
+  border-bottom: 1px solid #eee;
+}
+
+.coupang-table tbody tr:hover {
+  background-color: #f9f9f9;
+}
+
+.coupang-table-empty {
+  text-align: center;
+  color: #999;
+  padding: 40px !important;
+}
+
+.coupang-table-actions {
+  display: flex;
+  gap: 5px;
+}
+
+.coupang-btn-small {
+  padding: 5px 10px;
+  font-size: 12px;
+  border: none;
+  border-radius: 3px;
+  cursor: pointer;
+  transition: all 0.3s;
+}
+
+.coupang-btn-edit {
+  background-color: #4CAF50;
+  color: white;
+}
+
+.coupang-btn-edit:hover {
+  background-color: #45a049;
+}
+
+.coupang-btn-delete {
+  background-color: #f44336;
+  color: white;
+}
+
+.coupang-btn-delete:hover {
+  background-color: #da190b;
+}
+
+.coupang-loading {
+  text-align: center;
+  padding: 40px;
+  color: #999;
+}
+
+/* Pagination */
+.coupang-pagination {
+  margin-top: 20px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding-top: 20px;
+  border-top: 1px solid #eee;
+}
+
+.coupang-pagination-info {
+  color: #666;
+  font-size: 14px;
+}
+
+.coupang-pagination-controls {
+  display: flex;
+  gap: 5px;
+  align-items: center;
+}
+
+.coupang-pagination-btn {
+  padding: 8px 12px;
+  border: 1px solid #ddd;
+  background: white;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 14px;
+  transition: all 0.3s;
+  min-width: 40px;
+}
+
+.coupang-pagination-btn:hover:not(:disabled) {
+  background: #f5f5f5;
+  border-color: #4CAF50;
+}
+
+.coupang-pagination-btn.active {
+  background: #4CAF50;
+  color: white;
+  border-color: #4CAF50;
+}
+
+.coupang-pagination-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.coupang-pagination-ellipsis {
+  padding: 8px 4px;
+  color: #999;
+  font-size: 14px;
+}

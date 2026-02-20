@@ -1,0 +1,62 @@
+{
+  "name": "immong-stocks",
+  "version": "1.0.0",
+  "description": "Stock Management System with Electron",
+  "main": "dist-electron/main.js",
+  "scripts": {
+    "dev": "vite --host",
+    "dev:electron": "node scripts/dev.js",
+    "dev:vite": "vite",
+    "build": "vite build",
+    "build:electron": "vite build && electron-builder",
+    "preview": "vite preview"
+  },
+  "keywords": [
+    "electron",
+    "react",
+    "stock-management"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@hookform/resolvers": "^5.2.2",
+    "@supabase/supabase-js": "^2.39.3",
+    "exceljs": "^4.4.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "react-hook-form": "^7.71.1",
+    "react-router-dom": "^6.21.3",
+    "xlsx": "^0.18.5",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@types/jsbarcode": "^3.11.4",
+    "@types/react": "^18.2.48",
+    "@types/react-dom": "^18.2.18",
+    "@vitejs/plugin-react": "^4.2.1",
+    "concurrently": "^8.2.2",
+    "electron": "^28.2.0",
+    "electron-builder": "^24.9.1",
+    "typescript": "^5.3.3",
+    "vite": "^5.0.12",
+    "vite-plugin-electron": "^0.28.2",
+    "vite-plugin-electron-renderer": "^0.14.5",
+    "wait-on": "^7.2.0"
+  },
+  "build": {
+    "appId": "com.immong.stocks",
+    "productName": "Stock Management",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "dist-electron/**/*"
+    ],
+    "win": {
+      "target": [
+        "nsis"
+      ]
+    }
+  }
+}
