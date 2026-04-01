@@ -7,9 +7,11 @@ import Register from './pages/Register'
 import Index from './pages/Index'
 import Inventory from './pages/Inventory'
 import InManagement from './pages/InManagement'
-import InOut from './pages/InOut'
+import ShipmentList from './pages/ShipmentList'
+import RocketShipment from './pages/RocketShipment'
 import Export from './pages/Export'
 import CoupangManagement from './pages/CoupangManagement'
+import PurchaseManagement from './pages/PurchaseManagement'
 
 const App: React.FC = () => {
   return (
@@ -29,9 +31,11 @@ const App: React.FC = () => {
         >
           <Route path="/" element={<Index />} />
           <Route path="/coupang" element={<CoupangManagement />} />
+          <Route path="/purchase-management" element={<PurchaseManagement />} />
           <Route path="/inventory" element={<Inventory />} />
           <Route path="/in-management" element={<InManagement />} />
-          <Route path="/inout" element={<InOut />} />
+          <Route path="/shipment-list" element={<ShipmentList />} />
+          <Route path="/rocket-shipment" element={<RocketShipment />} />
           <Route path="/coupang-return" element={<Export />} />
         </Route>
 

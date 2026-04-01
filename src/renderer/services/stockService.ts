@@ -6,21 +6,37 @@ import type { Stock, StockSearchFilters } from '../types/stock'
  */
 export class StockService {
   /**
-   * 모든 재고 조회
+   * 모든 재고 조회 (페이지네이션 루프 — 1000행 제한 해소)
    */
   static async getAllStocks(): Promise<Stock[]> {
     try {
-      const { data, error } = await supabase
-        .from('si_stocks')
-        .select('*')
-        .order('location', { ascending: true })
+      let allData: Stock[] = []
+      let from = 0
+      const batchSize = 1000
+      let hasMore = true
 
-      if (error) {
-        console.error('재고 조회 오류:', error)
-        throw error
+      while (hasMore) {
+        const { data, error } = await supabase
+          .from('si_stocks')
+          .select('*')
+          .order('location', { ascending: true })
+          .range(from, from + batchSize - 1)
+
+        if (error) {
+          console.error('재고 조회 오류:', error)
+          throw error
+        }
+
+        if (data && data.length > 0) {
+          allData = [...allData, ...data]
+          from += batchSize
+          if (data.length < batchSize) hasMore = false
+        } else {
+          hasMore = false
+        }
       }
 
-      return data || []
+      return allData
     } catch (error) {
       console.error('재고 조회 실패:', error)
       return []
@@ -28,47 +44,62 @@ export class StockService {
   }
 
   /**
-   * 필터링된 재고 조회
+   * 필터링된 재고 조회 (페이지네이션 루프 — 1000행 제한 해소)
    */
   static async getFilteredStocks(filters: Partial<StockSearchFilters>): Promise<Stock[]> {
     try {
-      let query = supabase.from('si_stocks').select('*')
+      let allData: Stock[] = []
+      let from = 0
+      const batchSize = 1000
+      let hasMore = true
 
-      // 키워드 검색 (바코드 또는 상품명)
-      if (filters.searchKeyword) {
-        if (filters.searchType === 'barcode') {
-          query = query.ilike('barcode', `%${filters.searchKeyword}%`)
+      while (hasMore) {
+        let query = supabase.from('si_stocks').select('*')
+
+        // 키워드 검색 (바코드 또는 상품명)
+        if (filters.searchKeyword) {
+          if (filters.searchType === 'barcode') {
+            query = query.ilike('barcode', `%${filters.searchKeyword}%`)
+          } else {
+            query = query.ilike('item_name', `%${filters.searchKeyword}%`)
+          }
+        }
+
+        // 로케이션 필터
+        if (filters.location) {
+          query = query.ilike('location', `%${filters.location}%`)
+        }
+
+        // 시즌 필터
+        if (filters.season) {
+          query = query.ilike('season', `%${filters.season}%`)
+        }
+
+        // 비고 필터
+        if (filters.note) {
+          query = query.ilike('note', `%${filters.note}%`)
+        }
+
+        query = query.order('location', { ascending: true })
+          .range(from, from + batchSize - 1)
+
+        const { data, error } = await query
+
+        if (error) {
+          console.error('필터링된 재고 조회 오류:', error)
+          throw error
+        }
+
+        if (data && data.length > 0) {
+          allData = [...allData, ...data]
+          from += batchSize
+          if (data.length < batchSize) hasMore = false
         } else {
-          query = query.ilike('item_name', `%${filters.searchKeyword}%`)
+          hasMore = false
         }
       }
 
-      // 로케이션 필터
-      if (filters.location) {
-        query = query.ilike('location', `%${filters.location}%`)
-      }
-
-      // 시즌 필터
-      if (filters.season) {
-        query = query.ilike('season', `%${filters.season}%`)
-      }
-
-      // 비고 필터
-      if (filters.note) {
-        query = query.ilike('note', `%${filters.note}%`)
-      }
-
-      // 정렬
-      query = query.order('location', { ascending: true })
-
-      const { data, error } = await query
-
-      if (error) {
-        console.error('필터링된 재고 조회 오류:', error)
-        throw error
-      }
-
-      return data || []
+      return allData
     } catch (error) {
       console.error('필터링된 재고 조회 실패:', error)
       return []
@@ -316,8 +347,8 @@ export class StockService {
       // 중복 제거
       const uniqueBarcodes = Array.from(new Set(barcodes))
 
-      // 배치 크기 설정 (한 번에 너무 많이 조회하지 않도록)
-      const batchSize = 1000
+      // .in() 배치는 200건씩 — 1000건 이상이면 URL 길이 초과로 요청이 멈춤
+      const batchSize = 200
 
       for (let i = 0; i < uniqueBarcodes.length; i += batchSize) {
         const batch = uniqueBarcodes.slice(i, i + batchSize)
@@ -352,5 +383,99 @@ export class StockService {
       console.error('쿠팡 아이템 조회 실패:', error)
       return new Map()
     }
+  }
+
+  /**
+   * 사용자별 전체 재고 조회 (페이지네이션 루프)
+   */
+  static async getAllStocksByUser(userId: string): Promise<Stock[]> {
+    try {
+      let allData: Stock[] = []
+      let from = 0
+      const batchSize = 1000
+      let hasMore = true
+
+      while (hasMore) {
+        const { data, error } = await supabase
+          .from('si_stocks')
+          .select('*')
+          .eq('user_id', userId)
+          .range(from, from + batchSize - 1)
+
+        if (error) {
+          console.error('사용자별 재고 조회 오류:', error)
+          throw error
+        }
+
+        if (data && data.length > 0) {
+          allData = [...allData, ...data]
+          from += batchSize
+          if (data.length < batchSize) hasMore = false
+        } else {
+          hasMore = false
+        }
+      }
+
+      return allData
+    } catch (error) {
+      console.error('사용자별 재고 조회 실패:', error)
+      return []
+    }
+  }
+
+  /**
+   * 재고 일괄 삽입 (500건씩 배치)
+   */
+  static async batchCreateStocks(stocks: Omit<Stock, 'id'>[]): Promise<{ created: number; errors: number }> {
+    let created = 0
+    let errors = 0
+    const batchSize = 500
+
+    for (let i = 0; i < stocks.length; i += batchSize) {
+      const batch = stocks.slice(i, i + batchSize)
+      const { error } = await supabase
+        .from('si_stocks')
+        .insert(batch)
+
+      if (error) {
+        console.error(`재고 일괄 삽입 오류 (batch ${i / batchSize + 1}):`, error)
+        errors += batch.length
+      } else {
+        created += batch.length
+      }
+    }
+
+    return { created, errors }
+  }
+
+  /**
+   * 재고 수량 일괄 업데이트 (개별 update를 500건 단위로 병렬 처리)
+   */
+  static async batchUpdateStockQtys(
+    updates: { id: string; qty: number }[]
+  ): Promise<{ updated: number; errors: number }> {
+    let updated = 0
+    let errors = 0
+    const batchSize = 500
+
+    for (let i = 0; i < updates.length; i += batchSize) {
+      const batch = updates.slice(i, i + batchSize)
+      const results = await Promise.all(
+        batch.map(({ id, qty }) =>
+          supabase.from('si_stocks').update({ qty }).eq('id', id)
+        )
+      )
+
+      for (const { error } of results) {
+        if (error) {
+          console.error('재고 수량 업데이트 오류:', error)
+          errors++
+        } else {
+          updated++
+        }
+      }
+    }
+
+    return { updated, errors }
   }
 }

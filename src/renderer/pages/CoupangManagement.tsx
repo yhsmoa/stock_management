@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import * as XLSX from 'xlsx';
 import { supabase } from '../services/supabase';
+import { theme } from '../styles/theme';
 import UploadProgressModal from '../components/UploadProgressModal';
 import './CoupangManagement.css';
 
@@ -540,24 +541,70 @@ const CoupangManagement: React.FC = () => {
     event.target.value = '';
   };
 
-  // Export to Excel
-  const exportToExcel = () => {
-    const worksheetData = items.map(item => ({
-      ID: item.item_id,
-      바코드: item.barcode,
-      상품명: item.item_name,
-      옵션명: item.option_name,
-      가격: item.price,
-      정가: item.regular_price,
-      상태: item.sales_status,
-    }));
+  // Export to Excel (전체 데이터 조회 후 내보내기)
+  const exportToExcel = async () => {
+    try {
+      const userStr = localStorage.getItem('user');
+      const user = userStr ? JSON.parse(userStr) : null;
+      const userId = user?.id;
 
-    const worksheet = XLSX.utils.json_to_sheet(worksheetData);
-    const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, worksheet, '쿠팡관리');
+      if (!userId) {
+        alert('사용자 정보를 찾을 수 없습니다.');
+        return;
+      }
 
-    const fileName = `쿠팡관리_${new Date().toLocaleDateString('ko-KR').replace(/\. /g, '-').replace('.', '')}.xlsx`;
-    XLSX.writeFile(workbook, fileName);
+      // 전체 데이터를 페이지네이션 루프로 조회
+      let allData: CoupangItem[] = [];
+      let from = 0;
+      const batchSize = 1000;
+      let hasMore = true;
+
+      while (hasMore) {
+        const { data, error } = await supabase
+          .from('si_coupang_items')
+          .select('*')
+          .eq('user_id', userId)
+          .range(from, from + batchSize - 1);
+
+        if (error) {
+          console.error('엑셀 내보내기 조회 오류:', error);
+          hasMore = false;
+        } else if (data && data.length > 0) {
+          allData = [...allData, ...data];
+          from += batchSize;
+          if (data.length < batchSize) hasMore = false;
+        } else {
+          hasMore = false;
+        }
+      }
+
+      if (allData.length === 0) {
+        alert('내보낼 데이터가 없습니다.');
+        return;
+      }
+
+      const worksheetData = allData.map(item => ({
+        ID: item.item_id,
+        바코드: item.barcode,
+        상품명: item.item_name,
+        옵션명: item.option_name,
+        가격: item.price,
+        정가: item.regular_price,
+        상태: item.sales_status,
+      }));
+
+      const worksheet = XLSX.utils.json_to_sheet(worksheetData);
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, worksheet, '쿠팡관리');
+
+      const fileName = `쿠팡관리_${new Date().toLocaleDateString('ko-KR').replace(/\. /g, '-').replace('.', '')}.xlsx`;
+      XLSX.writeFile(workbook, fileName);
+
+      alert(`${allData.length}개 데이터를 내보냈습니다.`);
+    } catch (error) {
+      console.error('엑셀 내보내기 실패:', error);
+      alert('엑셀 내보내기 중 오류가 발생했습니다.');
+    }
   };
 
   // Delete item
@@ -812,10 +859,10 @@ const CoupangManagement: React.FC = () => {
                           {item.item_name || '-'}, {item.option_name || '-'}
                           {' '}
                           {item.sales_status === '판매중' && (
-                            <span style={{ color: '#16a34a', fontSize: '16px' }}>●</span>
+                            <span style={{ color: theme.colors.success, fontSize: '16px' }}>●</span>
                           )}
                           {item.sales_status === '판매중지' && (
-                            <span style={{ color: '#dc2626', fontSize: '16px' }}>●</span>
+                            <span style={{ color: theme.colors.danger, fontSize: '16px' }}>●</span>
                           )}
                         </div>
                         <div style={{ fontSize: '12px', color: '#6c757d', marginTop: '4px' }}>
@@ -954,14 +1001,14 @@ const CoupangManagement: React.FC = () => {
       {isBulkClassifyModalOpen && (
         <div style={{
           position: 'fixed', inset: 0,
-          background: 'rgba(0,0,0,0.45)',
+          background: theme.colors.overlay,
           display: 'flex', alignItems: 'center', justifyContent: 'center',
           zIndex: 9999,
         }}>
           <div style={{
-            background: 'white', borderRadius: '10px',
+            background: 'white', borderRadius: theme.radius.xl,
             padding: '28px 32px', minWidth: '380px',
-            boxShadow: '0 8px 32px rgba(0,0,0,0.18)',
+            boxShadow: theme.shadows.modal,
           }}>
             {/* 모달 헤더 */}
             <h3 style={{ margin: '0 0 20px', fontSize: '16px', color: '#111827' }}>
@@ -1048,7 +1095,7 @@ const CoupangManagement: React.FC = () => {
                 onClick={handleBulkClassify}
                 style={{
                   padding: '8px 20px', border: 'none',
-                  borderRadius: '6px', background: '#6366f1', color: 'white',
+                  borderRadius: '6px', background: theme.colors.primary, color: 'white',
                   cursor: 'pointer', fontSize: '14px', fontWeight: 500,
                 }}
               >
@@ -1068,15 +1115,15 @@ const CoupangManagement: React.FC = () => {
       {isExcelClassifyResultOpen && excelClassifyResult && (
         <div style={{
           position: 'fixed', inset: 0,
-          background: 'rgba(0,0,0,0.45)',
+          background: theme.colors.overlay,
           display: 'flex', alignItems: 'center', justifyContent: 'center',
           zIndex: 9999,
         }}>
           <div style={{
-            background: 'white', borderRadius: '10px',
+            background: 'white', borderRadius: theme.radius.xl,
             padding: '28px 32px', minWidth: '440px', maxWidth: '600px',
             maxHeight: '80vh', overflowY: 'auto',
-            boxShadow: '0 8px 32px rgba(0,0,0,0.18)',
+            boxShadow: theme.shadows.modal,
           }}>
             {/* 헤더 */}
             <h3 style={{ margin: '0 0 20px', fontSize: '16px', color: '#111827' }}>
@@ -1088,7 +1135,7 @@ const CoupangManagement: React.FC = () => {
               background: '#f0fdf4', border: '1px solid #bbf7d0',
               borderRadius: '6px', padding: '12px 16px', marginBottom: '16px',
             }}>
-              <span style={{ color: '#16a34a', fontWeight: 600, fontSize: '14px' }}>
+              <span style={{ color: theme.colors.success, fontWeight: 600, fontSize: '14px' }}>
                 ✓ 정상처리: {excelClassifyResult.successCount}건
               </span>
             </div>
@@ -1096,7 +1143,7 @@ const CoupangManagement: React.FC = () => {
             {/* 오류사유 1: 바코드 조회 안됨 */}
             {excelClassifyResult.notFoundBarcodes.length > 0 && (
               <div style={{ marginBottom: '16px' }}>
-                <div style={{ fontSize: '13px', fontWeight: 600, color: '#dc2626', marginBottom: '8px' }}>
+                <div style={{ fontSize: '13px', fontWeight: 600, color: theme.colors.danger, marginBottom: '8px' }}>
                   오류사유 1 &nbsp;·&nbsp; 바코드 조회되지 않음&nbsp;
                   <span style={{ fontWeight: 400, color: '#6b7280' }}>
                     ({excelClassifyResult.notFoundBarcodes.length}건)
@@ -1149,7 +1196,7 @@ const CoupangManagement: React.FC = () => {
                         ? '1px solid #fde68a' : 'none',
                     }}>
                       <span style={{ flex: 1 }}>{barcode}</span>
-                      <span style={{ width: '100px', color: '#dc2626' }}>{inputType}</span>
+                      <span style={{ width: '100px', color: theme.colors.danger }}>{inputType}</span>
                     </div>
                   ))}
                 </div>
@@ -1162,7 +1209,7 @@ const CoupangManagement: React.FC = () => {
                 onClick={() => { setIsExcelClassifyResultOpen(false); setExcelClassifyResult(null) }}
                 style={{
                   padding: '8px 24px', border: 'none', borderRadius: '6px',
-                  background: '#6366f1', color: 'white',
+                  background: theme.colors.primary, color: 'white',
                   cursor: 'pointer', fontSize: '14px', fontWeight: 500,
                 }}
               >

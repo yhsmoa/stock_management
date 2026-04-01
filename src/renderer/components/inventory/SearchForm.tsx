@@ -1,4 +1,5 @@
 import React, { useState } from 'react'
+import { theme } from '../../styles/theme'
 import type { StockSearchFilters } from '../../types/stock'
 
 interface SearchFormProps {
@@ -37,10 +38,8 @@ const SearchForm: React.FC<SearchFormProps> = ({ onSearch }) => {
   return (
     <div
       style={{
-        backgroundColor: 'white',
+        ...theme.card,
         padding: '20px',
-        borderRadius: '8px',
-        boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
         marginBottom: '20px',
       }}
     >
@@ -60,8 +59,8 @@ const SearchForm: React.FC<SearchFormProps> = ({ onSearch }) => {
                 style={{
                   flex: 1,
                   padding: '8px 12px',
-                  border: '1px solid #ddd',
-                  borderRadius: '4px',
+                  border: `1px solid ${theme.colors.border}`,
+                  borderRadius: theme.radius.md,
                   fontSize: '14px',
                 }}
               />
@@ -75,8 +74,8 @@ const SearchForm: React.FC<SearchFormProps> = ({ onSearch }) => {
                 style={{
                   flex: 1,
                   padding: '8px 12px',
-                  border: '1px solid #ddd',
-                  borderRadius: '4px',
+                  border: `1px solid ${theme.colors.border}`,
+                  borderRadius: theme.radius.md,
                   fontSize: '14px',
                 }}
               />
@@ -90,8 +89,8 @@ const SearchForm: React.FC<SearchFormProps> = ({ onSearch }) => {
                 style={{
                   flex: 1,
                   padding: '8px 12px',
-                  border: '1px solid #ddd',
-                  borderRadius: '4px',
+                  border: `1px solid ${theme.colors.border}`,
+                  borderRadius: theme.radius.md,
                   fontSize: '14px',
                 }}
               />
@@ -106,8 +105,8 @@ const SearchForm: React.FC<SearchFormProps> = ({ onSearch }) => {
                 style={{
                   flex: 1,
                   padding: '8px 12px',
-                  border: '1px solid #ddd',
-                  borderRadius: '4px',
+                  border: `1px solid ${theme.colors.border}`,
+                  borderRadius: theme.radius.md,
                   fontSize: '14px',
                   backgroundColor: 'white',
                   cursor: 'pointer',
@@ -126,8 +125,8 @@ const SearchForm: React.FC<SearchFormProps> = ({ onSearch }) => {
                 style={{
                   flex: 3,
                   padding: '8px 12px',
-                  border: '1px solid #ddd',
-                  borderRadius: '4px',
+                  border: `1px solid ${theme.colors.border}`,
+                  borderRadius: theme.radius.md,
                   fontSize: '14px',
                 }}
               />
@@ -139,17 +138,17 @@ const SearchForm: React.FC<SearchFormProps> = ({ onSearch }) => {
             type="submit"
             style={{
               width: '100px',
-              backgroundColor: '#3498db',
+              backgroundColor: theme.colors.primary,
               color: 'white',
               border: 'none',
-              borderRadius: '4px',
+              borderRadius: theme.radius.md,
               fontSize: '16px',
               fontWeight: 'bold',
               cursor: 'pointer',
               transition: 'background-color 0.2s',
             }}
-            onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = '#2980b9')}
-            onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = '#3498db')}
+            onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = theme.colors.primaryHover)}
+            onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = theme.colors.primary)}
           >
             검색
           </button>

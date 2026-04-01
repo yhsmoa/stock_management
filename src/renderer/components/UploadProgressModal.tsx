@@ -1,4 +1,5 @@
 import React from 'react';
+import { theme } from '../styles/theme';
 
 interface UploadProgressModalProps {
   isOpen: boolean;
@@ -17,44 +18,33 @@ const UploadProgressModal: React.FC<UploadProgressModalProps> = ({
 
   return (
     <div style={{
-      position: 'fixed',
-      top: 0,
-      left: 0,
-      right: 0,
-      bottom: 0,
-      backgroundColor: 'rgba(0, 0, 0, 0.5)',
-      display: 'flex',
-      justifyContent: 'center',
-      alignItems: 'center',
+      ...theme.modal.overlay,
       zIndex: 1000,
     }}>
       <div style={{
-        backgroundColor: 'white',
-        borderRadius: '10px',
-        padding: '30px',
+        ...theme.modal.content,
         width: '400px',
-        boxShadow: '0 4px 6px rgba(0, 0, 0, 0.1)',
       }}>
         <h2 style={{
           fontSize: '20px',
           fontWeight: 'bold',
           marginBottom: '20px',
           textAlign: 'center',
-          color: '#333',
+          color: theme.colors.textPrimary,
         }}>{title}</h2>
 
         <div style={{
           width: '100%',
           height: '30px',
-          backgroundColor: '#f0f0f0',
-          borderRadius: '15px',
+          backgroundColor: theme.colors.borderLight,
+          borderRadius: theme.radius.full,
           overflow: 'hidden',
           marginBottom: '15px',
         }}>
           <div style={{
             width: `${progress}%`,
             height: '100%',
-            backgroundColor: '#4CAF50',
+            backgroundColor: theme.colors.primary,
             transition: 'width 0.3s ease',
             display: 'flex',
             alignItems: 'center',
@@ -72,7 +62,7 @@ const UploadProgressModal: React.FC<UploadProgressModalProps> = ({
 
         <p style={{
           textAlign: 'center',
-          color: '#666',
+          color: theme.colors.textSecondary,
           fontSize: '14px',
           margin: 0,
         }}>{status}</p>

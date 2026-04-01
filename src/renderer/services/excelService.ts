@@ -74,21 +74,29 @@ export const parseExcelFile = async (file: File): Promise<CoupangReturn[]> => {
   })
 }
 
-// Supabase에 데이터 저장하는 함수 (upsert 방식)
+// Supabase에 데이터 저장하는 함수 (upsert 방식, 1000건씩 배치 분할)
 export const saveCoupangReturnsToSupabase = async (data: CoupangReturn[]): Promise<{ success: boolean; error?: any }> => {
   try {
-    // 데이터를 배치로 upsert (order_id 기준으로 변경)
-    const { data: upsertedData, error } = await supabase
-      .from('si_coupang_returns')
-      .upsert(data, { onConflict: 'order_id' }) // order_id가 primary key
-      .select()
+    const batchSize = 1000
+    let totalUpserted = 0
 
-    if (error) {
-      console.error('Error saving to Supabase:', error)
-      return { success: false, error }
+    for (let i = 0; i < data.length; i += batchSize) {
+      const batch = data.slice(i, i + batchSize)
+
+      const { data: upsertedData, error } = await supabase
+        .from('si_coupang_returns')
+        .upsert(batch, { onConflict: 'order_id' })
+        .select()
+
+      if (error) {
+        console.error(`Error saving batch ${i / batchSize + 1} to Supabase:`, error)
+        return { success: false, error }
+      }
+
+      totalUpserted += upsertedData?.length || 0
     }
 
-    console.log(`Successfully upserted ${upsertedData?.length || 0} records to Supabase`)
+    console.log(`Successfully upserted ${totalUpserted} records to Supabase`)
     return { success: true }
   } catch (error) {
     console.error('Error in saveCoupangReturnsToSupabase:', error)

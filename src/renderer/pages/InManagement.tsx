@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react'
+import { theme } from '../styles/theme'
 import Button from '../components/common/Button'
 import { supabase } from '../services/supabase'
 import { StockService } from '../services/stockService'
@@ -172,20 +173,37 @@ const InManagement: React.FC = () => {
 
       console.log('Loading stock locations for user:', userId)
 
-      // Fetch all stock locations for this seller
-      const { data, error } = await supabase
-        .from('si_stocks')
-        .select('location, barcode')
-        .not('location', 'is', null)
-        .neq('location', '')
-        .not('barcode', 'is', null)
-        .neq('barcode', '')
+      // Fetch all stock locations (페이지네이션 루프 — 1000행 제한 해소)
+      let allData: { location: string; barcode: string }[] = []
+      let from = 0
+      const batchSize = 1000
+      let hasMore = true
 
-      if (error) {
-        console.error('Error loading stock locations:', error)
-      } else if (data) {
-        setStockLocations(data)
-        console.log(`Loaded ${data.length} stock locations:`, data)
+      while (hasMore) {
+        const { data, error } = await supabase
+          .from('si_stocks')
+          .select('location, barcode')
+          .not('location', 'is', null)
+          .neq('location', '')
+          .not('barcode', 'is', null)
+          .neq('barcode', '')
+          .range(from, from + batchSize - 1)
+
+        if (error) {
+          console.error('Error loading stock locations:', error)
+          hasMore = false
+        } else if (data && data.length > 0) {
+          allData = [...allData, ...data]
+          from += batchSize
+          if (data.length < batchSize) hasMore = false
+        } else {
+          hasMore = false
+        }
+      }
+
+      if (allData.length > 0) {
+        setStockLocations(allData)
+        console.log(`Loaded ${allData.length} stock locations`)
       }
     } catch (error) {
       console.error('Error in loadStockLocations:', error)
@@ -424,7 +442,7 @@ const InManagement: React.FC = () => {
     },
     header: {
       fontSize: '32px',
-      color: '#333',
+      color: theme.colors.textPrimary,
       margin: 0,
       fontWeight: 'bold',
     },
@@ -432,7 +450,7 @@ const InManagement: React.FC = () => {
       position: 'absolute' as const,
       top: '-8px',
       right: '-8px',
-      backgroundColor: '#dc3545',
+      backgroundColor: theme.colors.danger,
       color: 'white',
       borderRadius: '50%',
       width: '24px',
@@ -444,10 +462,8 @@ const InManagement: React.FC = () => {
       fontWeight: 'bold',
     },
     inputFormContainer: {
-      backgroundColor: 'white',
-      borderRadius: '8px',
+      ...theme.card,
       padding: '30px',
-      boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
       marginBottom: '20px',
     },
     inputSection: {
@@ -465,10 +481,10 @@ const InManagement: React.FC = () => {
       width: '100%',
       height: '200px',
       padding: '30px',
-      borderColor: '#d0d0d0',
+      borderColor: theme.colors.border,
       borderWidth: '3px',
       borderStyle: 'solid',
-      borderRadius: '12px',
+      borderRadius: theme.radius.lg,
       fontSize: '48px',
       fontWeight: '500',
       transition: 'all 0.3s',
@@ -478,16 +494,16 @@ const InManagement: React.FC = () => {
       caretColor: 'transparent',
     },
     inputActive: {
-      borderColor: '#007bff',
+      borderColor: theme.colors.primary,
       borderWidth: '4px',
     },
     resultForm: {
-      backgroundColor: '#f8f9fa',
-      borderRadius: '12px',
+      backgroundColor: theme.colors.bgTableHeader,
+      borderRadius: theme.radius.lg,
       padding: '30px',
       width: '100%',
       height: '200px',
-      border: '3px solid #dee2e6',
+      border: `3px solid ${theme.colors.border}`,
       display: 'flex',
       alignItems: 'center',
       justifyContent: 'center',
@@ -495,14 +511,14 @@ const InManagement: React.FC = () => {
       marginBottom: '20px',
     },
     resultFormPlaceholder: {
-      color: '#6c757d',
+      color: theme.colors.textSecondary,
       fontSize: '36px',
       textAlign: 'center' as const,
     },
     resultMessage: {
       fontSize: '42px',
       fontWeight: '500',
-      color: '#212529',
+      color: theme.colors.textPrimary,
       textAlign: 'center' as const,
     },
     // Slide panel styles
@@ -512,8 +528,8 @@ const InManagement: React.FC = () => {
       right: 0,
       width: '45%',
       height: '100vh',
-      backgroundColor: 'white',
-      boxShadow: '-2px 0 8px rgba(0,0,0,0.15)',
+      backgroundColor: theme.colors.bgCard,
+      boxShadow: theme.shadows.lg,
       transform: showSlidePanel ? 'translateX(0)' : 'translateX(100%)',
       transition: 'transform 0.3s ease-in-out',
       zIndex: 1000,
@@ -522,16 +538,16 @@ const InManagement: React.FC = () => {
     },
     slidePanelHeader: {
       padding: '20px',
-      borderBottom: '1px solid #e0e0e0',
+      borderBottom: `1px solid ${theme.colors.border}`,
       display: 'flex',
       justifyContent: 'space-between',
       alignItems: 'center',
-      backgroundColor: '#f8f9fa',
+      backgroundColor: theme.colors.bgTableHeader,
     },
     slidePanelTitle: {
       fontSize: '24px',
       fontWeight: 'bold',
-      color: '#333',
+      color: theme.colors.textPrimary,
     },
     slidePanelActions: {
       display: 'flex',
@@ -547,18 +563,18 @@ const InManagement: React.FC = () => {
       borderCollapse: 'collapse' as const,
     },
     tableHeader: {
-      backgroundColor: '#f5f5f5',
-      borderBottom: '2px solid #dee2e6',
+      backgroundColor: theme.colors.bgTableHeader,
+      borderBottom: `2px solid ${theme.colors.border}`,
     },
     tableHeaderCell: {
       padding: '12px',
       textAlign: 'left' as const,
       fontWeight: 'bold',
       fontSize: '14px',
-      color: '#495057',
+      color: theme.colors.textSecondary,
     },
     tableRow: {
-      borderBottom: '1px solid #e0e0e0',
+      borderBottom: `1px solid ${theme.colors.border}`,
       transition: 'background-color 0.2s',
     },
     tableCell: {
@@ -573,10 +589,10 @@ const InManagement: React.FC = () => {
     },
     itemName: {
       fontWeight: 'bold',
-      color: '#212529',
+      color: theme.colors.textPrimary,
     },
     optionName: {
-      color: '#6c757d',
+      color: theme.colors.textSecondary,
       fontSize: '13px',
     },
     quantityInfo: {
@@ -587,17 +603,17 @@ const InManagement: React.FC = () => {
     },
     locationQty: {
       fontWeight: 'bold',
-      color: '#007bff',
+      color: theme.colors.primary,
       fontSize: '16px',
     },
     totalQty: {
-      color: '#6c757d',
+      color: theme.colors.textSecondary,
       fontSize: '13px',
     },
     emptyMessage: {
       textAlign: 'center' as const,
       padding: '40px',
-      color: '#6c757d',
+      color: theme.colors.textSecondary,
       fontSize: '16px',
     },
     overlay: {
@@ -606,7 +622,7 @@ const InManagement: React.FC = () => {
       left: 0,
       right: 0,
       bottom: 0,
-      backgroundColor: 'rgba(0, 0, 0, 0.5)',
+      backgroundColor: theme.colors.overlay,
       display: showSlidePanel ? 'block' : 'none',
       zIndex: 999,
     },
@@ -634,7 +650,7 @@ const InManagement: React.FC = () => {
             위치 해제
           </Button>
 
-          <div style={{ width: '2px', height: '30px', backgroundColor: '#dee2e6', margin: '0 10px' }} />
+          <div style={{ width: '2px', height: '30px', backgroundColor: theme.colors.border, margin: '0 10px' }} />
 
           <Button
             variant="info"
@@ -671,8 +687,8 @@ const InManagement: React.FC = () => {
                 ...(activeInput === 'barcode' ? inManagementStyles.inputActive : {}),
                 opacity: !dataReady ? 0.5 : 1,
                 cursor: !dataReady ? 'not-allowed' : 'text',
-                backgroundColor: showBarcodeResult ? 'transparent' : 'white',
-                color: showBarcodeResult ? 'transparent' : '#212529',
+                backgroundColor: showBarcodeResult ? 'transparent' : theme.colors.bgCard,
+                color: showBarcodeResult ? 'transparent' : theme.colors.textPrimary,
                 caretColor: showBarcodeResult ? 'transparent' : 'auto',
               }}
             />
@@ -689,33 +705,33 @@ const InManagement: React.FC = () => {
                   bottom: 0,
                   display: 'flex',
                   alignItems: 'center',
-                  backgroundColor: '#f8f9fa',
-                  border: '4px solid #007bff',
-                  borderRadius: '12px',
+                  backgroundColor: theme.colors.bgTableHeader,
+                  border: `4px solid ${theme.colors.primary}`,
+                  borderRadius: theme.radius.lg,
                   padding: '30px',
                   cursor: 'pointer',
                   transition: 'border-color 0.3s',
                 }}
                 onMouseEnter={(e) => {
-                  e.currentTarget.style.borderColor = '#0056b3'
-                  e.currentTarget.style.boxShadow = '0 0 10px rgba(0,123,255,0.3)'
+                  e.currentTarget.style.borderColor = theme.colors.primaryHover
+                  e.currentTarget.style.boxShadow = `0 0 10px rgba(74,140,247,0.3)`
                 }}
                 onMouseLeave={(e) => {
-                  e.currentTarget.style.borderColor = '#007bff'
+                  e.currentTarget.style.borderColor = theme.colors.primary
                   e.currentTarget.style.boxShadow = 'none'
                 }}>
                 <div style={{ width: '100%', display: 'flex', alignItems: 'center', height: '100%' }}>
                   {/* 왼쪽 절반 - 상품 정보 */}
-                  <div style={{ flex: 1, borderRight: '2px solid #dee2e6', paddingRight: '20px' }}>
-                    <div style={{ fontSize: '32px', fontWeight: 'bold', color: '#212529', marginBottom: '8px' }}>
+                  <div style={{ flex: 1, borderRight: `2px solid ${theme.colors.border}`, paddingRight: '20px' }}>
+                    <div style={{ fontSize: '32px', fontWeight: 'bold', color: theme.colors.textPrimary, marginBottom: '8px' }}>
                       {currentScanData.item.item_name}
                     </div>
                     {currentScanData.item.option_name && (
-                      <div style={{ fontSize: '26px', color: '#495057', marginBottom: '8px' }}>
+                      <div style={{ fontSize: '26px', color: theme.colors.textSecondary, marginBottom: '8px' }}>
                         {currentScanData.item.option_name}
                       </div>
                     )}
-                    <div style={{ fontSize: '22px', color: '#6c757d' }}>
+                    <div style={{ fontSize: '22px', color: theme.colors.textMuted }}>
                       {currentScanData.barcode}
                     </div>
                   </div>
@@ -723,18 +739,18 @@ const InManagement: React.FC = () => {
                   {/* 오른쪽 절반 - 수량 정보 */}
                   <div style={{ flex: 1, paddingLeft: '30px', display: 'flex', alignItems: 'center', justifyContent: 'space-around' }}>
                     <div style={{ textAlign: 'center' }}>
-                      <div style={{ fontSize: '18px', color: '#6c757d', marginBottom: '10px' }}>
+                      <div style={{ fontSize: '18px', color: theme.colors.textMuted, marginBottom: '10px' }}>
                         수량
                       </div>
-                      <div style={{ fontSize: '72px', fontWeight: 'bold', color: '#007bff', lineHeight: 1 }}>
+                      <div style={{ fontSize: '72px', fontWeight: 'bold', color: theme.colors.primary, lineHeight: 1 }}>
                         {currentScanData.qty}
                       </div>
                     </div>
                     <div style={{ textAlign: 'center' }}>
-                      <div style={{ fontSize: '18px', color: '#6c757d', marginBottom: '10px' }}>
+                      <div style={{ fontSize: '18px', color: theme.colors.textMuted, marginBottom: '10px' }}>
                         전체수량
                       </div>
-                      <div style={{ fontSize: '72px', fontWeight: 'bold', color: '#212529', lineHeight: 1 }}>
+                      <div style={{ fontSize: '72px', fontWeight: 'bold', color: theme.colors.textPrimary, lineHeight: 1 }}>
                         {scannedItems
                           .filter(item => item.barcode === currentScanData.barcode)
                           .reduce((sum, item) => sum + item.qty, 0) + currentScanData.qty}
@@ -783,13 +799,13 @@ const InManagement: React.FC = () => {
                     minWidth: '0',  // flex가 제대로 작동하도록
                     height: '80px',  // 버튼 높이도 크게
                     padding: '12px 16px',
-                    backgroundColor: 'white',
-                    border: '2px solid #007bff',
-                    borderRadius: '8px',
+                    backgroundColor: theme.colors.bgCard,
+                    border: `2px solid ${theme.colors.primary}`,
+                    borderRadius: theme.radius.md,
                     cursor: 'pointer',
                     fontSize: availableLocations.length > 10 ? '14px' : availableLocations.length > 5 ? '16px' : '18px',  // 개수에 따라 폰트 크기 조정
                     fontWeight: 'bold',
-                    color: '#007bff',
+                    color: theme.colors.primary,
                     transition: 'all 0.3s',
                     overflow: 'hidden',
                     textOverflow: 'ellipsis',
@@ -805,12 +821,12 @@ const InManagement: React.FC = () => {
                     }
                   }}
                   onMouseEnter={(e) => {
-                    e.currentTarget.style.backgroundColor = '#007bff'
+                    e.currentTarget.style.backgroundColor = theme.colors.primary
                     e.currentTarget.style.color = 'white'
                   }}
                   onMouseLeave={(e) => {
-                    e.currentTarget.style.backgroundColor = 'white'
-                    e.currentTarget.style.color = '#007bff'
+                    e.currentTarget.style.backgroundColor = theme.colors.bgCard
+                    e.currentTarget.style.color = theme.colors.primary
                   }}
                 >
                   {loc}
@@ -865,7 +881,7 @@ const InManagement: React.FC = () => {
                     key={`${item.location}-${item.barcode}-${index}`}
                     style={inManagementStyles.tableRow}
                     onMouseEnter={(e) => {
-                      e.currentTarget.style.backgroundColor = '#f8f9fa'
+                      e.currentTarget.style.backgroundColor = theme.colors.bgHover
                     }}
                     onMouseLeave={(e) => {
                       e.currentTarget.style.backgroundColor = 'transparent'
@@ -873,7 +889,7 @@ const InManagement: React.FC = () => {
                   >
                     <td style={{
                       ...inManagementStyles.tableCell,
-                      color: item.location ? '#212529' : '#dc3545',
+                      color: item.location ? theme.colors.textPrimary : theme.colors.danger,
                       fontStyle: item.location ? 'normal' : 'italic'
                     }}>
                       {item.location || '미지정'}
@@ -891,7 +907,7 @@ const InManagement: React.FC = () => {
                       <span style={inManagementStyles.locationQty}>{item.qty}</span>
                     </td>
                     <td style={{...inManagementStyles.tableCell, textAlign: 'center'}}>
-                      <span style={{...inManagementStyles.locationQty, color: '#212529'}}>
+                      <span style={{...inManagementStyles.locationQty, color: theme.colors.textPrimary}}>
                         {scannedItems
                           .filter(si => si.barcode === item.barcode)
                           .reduce((sum, si) => sum + si.qty, 0)}

@@ -1,6 +1,7 @@
 import React, { useState } from 'react'
 import { Outlet, useNavigate } from 'react-router-dom'
 import Sidebar from './Sidebar'
+import { theme } from '../styles/theme'
 
 const Layout: React.FC = () => {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false)
@@ -25,8 +26,9 @@ const Layout: React.FC = () => {
         justifyContent: 'space-between',
         paddingLeft: '15px',
         paddingRight: '20px',
-        borderBottom: '1px solid #e0e0e0',
-        backgroundColor: 'white',
+        borderBottom: `1px solid ${theme.colors.border}`,
+        backgroundColor: theme.colors.bgCard,
+        boxShadow: theme.shadows.sm,
         zIndex: 1000,
         position: 'relative'
       }}>
@@ -37,19 +39,19 @@ const Layout: React.FC = () => {
             style={{
               width: '24px',
               height: '24px',
-              border: '1.5px solid #333',
+              border: `1.5px solid ${theme.colors.textSecondary}`,
               background: 'white',
               cursor: 'pointer',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
               fontSize: '14px',
-              borderRadius: '3px',
+              borderRadius: theme.radius.sm,
             }}
           >
             ☰
           </button>
-          <h1 style={{ margin: 0, fontSize: '20px', fontWeight: 'bold', color: '#2c3e50' }}>
+          <h1 style={{ margin: 0, fontSize: '20px', fontWeight: 'bold', color: theme.colors.textPrimary }}>
             Stock Management
           </h1>
         </div>
@@ -59,13 +61,13 @@ const Layout: React.FC = () => {
           onClick={handleLogout}
           style={{
             padding: '8px 16px',
-            backgroundColor: '#e74c3c',
+            backgroundColor: theme.colors.danger,
             color: 'white',
             border: 'none',
-            borderRadius: '4px',
+            borderRadius: theme.radius.md,
             cursor: 'pointer',
             fontSize: '14px',
-            fontWeight: 'bold'
+            fontWeight: '600',
           }}
         >
           로그아웃
@@ -80,7 +82,7 @@ const Layout: React.FC = () => {
         <main style={{
           flex: 1,
           overflow: 'auto',
-          padding: '20px',
+          padding: '24px',
           marginLeft: isSidebarOpen ? '250px' : '0',
           transition: 'margin-left 0.3s ease',
         }}>

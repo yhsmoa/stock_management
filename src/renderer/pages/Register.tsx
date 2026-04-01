@@ -1,6 +1,7 @@
 import React, { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { registerUser } from '../services/supabase'
+import { theme } from '../styles/theme'
 import type { RegisterFormData } from '../types/auth'
 
 const Register: React.FC = () => {
@@ -84,7 +85,7 @@ const Register: React.FC = () => {
         justifyContent: 'center',
         alignItems: 'center',
         minHeight: '100vh',
-        backgroundColor: '#f5f5f5',
+        backgroundColor: theme.colors.bgPage,
         padding: '20px',
       }}
     >
@@ -92,16 +93,16 @@ const Register: React.FC = () => {
         style={{
           backgroundColor: 'white',
           padding: '40px',
-          borderRadius: '8px',
-          boxShadow: '0 2px 10px rgba(0,0,0,0.1)',
+          borderRadius: theme.radius.xl,
+          boxShadow: theme.shadows.lg,
           width: '450px',
           maxWidth: '100%',
         }}
       >
-        <h1 style={{ textAlign: 'center', marginBottom: '10px', fontSize: '24px', color: '#333' }}>
+        <h1 style={{ textAlign: 'center', marginBottom: '10px', fontSize: '24px', color: theme.colors.textPrimary }}>
           stock-management
         </h1>
-        <h2 style={{ textAlign: 'center', marginBottom: '30px', fontSize: '18px', color: '#666' }}>
+        <h2 style={{ textAlign: 'center', marginBottom: '30px', fontSize: '18px', color: theme.colors.textSecondary }}>
           회원가입
         </h2>
 
@@ -109,7 +110,7 @@ const Register: React.FC = () => {
           <div style={{ marginBottom: '16px' }}>
             <label
               htmlFor="user_id"
-              style={{ display: 'block', marginBottom: '6px', fontSize: '14px', color: '#333' }}
+              style={{ display: 'block', marginBottom: '6px', fontSize: '14px', color: theme.colors.textPrimary }}
             >
               아이디 *
             </label>
@@ -123,8 +124,8 @@ const Register: React.FC = () => {
               style={{
                 width: '100%',
                 padding: '10px',
-                border: '1px solid #ddd',
-                borderRadius: '4px',
+                border: `1px solid ${theme.colors.border}`,
+                borderRadius: theme.radius.md,
                 fontSize: '14px',
                 boxSizing: 'border-box',
               }}
@@ -134,7 +135,7 @@ const Register: React.FC = () => {
           <div style={{ marginBottom: '16px' }}>
             <label
               htmlFor="password"
-              style={{ display: 'block', marginBottom: '6px', fontSize: '14px', color: '#333' }}
+              style={{ display: 'block', marginBottom: '6px', fontSize: '14px', color: theme.colors.textPrimary }}
             >
               패스워드 *
             </label>
@@ -148,8 +149,8 @@ const Register: React.FC = () => {
               style={{
                 width: '100%',
                 padding: '10px',
-                border: '1px solid #ddd',
-                borderRadius: '4px',
+                border: `1px solid ${theme.colors.border}`,
+                borderRadius: theme.radius.md,
                 fontSize: '14px',
                 boxSizing: 'border-box',
               }}
@@ -159,7 +160,7 @@ const Register: React.FC = () => {
           <div style={{ marginBottom: '16px' }}>
             <label
               htmlFor="passwordConfirm"
-              style={{ display: 'block', marginBottom: '6px', fontSize: '14px', color: '#333' }}
+              style={{ display: 'block', marginBottom: '6px', fontSize: '14px', color: theme.colors.textPrimary }}
             >
               패스워드 확인 *
             </label>
@@ -173,8 +174,8 @@ const Register: React.FC = () => {
               style={{
                 width: '100%',
                 padding: '10px',
-                border: '1px solid #ddd',
-                borderRadius: '4px',
+                border: `1px solid ${theme.colors.border}`,
+                borderRadius: theme.radius.md,
                 fontSize: '14px',
                 boxSizing: 'border-box',
               }}
@@ -184,7 +185,7 @@ const Register: React.FC = () => {
           <div style={{ marginBottom: '16px' }}>
             <label
               htmlFor="seller_id"
-              style={{ display: 'block', marginBottom: '6px', fontSize: '14px', color: '#333' }}
+              style={{ display: 'block', marginBottom: '6px', fontSize: '14px', color: theme.colors.textPrimary }}
             >
               사업자ID *
             </label>
@@ -198,8 +199,8 @@ const Register: React.FC = () => {
               style={{
                 width: '100%',
                 padding: '10px',
-                border: '1px solid #ddd',
-                borderRadius: '4px',
+                border: `1px solid ${theme.colors.border}`,
+                borderRadius: theme.radius.md,
                 fontSize: '14px',
                 boxSizing: 'border-box',
               }}
@@ -209,7 +210,7 @@ const Register: React.FC = () => {
           <div style={{ marginBottom: '16px' }}>
             <label
               htmlFor="name"
-              style={{ display: 'block', marginBottom: '6px', fontSize: '14px', color: '#333' }}
+              style={{ display: 'block', marginBottom: '6px', fontSize: '14px', color: theme.colors.textPrimary }}
             >
               이름 *
             </label>
@@ -223,8 +224,8 @@ const Register: React.FC = () => {
               style={{
                 width: '100%',
                 padding: '10px',
-                border: '1px solid #ddd',
-                borderRadius: '4px',
+                border: `1px solid ${theme.colors.border}`,
+                borderRadius: theme.radius.md,
                 fontSize: '14px',
                 boxSizing: 'border-box',
               }}
@@ -234,7 +235,7 @@ const Register: React.FC = () => {
           <div style={{ marginBottom: '16px' }}>
             <label
               htmlFor="phone_number"
-              style={{ display: 'block', marginBottom: '6px', fontSize: '14px', color: '#333' }}
+              style={{ display: 'block', marginBottom: '6px', fontSize: '14px', color: theme.colors.textPrimary }}
             >
               연락처 *
             </label>
@@ -248,8 +249,8 @@ const Register: React.FC = () => {
               style={{
                 width: '100%',
                 padding: '10px',
-                border: '1px solid #ddd',
-                borderRadius: '4px',
+                border: `1px solid ${theme.colors.border}`,
+                borderRadius: theme.radius.md,
                 fontSize: '14px',
                 boxSizing: 'border-box',
               }}
@@ -259,7 +260,7 @@ const Register: React.FC = () => {
           <div style={{ marginBottom: '20px' }}>
             <label
               htmlFor="email_address"
-              style={{ display: 'block', marginBottom: '6px', fontSize: '14px', color: '#333' }}
+              style={{ display: 'block', marginBottom: '6px', fontSize: '14px', color: theme.colors.textPrimary }}
             >
               메일주소 *
             </label>
@@ -273,8 +274,8 @@ const Register: React.FC = () => {
               style={{
                 width: '100%',
                 padding: '10px',
-                border: '1px solid #ddd',
-                borderRadius: '4px',
+                border: `1px solid ${theme.colors.border}`,
+                borderRadius: theme.radius.md,
                 fontSize: '14px',
                 boxSizing: 'border-box',
               }}
@@ -286,9 +287,9 @@ const Register: React.FC = () => {
               style={{
                 marginBottom: '20px',
                 padding: '10px',
-                backgroundColor: '#fee',
-                color: '#c33',
-                borderRadius: '4px',
+                backgroundColor: theme.colors.dangerLight,
+                color: theme.colors.danger,
+                borderRadius: theme.radius.md,
                 fontSize: '14px',
               }}
             >
@@ -302,10 +303,11 @@ const Register: React.FC = () => {
             style={{
               width: '100%',
               padding: '12px',
-              backgroundColor: '#27ae60',
+              backgroundColor: theme.colors.primary,
               color: 'white',
               border: 'none',
-              borderRadius: '4px',
+              borderRadius: theme.radius.md,
+              fontWeight: '600',
               fontSize: '16px',
               cursor: isLoading ? 'not-allowed' : 'pointer',
               marginBottom: '10px',
@@ -321,10 +323,11 @@ const Register: React.FC = () => {
             style={{
               width: '100%',
               padding: '12px',
-              backgroundColor: '#95a5a6',
+              backgroundColor: theme.colors.secondary,
               color: 'white',
               border: 'none',
-              borderRadius: '4px',
+              borderRadius: theme.radius.md,
+              fontWeight: '500',
               fontSize: '16px',
               cursor: 'pointer',
             }}

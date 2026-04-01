@@ -45,7 +45,9 @@ export const registerUser = async (userData: {
     .from('si_users')
     .insert([
       {
-        id: crypto.randomUUID(),
+        id: globalThis.crypto?.randomUUID?.()
+          ?? '10000000-1000-4000-8000-100000000000'.replace(/[018]/g, c =>
+              (+c ^ (globalThis.crypto?.getRandomValues(new Uint8Array(1))[0]! & (15 >> (+c / 4)))).toString(16)),
         username: userData.username,
         password: userData.password,
         seller_id: userData.seller_id,
@@ -68,7 +70,7 @@ export const loginUser = async (user_id: string, password: string) => {
     .select('*')
     .eq('username', user_id)
     .eq('password', password)
-    .single()
+    .maybeSingle()
 
   return { data, error }
 }

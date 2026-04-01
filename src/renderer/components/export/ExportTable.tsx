@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react'
+import { theme } from '../../styles/theme'
 import type { Export } from '../../types/export'
 import { EXPORT_TABLE_HEADERS } from '../../types/export'
 
@@ -47,10 +48,7 @@ const ExportTable: React.FC<ExportTableProps> = ({ data, loading, onSelectionCha
   // 테이블 스타일 정의
   const tableStyles = {
     container: {
-      backgroundColor: 'white',
-      borderRadius: '8px',
-      boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
-      overflow: 'hidden',
+      ...theme.table.container,
     },
     tableWrapper: {
       overflowX: 'auto' as const,
@@ -61,40 +59,33 @@ const ExportTable: React.FC<ExportTableProps> = ({ data, loading, onSelectionCha
       fontSize: '14px',
     },
     thead: {
-      backgroundColor: '#f8f9fa',
-      borderBottom: '2px solid #dee2e6',
+      ...theme.table.thead,
     },
     th: {
-      padding: '12px',
-      textAlign: 'left' as const,
-      fontWeight: '600',
-      color: '#495057',
-      whiteSpace: 'nowrap' as const,
+      ...theme.table.th,
     },
     tbody: {
-      backgroundColor: 'white',
+      backgroundColor: theme.colors.bgCard,
     },
     tr: {
-      borderBottom: '1px solid #e9ecef',
-      transition: 'background-color 0.2s',
+      ...theme.table.tr,
     },
     trHover: {
-      backgroundColor: '#f8f9fa',
+      backgroundColor: theme.colors.bgHover,
     },
     td: {
-      padding: '12px',
-      color: '#212529',
+      ...theme.table.td,
     },
     emptyMessage: {
       padding: '40px',
       textAlign: 'center' as const,
-      color: '#6c757d',
+      color: theme.colors.textSecondary,
       fontSize: '16px',
     },
     loadingMessage: {
       padding: '40px',
       textAlign: 'center' as const,
-      color: '#6c757d',
+      color: theme.colors.textSecondary,
       fontSize: '16px',
     },
   }

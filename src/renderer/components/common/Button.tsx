@@ -1,6 +1,6 @@
 import React from 'react'
+import { theme } from '../../styles/theme'
 
-// coupang-return 페이지 버튼 스타일 기반 공통 버튼 컴포넌트
 export type ButtonVariant = 'primary' | 'secondary' | 'danger' | 'info' | 'default'
 
 interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
@@ -8,19 +8,19 @@ interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
 }
 
 const variantStyles: Record<ButtonVariant, React.CSSProperties> = {
-  primary:   { backgroundColor: '#4CAF50', color: 'white', border: 'none' },
-  secondary: { backgroundColor: '#6c757d', color: 'white', border: 'none' },
-  danger:    { backgroundColor: '#dc3545', color: 'white', border: 'none' },
-  info:      { backgroundColor: '#007bff', color: 'white', border: 'none' },
-  default:   { backgroundColor: 'white',   color: '#333',  border: '1px solid #ddd' },
+  primary:   { backgroundColor: theme.colors.primary,   color: 'white', border: 'none' },
+  secondary: { backgroundColor: theme.colors.secondary, color: 'white', border: 'none' },
+  danger:    { backgroundColor: theme.colors.danger,    color: 'white', border: 'none' },
+  info:      { backgroundColor: theme.colors.info,      color: 'white', border: 'none' },
+  default:   { backgroundColor: 'white', color: theme.colors.textPrimary, border: `1px solid ${theme.colors.border}` },
 }
 
 const hoverColors: Record<ButtonVariant, string> = {
-  primary:   '#45a049',
-  secondary: '#5a6268',
-  danger:    '#c82333',
-  info:      '#0056b3',
-  default:   '#f8f9fa',
+  primary:   theme.colors.primaryHover,
+  secondary: theme.colors.secondaryHover,
+  danger:    theme.colors.dangerHover,
+  info:      theme.colors.infoHover,
+  default:   theme.colors.bgHover,
 }
 
 const Button: React.FC<ButtonProps> = ({
@@ -33,10 +33,11 @@ const Button: React.FC<ButtonProps> = ({
   ...rest
 }) => {
   const combinedStyle: React.CSSProperties = {
-    padding: '10px 20px',
-    borderRadius: '4px',
+    padding: '10px 22px',
+    borderRadius: theme.radius.md,
     fontSize: '14px',
-    transition: 'background-color 0.3s',
+    fontWeight: '500',
+    transition: 'background-color 0.2s, border-color 0.2s',
     cursor: disabled ? 'not-allowed' : 'pointer',
     opacity: disabled ? 0.6 : 1,
     position: 'relative',
@@ -47,7 +48,7 @@ const Button: React.FC<ButtonProps> = ({
   const handleMouseEnter = (e: React.MouseEvent<HTMLButtonElement>) => {
     if (!disabled) {
       e.currentTarget.style.backgroundColor = hoverColors[variant]
-      if (variant === 'default') e.currentTarget.style.borderColor = '#999'
+      if (variant === 'default') e.currentTarget.style.borderColor = theme.colors.secondary
     }
     onMouseEnter?.(e)
   }
@@ -55,7 +56,7 @@ const Button: React.FC<ButtonProps> = ({
   const handleMouseLeave = (e: React.MouseEvent<HTMLButtonElement>) => {
     if (!disabled) {
       e.currentTarget.style.backgroundColor = variantStyles[variant].backgroundColor as string
-      if (variant === 'default') e.currentTarget.style.borderColor = '#ddd'
+      if (variant === 'default') e.currentTarget.style.borderColor = theme.colors.border
     }
     onMouseLeave?.(e)
   }

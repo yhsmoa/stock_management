@@ -1,0 +1,229 @@
+/* ================================================================
+   사입관리 (PurchaseManagement) 전용 스타일
+   - 클래스 접두어 purchase- 로 분리하여 스타일 간섭 방지
+   ================================================================ */
+
+/* ── 컨테이너 ────────────────────────────────────────────────── */
+.purchase-container {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding: 0 16px 16px;
+}
+
+/* ── 상단 헤더 (타이틀 가운데 + 버튼 오른쪽) ─────────────────── */
+.purchase-header {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px 0;
+  flex-shrink: 0;
+}
+
+.purchase-title {
+  font-size: 20px;
+  font-weight: 700;
+  color: #1F2937;
+  margin: 0;
+}
+
+.purchase-header-actions {
+  position: absolute;
+  right: 0;
+  display: flex;
+  gap: 8px;
+}
+
+.purchase-btn {
+  padding: 8px 18px;
+  border: none;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+  color: white;
+  background-color: #4A8CF7;
+}
+
+.purchase-btn:hover {
+  background-color: #3A7CE6;
+}
+
+/* ── 검색 입력폼 (가운데 상단, 타원형) ───────────────────────── */
+.purchase-search-bar {
+  display: flex;
+  align-self: center;
+  margin-bottom: 12px;
+  flex-shrink: 0;
+  border: 1px solid #E5E7EB;
+  border-radius: 9999px;
+  overflow: hidden;
+  background: white;
+  width: 100%;
+  max-width: 1440px;
+}
+
+.purchase-search-input {
+  flex: 1;
+  padding: 24px 28px;
+  border: none;
+  font-size: 15px;
+  outline: none;
+  min-width: 0;
+}
+
+.purchase-search-input::placeholder {
+  color: #9CA3AF;
+}
+
+/* ── 테이블 섹션 (화면 가득) ─────────────────────────────────── */
+.purchase-table-section {
+  flex: 1;
+  background: white;
+  border-radius: 10px;
+  border: 1px solid #E5E7EB;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  min-height: 0;
+}
+
+.purchase-table-wrapper {
+  flex: 1;
+  overflow: auto;
+}
+
+.purchase-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+
+/* ── 테이블 헤더 ─────────────────────────────────────────────── */
+.purchase-table thead {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+.purchase-table th {
+  padding: 10px 6px;
+  text-align: center;
+  font-weight: 600;
+  color: #6B7280;
+  font-size: 12px;
+  background-color: #F8FAFC;
+  border-bottom: 1px solid #E5E7EB;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.purchase-table th.col-product {
+  text-align: left;
+  padding-left: 10px;
+}
+
+.purchase-table th.col-checkbox {
+  width: 34px;
+}
+
+/* ── 테이블 셀 ───────────────────────────────────────────────── */
+.purchase-table td {
+  padding: 8px 6px;
+  border-bottom: 1px solid #F3F4F6;
+  font-size: 12px;
+  color: #374151;
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.purchase-table td.col-product {
+  text-align: left;
+  padding-left: 10px;
+}
+
+.purchase-table tbody tr:hover {
+  background-color: #F8FAFC;
+}
+
+.purchase-table-empty {
+  text-align: center;
+  color: #9CA3AF;
+  padding: 60px 16px !important;
+  font-size: 14px;
+}
+
+/* ── 체크박스 ────────────────────────────────────────────────── */
+.purchase-checkbox {
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+  accent-color: #4A8CF7;
+}
+
+/* ── 로딩 상태 ───────────────────────────────────────────────── */
+.purchase-loading {
+  text-align: center;
+  padding: 60px;
+  color: #9CA3AF;
+  font-size: 14px;
+}
+
+/* ── 페이지네이션 ────────────────────────────────────────────── */
+.purchase-pagination {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 16px;
+  border-top: 1px solid #F3F4F6;
+  flex-shrink: 0;
+}
+
+.purchase-pagination-info {
+  color: #6B7280;
+  font-size: 13px;
+}
+
+.purchase-pagination-controls {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+
+.purchase-pagination-btn {
+  padding: 6px 10px;
+  border: 1px solid #E5E7EB;
+  background: white;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+  transition: all 0.2s;
+  min-width: 34px;
+}
+
+.purchase-pagination-btn:hover:not(:disabled) {
+  background: #F8FAFC;
+  border-color: #4A8CF7;
+}
+
+.purchase-pagination-btn.active {
+  background: #4A8CF7;
+  color: white;
+  border-color: #4A8CF7;
+}
+
+.purchase-pagination-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.purchase-pagination-ellipsis {
+  padding: 6px 2px;
+  color: #9CA3AF;
+  font-size: 13px;
+}

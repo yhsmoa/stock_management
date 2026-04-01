@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react'
+import { theme } from '../styles/theme'
 import Button from '../components/common/Button'
 import ExportTable from '../components/export/ExportTable'
 import type { Export as ExportType } from '../types/export'
@@ -452,7 +453,7 @@ const Export: React.FC = () => {
     },
     header: {
       fontSize: '28px',
-      color: '#333',
+      color: theme.colors.textPrimary,
       margin: 0,
     },
     buttonContainer: {
@@ -460,10 +461,8 @@ const Export: React.FC = () => {
       gap: '10px',
     },
     inputFormContainer: {
-      backgroundColor: 'white',
-      borderRadius: '8px',
+      ...theme.card,
       padding: '20px',
-      boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
       marginBottom: '20px',
     },
     // 로케이션 | Q바코드 | 정밀 Q바코드 — 3컬럼 레이아웃
@@ -478,10 +477,10 @@ const Export: React.FC = () => {
     input: {
       width: '100%',
       padding: '24px 12px',
-      borderColor: '#d0d0d0',
+      borderColor: theme.colors.border,
       borderWidth: '2px',
       borderStyle: 'solid',
-      borderRadius: '4px',
+      borderRadius: theme.radius.md,
       fontSize: '30px',
       transition: 'all 0.3s',
       outline: 'none',
@@ -490,12 +489,12 @@ const Export: React.FC = () => {
       caretColor: 'transparent',
     },
     inputActive: {
-      borderColor: '#4CAF50',
+      borderColor: theme.colors.primary,
       borderWidth: '3px',
     },
     /** 정밀 Q 바코드 — 활성 시 파란색 테두리로 일반 Q 바코드와 구분 */
     inputActivePrecise: {
-      borderColor: '#007bff',
+      borderColor: theme.colors.info,
       borderWidth: '3px',
     },
     hiddenFileInput: {
@@ -526,7 +525,7 @@ const Export: React.FC = () => {
           <Button variant="danger" onClick={handleDeleteSelected}>
             삭제
           </Button>
-          <span style={{ alignSelf: 'center', color: '#d1d5db', fontSize: '18px', userSelect: 'none' }}>|</span>
+          <span style={{ alignSelf: 'center', color: theme.colors.border, fontSize: '18px', userSelect: 'none' }}>|</span>
           <Button variant="secondary" onClick={handleLabelBasic}>
             라벨(기본)
           </Button>
@@ -606,27 +605,23 @@ const Export: React.FC = () => {
       {/* 업로드 진행 모달 */}
       {isUploading && (
         <div style={{
-          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
-          backgroundColor: 'rgba(0,0,0,0.5)',
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          zIndex: 9999,
+          ...theme.modal.overlay,
         }}>
           <div style={{
-            backgroundColor: 'white', borderRadius: '8px',
-            padding: '30px', minWidth: '400px',
-            boxShadow: '0 4px 6px rgba(0,0,0,0.1)',
+            ...theme.modal.content,
+            minWidth: '400px',
           }}>
-            <h3 style={{ marginTop: 0, marginBottom: '20px', color: '#333' }}>
+            <h3 style={{ marginTop: 0, marginBottom: '20px', color: theme.colors.textPrimary }}>
               엑셀 업로드 중
             </h3>
             <div style={{ marginBottom: '15px' }}>
               <div style={{
                 width: '100%', height: '30px',
-                backgroundColor: '#e0e0e0', borderRadius: '15px', overflow: 'hidden',
+                backgroundColor: theme.colors.borderLight, borderRadius: theme.radius.full, overflow: 'hidden',
               }}>
                 <div style={{
                   width: `${uploadProgress}%`, height: '100%',
-                  backgroundColor: '#4CAF50', transition: 'width 0.3s ease',
+                  backgroundColor: theme.colors.primary, transition: 'width 0.3s ease',
                   display: 'flex', alignItems: 'center', justifyContent: 'center',
                   color: 'white', fontWeight: 'bold',
                 }}>
@@ -634,7 +629,7 @@ const Export: React.FC = () => {
                 </div>
               </div>
             </div>
-            <p style={{ textAlign: 'center', color: '#666', marginBottom: 0 }}>
+            <p style={{ textAlign: 'center', color: theme.colors.textSecondary, marginBottom: 0 }}>
               {uploadStatus}
             </p>
           </div>

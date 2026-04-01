@@ -1,6 +1,7 @@
 import React, { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { loginUser } from '../services/supabase'
+import { theme } from '../styles/theme'
 import type { LoginFormData } from '../types/auth'
 
 const Login: React.FC = () => {
@@ -65,22 +66,22 @@ const Login: React.FC = () => {
         justifyContent: 'center',
         alignItems: 'center',
         height: '100vh',
-        backgroundColor: '#f5f5f5',
+        backgroundColor: theme.colors.bgPage,
       }}
     >
       <div
         style={{
           backgroundColor: 'white',
           padding: '40px',
-          borderRadius: '8px',
-          boxShadow: '0 2px 10px rgba(0,0,0,0.1)',
+          borderRadius: theme.radius.xl,
+          boxShadow: theme.shadows.lg,
           width: '400px',
         }}
       >
-        <h1 style={{ textAlign: 'center', marginBottom: '10px', fontSize: '24px', color: '#333' }}>
+        <h1 style={{ textAlign: 'center', marginBottom: '10px', fontSize: '24px', color: theme.colors.textPrimary }}>
           stock-management
         </h1>
-        <h2 style={{ textAlign: 'center', marginBottom: '30px', fontSize: '18px', color: '#666' }}>
+        <h2 style={{ textAlign: 'center', marginBottom: '30px', fontSize: '18px', color: theme.colors.textSecondary }}>
           로그인
         </h2>
 
@@ -88,7 +89,7 @@ const Login: React.FC = () => {
           <div style={{ marginBottom: '20px' }}>
             <label
               htmlFor="user_id"
-              style={{ display: 'block', marginBottom: '8px', fontSize: '14px', color: '#333' }}
+              style={{ display: 'block', marginBottom: '8px', fontSize: '14px', color: theme.colors.textPrimary }}
             >
               아이디
             </label>
@@ -102,8 +103,8 @@ const Login: React.FC = () => {
               style={{
                 width: '100%',
                 padding: '10px',
-                border: '1px solid #ddd',
-                borderRadius: '4px',
+                border: `1px solid ${theme.colors.border}`,
+                borderRadius: theme.radius.md,
                 fontSize: '14px',
                 boxSizing: 'border-box',
               }}
@@ -113,7 +114,7 @@ const Login: React.FC = () => {
           <div style={{ marginBottom: '20px' }}>
             <label
               htmlFor="password"
-              style={{ display: 'block', marginBottom: '8px', fontSize: '14px', color: '#333' }}
+              style={{ display: 'block', marginBottom: '8px', fontSize: '14px', color: theme.colors.textPrimary }}
             >
               패스워드
             </label>
@@ -127,8 +128,8 @@ const Login: React.FC = () => {
               style={{
                 width: '100%',
                 padding: '10px',
-                border: '1px solid #ddd',
-                borderRadius: '4px',
+                border: `1px solid ${theme.colors.border}`,
+                borderRadius: theme.radius.md,
                 fontSize: '14px',
                 boxSizing: 'border-box',
               }}
@@ -140,9 +141,9 @@ const Login: React.FC = () => {
               style={{
                 marginBottom: '20px',
                 padding: '10px',
-                backgroundColor: '#fee',
-                color: '#c33',
-                borderRadius: '4px',
+                backgroundColor: theme.colors.dangerLight,
+                color: theme.colors.danger,
+                borderRadius: theme.radius.md,
                 fontSize: '14px',
               }}
             >
@@ -156,10 +157,11 @@ const Login: React.FC = () => {
             style={{
               width: '100%',
               padding: '12px',
-              backgroundColor: '#3498db',
+              backgroundColor: theme.colors.primary,
               color: 'white',
               border: 'none',
-              borderRadius: '4px',
+              borderRadius: theme.radius.md,
+              fontWeight: '600',
               fontSize: '16px',
               cursor: isLoading ? 'not-allowed' : 'pointer',
               marginBottom: '10px',
@@ -175,10 +177,11 @@ const Login: React.FC = () => {
             style={{
               width: '100%',
               padding: '12px',
-              backgroundColor: '#95a5a6',
+              backgroundColor: theme.colors.secondary,
               color: 'white',
               border: 'none',
-              borderRadius: '4px',
+              borderRadius: theme.radius.md,
+              fontWeight: '500',
               fontSize: '16px',
               cursor: 'pointer',
             }}
