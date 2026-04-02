@@ -1,12 +1,19 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import './PurchaseManagement.css'
+import {
+  fetchAllRgProducts,
+  fetchDetailsAndMap,
+  fetchRgItems,
+  saveRgItems,
+} from '../services/purchaseService'
+import type { RgItem } from '../types/purchase'
 
 /* ================================================================
    사입관리 (PurchaseManagement)
-   - 상단: 타이틀(가운데) + 엑셀 버튼(오른쪽)
+   - 상단: 타이틀(가운데) + 업데이트 버튼(오른쪽)
    - 검색폼: 타원형 검색바 (보드 없음)
    - 테이블: 화면 가득 채움, 컬럼 타이트
-   - 데이터/스타일은 쿠팡관리와 완전 독립
+   - 데이터: 쿠팡 로켓그로스 API → Supabase si_rg_items
    ================================================================ */
 
 // ── 상수 ──────────────────────────────────────────────────────
@@ -42,20 +49,102 @@ const COLUMNS: Column[] = [
   { key: 'note',     label: 'note',     width: '80px' },
 ]
 
+// ── 사용자 ID 조회 (프로젝트 공통 패턴) ───────────────────────
+const getUserId = (): string | null => {
+  const userStr = localStorage.getItem('user')
+  if (!userStr) return null
+  try {
+    return JSON.parse(userStr)?.id ?? null
+  } catch {
+    return null
+  }
+}
+
 const PurchaseManagement: React.FC = () => {
   /* ── 검색 상태 ─────────────────────────────────────────────── */
   const [searchValue, setSearchValue] = useState('')
 
   /* ── 데이터 & 페이지네이션 상태 ────────────────────────────── */
-  const [items] = useState<any[]>([])
-  const [loading] = useState(false)
-  const [totalCount] = useState(0)
+  const [items, setItems] = useState<RgItem[]>([])
+  const [loading, setLoading] = useState(false)
+  const [totalCount, setTotalCount] = useState(0)
   const [currentPage, setCurrentPage] = useState(1)
+
+  /* ── 업데이트 버튼 로딩 & 진행률 상태 ────────────────────────── */
+  const [updating, setUpdating] = useState(false)
+  const [updateProgress, setUpdateProgress] = useState('')
 
   /* ── 체크박스 상태 ─────────────────────────────────────────── */
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
 
   const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE))
+
+  /* ── 현재 페이지에 표시할 아이템 ─────────────────────────────── */
+  const startIdx = (currentPage - 1) * PAGE_SIZE
+  const pageItems = items.slice(startIdx, startIdx + PAGE_SIZE)
+
+  /* ── 페이지 로드 시 si_rg_items 조회 ─────────────────────────── */
+  useEffect(() => {
+    const loadItems = async () => {
+      const userId = getUserId()
+      if (!userId) return
+
+      setLoading(true)
+      try {
+        const data = await fetchRgItems(userId)
+        setItems(data)
+        setTotalCount(data.length)
+      } catch (error) {
+        console.error('si_rg_items 로드 실패:', error)
+      } finally {
+        setLoading(false)
+      }
+    }
+    loadItems()
+  }, [])
+
+  /* ── 업데이트 핸들러: 쿠팡 전체 데이터 → Supabase 동기화 ────── */
+  const handleUpdate = async () => {
+    const userId = getUserId()
+    if (!userId) {
+      alert('사용자 정보를 찾을 수 없습니다. 다시 로그인해주세요.')
+      return
+    }
+
+    setUpdating(true)
+    setUpdateProgress('목록 수집 중...')
+    try {
+      // STEP 1: 전체 상품 목록 수집 (nextToken 순회)
+      const products = await fetchAllRgProducts((count) => {
+        setUpdateProgress(`목록 수집 중... (${count}개)`)
+      })
+
+      // STEP 2: 병렬 배치 상세 조회 (동시 3건) → DB 행 변환
+      setUpdateProgress(`상세 조회 중... (0/${products.length})`)
+      const allRgItems = await fetchDetailsAndMap(products, userId, (done, total) => {
+        setUpdateProgress(`상세 조회 중... (${done}/${total})`)
+      })
+
+      // STEP 3: Supabase에 저장 (500건 배치)
+      setUpdateProgress(`저장 중... (${allRgItems.length}건)`)
+      const { success, errors } = await saveRgItems(allRgItems, userId)
+
+      // STEP 4: 테이블 새로고침
+      setUpdateProgress('새로고침...')
+      const refreshed = await fetchRgItems(userId)
+      setItems(refreshed)
+      setTotalCount(refreshed.length)
+      setCurrentPage(1)
+
+      alert(`업데이트 완료! (저장: ${success}건, 실패: ${errors}건)`)
+    } catch (error) {
+      console.error('[업데이트] 실패:', error)
+      alert('업데이트 중 오류가 발생했습니다.')
+    } finally {
+      setUpdating(false)
+      setUpdateProgress('')
+    }
+  }
 
   /* ── 검색 핸들러 (추후 구현) ───────────────────────────────── */
   const handleSearch = () => {
@@ -66,7 +155,7 @@ const PurchaseManagement: React.FC = () => {
   /* ── 전체 선택 / 해제 ──────────────────────────────────────── */
   const handleSelectAll = (checked: boolean) => {
     if (checked) {
-      setSelectedIds(new Set(items.map((_, i) => String(i))))
+      setSelectedIds(new Set(pageItems.map((_, i) => String(startIdx + i))))
     } else {
       setSelectedIds(new Set())
     }
@@ -85,7 +174,6 @@ const PurchaseManagement: React.FC = () => {
   const handlePageChange = (page: number) => {
     if (page < 1 || page > totalPages) return
     setCurrentPage(page)
-    // TODO: 해당 페이지 데이터 fetch
   }
 
   /* ── 페이지 번호 배열 생성 ─────────────────────────────────── */
@@ -130,9 +218,10 @@ const PurchaseManagement: React.FC = () => {
           </label>
           <button
             className="purchase-btn"
-            onClick={() => { /* TODO: 엑셀 저장 핸들러 */ }}
+            onClick={handleUpdate}
+            disabled={updating}
           >
-            엑셀 저장하기
+            {updating ? (updateProgress || '업데이트 중...') : '업데이트'}
           </button>
         </div>
       </div>
@@ -172,7 +261,7 @@ const PurchaseManagement: React.FC = () => {
                       <input
                         type="checkbox"
                         className="purchase-checkbox"
-                        checked={items.length > 0 && selectedIds.size === items.length}
+                        checked={pageItems.length > 0 && selectedIds.size === pageItems.length}
                         onChange={(e) => handleSelectAll(e.target.checked)}
                       />
                     </th>
@@ -186,7 +275,7 @@ const PurchaseManagement: React.FC = () => {
 
                 {/* ── tbody ─────────────────────────────────── */}
                 <tbody>
-                  {items.length === 0 ? (
+                  {pageItems.length === 0 ? (
                     <tr>
                       <td
                         colSpan={COLUMNS.length + 1}
@@ -196,10 +285,10 @@ const PurchaseManagement: React.FC = () => {
                       </td>
                     </tr>
                   ) : (
-                    items.map((_item, idx) => {
-                      const rowId = String(idx)
+                    pageItems.map((item, idx) => {
+                      const rowId = String(startIdx + idx)
                       return (
-                        <tr key={rowId}>
+                        <tr key={item.seller_product_item_id || rowId}>
                           <td>
                             <input
                               type="checkbox"
@@ -210,7 +299,17 @@ const PurchaseManagement: React.FC = () => {
                           </td>
                           {COLUMNS.map((c) => (
                             <td key={c.key} className={c.isProduct ? 'col-product' : ''}>
-                              -
+                              {/* ── 상품정보 열: 상품명, 옵션명 (한줄) ──────── */}
+                              {c.key === 'product' ? (
+                                <span>
+                                  {item.seller_product_name || '-'}
+                                  {item.item_name ? `, ${item.item_name}` : ''}
+                                </span>
+                              ) : c.key === 'price' ? (
+                                item.sale_price ? item.sale_price.toLocaleString() : '-'
+                              ) : (
+                                '-'
+                              )}
                             </td>
                           ))}
                         </tr>
