@@ -1,19 +1,27 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
+import * as XLSX from 'xlsx'
 import './PurchaseManagement.css'
 import {
   fetchAllRgProducts,
-  fetchDetailsAndMap,
+  mapListItemToRgItems,
   fetchRgItems,
   saveRgItems,
+  validateItemDataExcel,
+  parseItemDataExcel,
+  saveRgItemData,
 } from '../services/purchaseService'
+import { supabase } from '../services/supabase'
 import type { RgItem } from '../types/purchase'
+import ProductDetailPanel from '../components/purchase/ProductDetailPanel'
+import UploadProgressModal from '../components/UploadProgressModal'
 
 /* ================================================================
    사입관리 (PurchaseManagement)
    - 상단: 타이틀(가운데) + 업데이트 버튼(오른쪽)
-   - 검색폼: 타원형 검색바 (보드 없음)
+   - 검색폼: 타원형 검색바
    - 테이블: 화면 가득 채움, 컬럼 타이트
    - 데이터: 쿠팡 로켓그로스 API → Supabase si_rg_items
+   - 입력 열: 인라인 편집 (숫자만, 노란색 배경)
    ================================================================ */
 
 // ── 상수 ──────────────────────────────────────────────────────
@@ -23,13 +31,14 @@ const PAGE_SIZE = 100
 interface Column {
   key: string
   label: string
-  width: string       // CSS width (colgroup)
-  isProduct?: boolean // 상품정보 컬럼 여부 (좌측 정렬)
+  width: string
+  isProduct?: boolean
+  isInput?: boolean    // 인라인 편집 컬럼 여부
 }
 
 const COLUMNS: Column[] = [
   { key: 'product',  label: '상품정보', width: '220px', isProduct: true },
-  { key: 'input',    label: '입력',     width: '52px' },
+  { key: 'input',    label: '입력',     width: '52px',  isInput: true },
   { key: 'c_in',     label: 'C.in',     width: '52px' },
   { key: 'c_stock',  label: 'C.재고',   width: '56px' },
   { key: 'order',    label: '주문',     width: '52px' },
@@ -77,11 +86,29 @@ const PurchaseManagement: React.FC = () => {
   /* ── 체크박스 상태 ─────────────────────────────────────────── */
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
 
+  /* ── 인라인 편집 상태 (입력 열) ──────────────────────────────── */
+  const [editingInputId, setEditingInputId] = useState<string | null>(null)
+  const [editingInputValue, setEditingInputValue] = useState('')
+
+  /* ── 상품 상세 패널 상태 ────────────────────────────────────── */
+  const [detailPanelOpen, setDetailPanelOpen] = useState(false)
+  const [detailItem, setDetailItem] = useState<RgItem | null>(null)
+
+  /* ── 엑셀 업로드 상태 ──────────────────────────────────────── */
+  const [isUploading, setIsUploading] = useState(false)
+  const [uploadProgress, setUploadProgress] = useState(0)
+  const [uploadStatus, setUploadStatus] = useState('')
+  const fileInputRef = useRef<HTMLInputElement>(null)
+
   const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE))
 
   /* ── 현재 페이지에 표시할 아이템 ─────────────────────────────── */
   const startIdx = (currentPage - 1) * PAGE_SIZE
   const pageItems = items.slice(startIdx, startIdx + PAGE_SIZE)
+
+  // ══════════════════════════════════════════════════════════════
+  // 데이터 로드 & 업데이트
+  // ══════════════════════════════════════════════════════════════
 
   /* ── 페이지 로드 시 si_rg_items 조회 ─────────────────────────── */
   useEffect(() => {
@@ -119,21 +146,17 @@ const PurchaseManagement: React.FC = () => {
         setUpdateProgress(`목록 수집 중... (${count}개)`)
       })
 
-      // STEP 2: 병렬 배치 상세 조회 (동시 3건) → DB 행 변환
-      setUpdateProgress(`상세 조회 중... (0/${products.length})`)
-      const allRgItems = await fetchDetailsAndMap(products, userId, (done, total) => {
-        setUpdateProgress(`상세 조회 중... (${done}/${total})`)
-      })
+      // STEP 2: 목록 데이터 → DB 행 변환 (상세 API 호출 없이 빠르게 처리)
+      // - 바코드·가격 등 상세 데이터는 상품 클릭 시 개별 조회
+      const allRgItems = products.flatMap((p) => mapListItemToRgItems(p, userId))
 
-      // STEP 3: Supabase에 저장 (500건 배치)
+      // STEP 3: Supabase에 저장 (병렬 배치 삽입)
       setUpdateProgress(`저장 중... (${allRgItems.length}건)`)
       const { success, errors } = await saveRgItems(allRgItems, userId)
 
-      // STEP 4: 테이블 새로고침
-      setUpdateProgress('새로고침...')
-      const refreshed = await fetchRgItems(userId)
-      setItems(refreshed)
-      setTotalCount(refreshed.length)
+      // STEP 4: 로컬 데이터로 즉시 테이블 갱신 (재조회 불필요)
+      setItems(allRgItems as RgItem[])
+      setTotalCount(allRgItems.length)
       setCurrentPage(1)
 
       alert(`업데이트 완료! (저장: ${success}건, 실패: ${errors}건)`)
@@ -145,6 +168,136 @@ const PurchaseManagement: React.FC = () => {
       setUpdateProgress('')
     }
   }
+
+  // ══════════════════════════════════════════════════════════════
+  // 엑셀 업로드 (재고건강 SKU → si_rg_item_data)
+  // ══════════════════════════════════════════════════════════════
+
+  /* ── 엑셀 파일 선택 → 검증 → 파싱 → 저장 ──────────────────── */
+  const handleExcelUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0]
+    if (!file) return
+
+    const userId = getUserId()
+    if (!userId) {
+      alert('사용자 정보를 찾을 수 없습니다. 다시 로그인해주세요.')
+      return
+    }
+
+    setIsUploading(true)
+    setUploadProgress(0)
+    setUploadStatus('파일을 읽는 중...')
+
+    try {
+      // STEP 1: 파일 읽기 → XLSX 파싱 (Uint8Array + type:'array'로 ZIP 경고 방지)
+      const raw = await file.arrayBuffer()
+      const workbook = XLSX.read(new Uint8Array(raw), { type: 'array' })
+      const worksheet = workbook.Sheets[workbook.SheetNames[0]]
+      const rows = XLSX.utils.sheet_to_json(worksheet, { header: 1 }) as any[][]
+
+      setUploadProgress(10)
+      setUploadStatus('헤더 검증 중...')
+
+      // STEP 2: 헤더 검증 (Row 0)
+      if (!rows[0] || !validateItemDataExcel(rows[0])) {
+        alert('올바른 재고건강 SKU 엑셀 파일이 아닙니다.\n(Inventory ID, Option ID, SKU ID, Product name, Option name 헤더가 필요합니다)')
+        return
+      }
+
+      setUploadProgress(20)
+      setUploadStatus('데이터 파싱 중...')
+
+      // STEP 3: 데이터 파싱 (Row 2~)
+      const parsedItems = parseItemDataExcel(rows, userId)
+
+      if (parsedItems.length === 0) {
+        alert('파싱된 데이터가 없습니다. 엑셀 파일을 확인해주세요.')
+        return
+      }
+
+      setUploadProgress(40)
+      setUploadStatus(`${parsedItems.length}건 저장 중...`)
+
+      // STEP 4: Supabase 저장 (delete → batch insert)
+      const { success, errors } = await saveRgItemData(parsedItems, userId)
+
+      setUploadProgress(100)
+      setUploadStatus('완료!')
+
+      alert(`엑셀 업로드 완료!\n성공: ${success.toLocaleString()}건, 실패: ${errors.toLocaleString()}건`)
+    } catch (err: any) {
+      console.error('[엑셀 업로드] 실패:', err)
+      alert(`엑셀 업로드 중 오류가 발생했습니다.\n${err.message || ''}`)
+    } finally {
+      // 파일 input 초기화 (동일 파일 재업로드 허용)
+      if (fileInputRef.current) fileInputRef.current.value = ''
+
+      setTimeout(() => {
+        setIsUploading(false)
+        setUploadProgress(0)
+        setUploadStatus('')
+      }, 1500)
+    }
+  }
+
+  // ══════════════════════════════════════════════════════════════
+  // 인라인 편집 (입력 열)
+  // ══════════════════════════════════════════════════════════════
+
+  /* ── 입력 셀 클릭 → 편집 모드 진입 ──────────────────────────── */
+  const handleInputClick = (itemId: string, currentValue: number | null) => {
+    setEditingInputId(itemId)
+    setEditingInputValue(currentValue != null ? String(currentValue) : '')
+  }
+
+  /* ── 입력 셀 blur → 값 저장 ─────────────────────────────────── */
+  const handleInputBlur = async (itemId: string, originalValue: number | null) => {
+    setEditingInputId(null)
+
+    // 입력값 파싱 (빈 문자열 → null)
+    const trimmed = editingInputValue.trim()
+    const newValue = trimmed === '' ? null : Number(trimmed)
+
+    // 값 변경 없으면 스킵
+    if (newValue === originalValue) return
+
+    // 로컬 상태 즉시 업데이트 (낙관적 UI)
+    setItems(prev =>
+      prev.map(item =>
+        item.id === itemId ? { ...item, input: newValue } : item,
+      ),
+    )
+
+    // Supabase에 저장
+    const { error } = await supabase
+      .from('si_rg_items')
+      .update({ input: newValue })
+      .eq('id', itemId)
+
+    if (error) {
+      console.error('입력값 저장 오류:', error)
+      // 실패 시 원래 값으로 롤백
+      setItems(prev =>
+        prev.map(item =>
+          item.id === itemId ? { ...item, input: originalValue } : item,
+        ),
+      )
+    }
+  }
+
+  // ══════════════════════════════════════════════════════════════
+  // 상품 상세 패널
+  // ══════════════════════════════════════════════════════════════
+
+  /* ── 상품정보 셀 클릭 → 상세 패널 열기 ─────────────────────── */
+  const handleProductClick = (item: RgItem) => {
+    setDetailItem(item)
+    setDetailPanelOpen(true)
+  }
+
+  // ══════════════════════════════════════════════════════════════
+  // 검색 & 선택
+  // ══════════════════════════════════════════════════════════════
 
   /* ── 검색 핸들러 (추후 구현) ───────────────────────────────── */
   const handleSearch = () => {
@@ -169,6 +322,10 @@ const PurchaseManagement: React.FC = () => {
       return next
     })
   }
+
+  // ══════════════════════════════════════════════════════════════
+  // 페이지네이션
+  // ══════════════════════════════════════════════════════════════
 
   /* ── 페이지 변경 핸들러 ────────────────────────────────────── */
   const handlePageChange = (page: number) => {
@@ -197,9 +354,72 @@ const PurchaseManagement: React.FC = () => {
     return pages
   }
 
-  // ════════════════════════════════════════════════════════════
+  // ══════════════════════════════════════════════════════════════
+  // 셀 렌더링 헬퍼
+  // ══════════════════════════════════════════════════════════════
+
+  /** 각 컬럼 키에 따른 셀 콘텐츠 렌더링 */
+  const renderCell = (col: Column, item: RgItem) => {
+    switch (col.key) {
+      /* ── 상품정보 열: 상품명 + 옵션명 ──────────────────────── */
+      case 'product':
+        return (
+          <span>
+            {item.seller_product_name || '-'}
+            {item.item_name ? `, ${item.item_name}` : ''}
+          </span>
+        )
+
+      /* ── 입력 열: 인라인 편집 (숫자만) ──────────────────────── */
+      case 'input':
+        if (editingInputId === item.id) {
+          return (
+            <input
+              className="purchase-input-cell"
+              type="text"
+              inputMode="numeric"
+              autoFocus
+              value={editingInputValue}
+              onChange={(e) => {
+                // 숫자만 허용 (빈 문자열도 허용)
+                if (e.target.value === '' || /^\d+$/.test(e.target.value)) {
+                  setEditingInputValue(e.target.value)
+                }
+              }}
+              onBlur={() => handleInputBlur(item.id!, item.input)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault()
+                  // 현재 행 저장 후 다음 행 입력 셀 활성화
+                  handleInputBlur(item.id!, item.input).then(() => {
+                    const currentIdx = pageItems.findIndex(pi => pi.id === item.id)
+                    const nextItem = pageItems[currentIdx + 1]
+                    if (nextItem?.id) {
+                      handleInputClick(nextItem.id, nextItem.input)
+                    }
+                  })
+                }
+              }}
+            />
+          )
+        }
+        return (
+          <span>{item.input != null ? item.input : ''}</span>
+        )
+
+      /* ── 가격 열: 숫자 포맷 ────────────────────────────────── */
+      case 'price':
+        return item.sale_price ? item.sale_price.toLocaleString() : '-'
+
+      /* ── 기타 열: 기본값 ───────────────────────────────────── */
+      default:
+        return '-'
+    }
+  }
+
+  // ══════════════════════════════════════════════════════════════
   // 렌더링
-  // ════════════════════════════════════════════════════════════
+  // ══════════════════════════════════════════════════════════════
   return (
     <div className="purchase-container">
 
@@ -210,10 +430,11 @@ const PurchaseManagement: React.FC = () => {
           <label className="purchase-btn" style={{ cursor: 'pointer' }}>
             엑셀 업로드
             <input
+              ref={fileInputRef}
               type="file"
               accept=".xlsx,.xls"
               style={{ display: 'none' }}
-              onChange={() => { /* TODO: 엑셀 업로드 핸들러 */ }}
+              onChange={handleExcelUpload}
             />
           </label>
           <button
@@ -248,7 +469,7 @@ const PurchaseManagement: React.FC = () => {
               <table className="purchase-table">
                 {/* ── colgroup: 열 너비 정의 ────────────────── */}
                 <colgroup>
-                  <col style={{ width: '34px' }} /> {/* 체크박스 */}
+                  <col style={{ width: '34px' }} />
                   {COLUMNS.map((c) => (
                     <col key={c.key} style={{ width: c.width }} />
                   ))}
@@ -266,7 +487,13 @@ const PurchaseManagement: React.FC = () => {
                       />
                     </th>
                     {COLUMNS.map((c) => (
-                      <th key={c.key} className={c.isProduct ? 'col-product' : ''}>
+                      <th
+                        key={c.key}
+                        className={
+                          c.isProduct ? 'col-product' :
+                          c.isInput ? 'col-input' : ''
+                        }
+                      >
                         {c.label}
                       </th>
                     ))}
@@ -288,7 +515,7 @@ const PurchaseManagement: React.FC = () => {
                     pageItems.map((item, idx) => {
                       const rowId = String(startIdx + idx)
                       return (
-                        <tr key={item.seller_product_item_id || rowId}>
+                        <tr key={item.id ?? `${item.seller_product_id}-${item.seller_product_item_id}-${idx}`}>
                           <td>
                             <input
                               type="checkbox"
@@ -298,18 +525,22 @@ const PurchaseManagement: React.FC = () => {
                             />
                           </td>
                           {COLUMNS.map((c) => (
-                            <td key={c.key} className={c.isProduct ? 'col-product' : ''}>
-                              {/* ── 상품정보 열: 상품명, 옵션명 (한줄) ──────── */}
-                              {c.key === 'product' ? (
-                                <span>
-                                  {item.seller_product_name || '-'}
-                                  {item.item_name ? `, ${item.item_name}` : ''}
-                                </span>
-                              ) : c.key === 'price' ? (
-                                item.sale_price ? item.sale_price.toLocaleString() : '-'
-                              ) : (
-                                '-'
-                              )}
+                            <td
+                              key={c.key}
+                              className={
+                                c.isProduct ? 'col-product' :
+                                c.isInput ? 'col-input' : ''
+                              }
+                              onClick={
+                                c.isProduct
+                                  ? () => handleProductClick(item)
+                                  : c.isInput && editingInputId !== item.id
+                                    ? () => handleInputClick(item.id!, item.input)
+                                    : undefined
+                              }
+                              style={c.isProduct || c.isInput ? { cursor: 'pointer' } : undefined}
+                            >
+                              {renderCell(c, item)}
                             </td>
                           ))}
                         </tr>
@@ -364,6 +595,20 @@ const PurchaseManagement: React.FC = () => {
           </>
         )}
       </div>
+      {/* ── 상품 상세 슬라이드 패널 ──────────────────────────── */}
+      <ProductDetailPanel
+        isOpen={detailPanelOpen}
+        onClose={() => setDetailPanelOpen(false)}
+        item={detailItem}
+      />
+
+      {/* ── 엑셀 업로드 프로그레스 모달 ───────────────────────── */}
+      <UploadProgressModal
+        isOpen={isUploading}
+        progress={uploadProgress}
+        status={uploadStatus}
+        title="재고건강 SKU 엑셀 업로드 중"
+      />
     </div>
   )
 }

@@ -148,6 +148,25 @@
   color: #000;
 }
 
+/* ── 입력 열 (연노란 배경, 인라인 편집) ────────────────────────── */
+.purchase-table th.col-input,
+.purchase-table td.col-input {
+  background-color: #FFFDE7;
+}
+
+.purchase-input-cell {
+  width: 100%;
+  height: 100%;
+  border: none;
+  outline: none;
+  background: transparent;
+  text-align: center;
+  font-size: 12px;
+  color: #374151;
+  padding: 0;
+  box-sizing: border-box;
+}
+
 .purchase-table tbody tr:hover {
   background-color: #F8FAFC;
 }
