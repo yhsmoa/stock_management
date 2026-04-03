@@ -81,13 +81,35 @@
   color: #9CA3AF;
 }
 
-/* ── 필터 툴바 (테이블 위, 좌측) ─────────────────────────────── */
+/* ── 필터 툴바 (좌: 필터, 우: 저장) ──────────────────────────── */
 .purchase-table-toolbar {
   display: flex;
   align-items: center;
-  gap: 6px;
+  justify-content: space-between;
   padding: 0 0 8px;
   flex-shrink: 0;
+}
+
+.purchase-toolbar-left {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.purchase-save-btn {
+  background-color: #4A8CF7 !important;
+  color: #fff !important;
+  border-color: #4A8CF7 !important;
+}
+
+.purchase-save-btn:hover:not(:disabled) {
+  background-color: #3B7DE6 !important;
+  border-color: #3B7DE6 !important;
+}
+
+.purchase-save-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .purchase-filter-btn {
@@ -241,10 +263,10 @@
   font-size: 14px;
 }
 
-/* ── 페이지네이션 ────────────────────────────────────────────── */
+/* ── 페이지네이션 (가운데 정렬) ───────────────────────────────── */
 .purchase-pagination {
   display: flex;
-  justify-content: space-between;
+  justify-content: center;
   align-items: center;
   padding: 10px 16px;
   border-top: 1px solid #F3F4F6;

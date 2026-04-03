@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useCallback } from 'react'
 import { theme } from '../../styles/theme'
 import { fetchRgProductDetail } from '../../services/purchaseService'
 import type { RgItem, CoupangProductDetail } from '../../types/purchase'
@@ -71,8 +71,9 @@ const styles = {
 
   /* ── 이미지 ──────────────────────────────────────────────────── */
   imageWrapper: {
-    width: '100%',
-    aspectRatio: '1',
+    width: '250px',
+    height: '250px',
+    alignSelf: 'center',
     borderRadius: theme.radius.lg,
     overflow: 'hidden',
     border: `1px solid ${theme.colors.borderLight}`,
@@ -180,6 +181,27 @@ const styles = {
     animation: 'spin 0.8s linear infinite',
   },
 
+  /* ── 클릭 복사 가능 요소 ─────────────────────────────────────── */
+  copyable: {
+    cursor: 'pointer',
+    transition: 'opacity 0.15s',
+  },
+
+  /* ── 복사 툴팁 ─────────────────────────────────────────────── */
+  copyTooltip: {
+    position: 'fixed' as const,
+    padding: '4px 10px',
+    backgroundColor: '#1F2937',
+    color: '#fff',
+    fontSize: '12px',
+    fontWeight: '500',
+    borderRadius: '6px',
+    pointerEvents: 'none' as const,
+    zIndex: 9999,
+    whiteSpace: 'nowrap' as const,
+    animation: 'fadeOut 1s ease forwards',
+  },
+
   /* ── 에러 ────────────────────────────────────────────────────── */
   errorMsg: {
     fontSize: theme.fontSize.xs,
@@ -190,10 +212,15 @@ const styles = {
 }
 
 // ── 스피너 키프레임 (인라인 삽입) ────────────────────────────────────
-const SPINNER_KEYFRAMES = `
+const PANEL_KEYFRAMES = `
 @keyframes spin {
   0%   { transform: rotate(0deg);   }
   100% { transform: rotate(360deg); }
+}
+@keyframes fadeOut {
+  0%   { opacity: 1; }
+  70%  { opacity: 1; }
+  100% { opacity: 0; }
 }
 `
 
@@ -208,6 +235,15 @@ const ProductDetailPanel: React.FC<ProductDetailPanelProps> = ({
   const [detail, setDetail] = useState<CoupangProductDetail | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [imgError, setImgError] = useState(false)
+  const [copyTooltip, setCopyTooltip] = useState<{ x: number; y: number; key: number } | null>(null)
+
+  /* ── 클릭 복사 핸들러 (마우스 위치에 "copy" 툴팁 표시) ──────── */
+  const handleCopy = useCallback((value: string | null | undefined, e: React.MouseEvent) => {
+    if (!value) return
+    navigator.clipboard.writeText(value)
+    setCopyTooltip({ x: e.clientX + 12, y: e.clientY - 8, key: Date.now() })
+    setTimeout(() => setCopyTooltip(null), 1000)
+  }, [])
 
   /* ── 패널 열릴 때 상세 API 호출 ──────────────────────────────── */
   useEffect(() => {
@@ -292,7 +328,7 @@ const ProductDetailPanel: React.FC<ProductDetailPanelProps> = ({
   return (
     <>
       {/* ── 스피너 키프레임 ──────────────────────────────────────── */}
-      <style>{SPINNER_KEYFRAMES}</style>
+      <style>{PANEL_KEYFRAMES}</style>
 
       {/* ── 오버레이 ─────────────────────────────────────────────── */}
       <div style={styles.overlay} onClick={onClose} />
@@ -345,32 +381,39 @@ const ProductDetailPanel: React.FC<ProductDetailPanelProps> = ({
                 )}
               </div>
 
-              {/* ── ID 배지 3개 ─────────────────────────────────── */}
+              {/* ── ID 배지 3개 (클릭 → 클립보드 복사) ──────────── */}
               <div style={styles.badgeGroup}>
-                <div style={styles.badge}>
-                  <span style={styles.badgeLabel}>노출상품 ID</span>
-                  <span style={styles.badgeValue}>{sellerProductId || '-'}</span>
-                </div>
-                <div style={styles.badge}>
-                  <span style={styles.badgeLabel}>등록상품 ID</span>
-                  <span style={styles.badgeValue}>{sellerProductItemId || '-'}</span>
-                </div>
-                <div style={styles.badge}>
-                  <span style={styles.badgeLabel}>옵션 ID</span>
-                  <span style={styles.badgeValue}>{vendorItemId || '-'}</span>
-                </div>
+                {[
+                  { label: '노출상품 ID', value: sellerProductId },
+                  { label: '등록상품 ID', value: sellerProductItemId },
+                  { label: '옵션 ID', value: vendorItemId },
+                ].map((b) => (
+                  <div
+                    key={b.label}
+                    style={{ ...styles.badge, ...styles.copyable }}
+                    onClick={(e) => handleCopy(b.value, e)}
+                    title="클릭하여 복사"
+                  >
+                    <span style={styles.badgeLabel}>{b.label}</span>
+                    <span style={styles.badgeValue}>{b.value || '-'}</span>
+                  </div>
+                ))}
               </div>
 
-              {/* ── 바코드 ─────────────────────────────────────── */}
-              <div style={styles.infoRow}>
-                <span style={styles.infoIcon}>📦</span>
+              {/* ── 바코드 (클릭 → 클립보드 복사) ────────────────── */}
+              <div
+                style={{ ...styles.infoRow, ...styles.copyable }}
+                onClick={(e) => handleCopy(barcode, e)}
+                title="클릭하여 복사"
+              >
+                <span style={styles.infoIcon}>𝄃𝄂𝄀𝄁𝄃</span>
                 <span style={styles.infoLabel}>바코드</span>
                 <span style={styles.infoValue}>{barcode || '-'}</span>
               </div>
 
               {/* ── 가격 ───────────────────────────────────────── */}
               <div style={styles.infoRow}>
-                <span style={styles.infoIcon}>💰</span>
+                <span style={styles.infoIcon}>🏷️</span>
                 <span style={styles.infoLabel}>가격</span>
                 <span style={styles.infoValue}>
                   {salePrice != null ? `${salePrice.toLocaleString()}원` : '-'}
@@ -380,6 +423,20 @@ const ProductDetailPanel: React.FC<ProductDetailPanelProps> = ({
           )}
         </div>
       </div>
+
+      {/* ── 복사 툴팁 (마우스 위치에 1초 표시) ──────────────── */}
+      {copyTooltip && (
+        <div
+          key={copyTooltip.key}
+          style={{
+            ...styles.copyTooltip,
+            left: copyTooltip.x,
+            top: copyTooltip.y,
+          }}
+        >
+          copy
+        </div>
+      )}
     </>
   )
 }

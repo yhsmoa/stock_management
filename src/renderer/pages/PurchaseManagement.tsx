@@ -74,6 +74,7 @@ const getUserId = (): string | null => {
 const PurchaseManagement: React.FC = () => {
   /* ── 검색 상태 ─────────────────────────────────────────────── */
   const [searchValue, setSearchValue] = useState('')
+  const [searchQuery, setSearchQuery] = useState('')
 
   /* ── 데이터 & 페이지네이션 상태 ────────────────────────────── */
   const [items, setItems] = useState<RgItem[]>([])
@@ -94,6 +95,10 @@ const PurchaseManagement: React.FC = () => {
   const [editingInputId, setEditingInputId] = useState<string | null>(null)
   const [editingInputValue, setEditingInputValue] = useState('')
 
+  /* ── 변경 추적 (일괄 저장용) ──────────────────────────────── */
+  const [pendingInputs, setPendingInputs] = useState<Map<string, number | null>>(new Map())
+  const [saving, setSaving] = useState(false)
+
   /* ── 상품 상세 패널 상태 ────────────────────────────────────── */
   const [detailPanelOpen, setDetailPanelOpen] = useState(false)
   const [detailItem, setDetailItem] = useState<RgItem | null>(null)
@@ -108,57 +113,79 @@ const PurchaseManagement: React.FC = () => {
   const [activeFilter, setActiveFilter] = useState<'sales' | 'storage' | null>(null)
 
   // ══════════════════════════════════════════════════════════════
-  // 필터 로직: item_id 기준 그룹 필터링
-  // - 조건에 맞는 option_id의 item_id 수집
-  // - 해당 item_id의 모든 option_id를 포함하여 그룹 표시
+  // 필터 + 검색 로직
+  // - 필터: item_id 기준 그룹 필터링 (판매량/반출비)
+  // - 검색: 숫자 → ID 매칭, 문자 → item_name/barcode 부분 일치
   // ══════════════════════════════════════════════════════════════
   const filteredItems = useMemo(() => {
-    if (!activeFilter || itemDataMap.size === 0) return items
+    let result = items
 
-    // STEP 1: 필터 조건에 맞는 item_id 수집
-    const matchedItemIds = new Set<number>()
-    for (const d of itemDataMap.values()) {
-      if (d.item_id == null) continue
+    // ── STEP A: 필터 토글 적용 ──────────────────────────────────
+    if (activeFilter && itemDataMap.size > 0) {
+      // 조건에 맞는 item_id 수집
+      const matchedItemIds = new Set<number>()
+      for (const d of itemDataMap.values()) {
+        if (d.item_id == null) continue
 
-      if (activeFilter === 'sales') {
-        // 판매량: 7d 판매·30d 판매·추천입고수량 중 하나라도 > 0
-        const hasSalesData =
-          (d.recent_sales_qty_7d != null && d.recent_sales_qty_7d > 0) ||
-          (d.recent_sales_qty_30d != null && d.recent_sales_qty_30d > 0) ||
-          (d.recommended_inbound_qty != null && d.recommended_inbound_qty > 0)
-        if (hasSalesData) matchedItemIds.add(d.item_id)
-      } else if (activeFilter === 'storage') {
-        // 반출비: 월 보관료 > 0
-        if (d.monthly_storage_fee != null && d.monthly_storage_fee > 0) {
-          matchedItemIds.add(d.item_id)
+        if (activeFilter === 'sales') {
+          const hasSalesData =
+            (d.recent_sales_qty_7d != null && d.recent_sales_qty_7d > 0) ||
+            (d.recent_sales_qty_30d != null && d.recent_sales_qty_30d > 0) ||
+            (d.recommended_inbound_qty != null && d.recommended_inbound_qty > 0)
+          if (hasSalesData) matchedItemIds.add(d.item_id)
+        } else if (activeFilter === 'storage') {
+          if (d.monthly_storage_fee != null && d.monthly_storage_fee > 0) {
+            matchedItemIds.add(d.item_id)
+          }
         }
       }
+
+      if (matchedItemIds.size === 0) return []
+
+      // 매칭된 item_id의 모든 option_id 수집
+      const matchedOptionIds = new Set<string>()
+      for (const d of itemDataMap.values()) {
+        if (d.item_id != null && matchedItemIds.has(d.item_id) && d.option_id != null) {
+          matchedOptionIds.add(String(d.option_id))
+        }
+      }
+
+      result = result.filter(
+        (item) => item.vendor_item_id != null && matchedOptionIds.has(item.vendor_item_id),
+      )
+
+      // item_id 기준 정렬
+      const getItemIdForSort = (item: RgItem): number => {
+        const data = item.vendor_item_id ? itemDataMap.get(item.vendor_item_id) : undefined
+        return data?.item_id ?? 0
+      }
+      result.sort((a, b) => getItemIdForSort(a) - getItemIdForSort(b))
     }
 
-    if (matchedItemIds.size === 0) return []
+    // ── STEP B: 검색어 적용 ─────────────────────────────────────
+    if (searchQuery) {
+      const isNumeric = /^\d+$/.test(searchQuery)
 
-    // STEP 2: 매칭된 item_id의 모든 option_id 수집
-    const matchedOptionIds = new Set<string>()
-    for (const d of itemDataMap.values()) {
-      if (d.item_id != null && matchedItemIds.has(d.item_id) && d.option_id != null) {
-        matchedOptionIds.add(String(d.option_id))
+      if (isNumeric) {
+        // 숫자 → seller_product_id / seller_product_item_id / vendor_item_id 매칭
+        result = result.filter((item) =>
+          item.seller_product_id === searchQuery ||
+          item.seller_product_item_id === searchQuery ||
+          item.vendor_item_id === searchQuery,
+        )
+      } else {
+        // 문자 → item_name / barcode 부분 일치 (대소문자 무시)
+        const q = searchQuery.toLowerCase()
+        result = result.filter((item) =>
+          (item.item_name && item.item_name.toLowerCase().includes(q)) ||
+          (item.seller_product_name && item.seller_product_name.toLowerCase().includes(q)) ||
+          (item.barcode && item.barcode.toLowerCase().includes(q)),
+        )
       }
     }
 
-    // STEP 3: vendor_item_id로 si_rg_items 필터링
-    const filtered = items.filter(
-      (item) => item.vendor_item_id != null && matchedOptionIds.has(item.vendor_item_id),
-    )
-
-    // STEP 4: item_id 기준 정렬 (같은 item_id끼리 모아서 표시)
-    const getItemIdForSort = (item: RgItem): number => {
-      const data = item.vendor_item_id ? itemDataMap.get(item.vendor_item_id) : undefined
-      return data?.item_id ?? 0
-    }
-    filtered.sort((a, b) => getItemIdForSort(a) - getItemIdForSort(b))
-
-    return filtered
-  }, [activeFilter, items, itemDataMap])
+    return result
+  }, [activeFilter, items, itemDataMap, searchQuery])
 
   /* ── 필터 토글 핸들러 ──────────────────────────────────────── */
   const handleFilterToggle = (filter: 'sales' | 'storage') => {
@@ -335,7 +362,7 @@ const PurchaseManagement: React.FC = () => {
   }
 
   // ══════════════════════════════════════════════════════════════
-  // 인라인 편집 (입력 열)
+  // 인라인 편집 (입력 열) — 로컬 전용, [저장] 버튼으로 일괄 저장
   // ══════════════════════════════════════════════════════════════
 
   /* ── 입력 셀 클릭 → 편집 모드 진입 ──────────────────────────── */
@@ -344,38 +371,54 @@ const PurchaseManagement: React.FC = () => {
     setEditingInputValue(currentValue != null ? String(currentValue) : '')
   }
 
-  /* ── 입력 셀 blur → 값 저장 ─────────────────────────────────── */
-  const handleInputBlur = async (itemId: string, originalValue: number | null) => {
+  /* ── 입력 셀 blur → 로컬 상태만 업데이트 (DB 호출 없음) ──────── */
+  const handleInputBlur = (itemId: string, originalValue: number | null) => {
     setEditingInputId(null)
 
-    // 입력값 파싱 (빈 문자열 → null)
     const trimmed = editingInputValue.trim()
     const newValue = trimmed === '' ? null : Number(trimmed)
 
-    // 값 변경 없으면 스킵
     if (newValue === originalValue) return
 
-    // 로컬 상태 즉시 업데이트 (낙관적 UI)
+    // 로컬 상태 즉시 반영
     setItems(prev =>
       prev.map(item =>
         item.id === itemId ? { ...item, input: newValue } : item,
       ),
     )
 
-    // Supabase에 저장
-    const { error } = await supabase
-      .from('si_rg_items')
-      .update({ input: newValue })
-      .eq('id', itemId)
+    // 변경 추적 (일괄 저장용)
+    setPendingInputs(prev => {
+      const next = new Map(prev)
+      next.set(itemId, newValue)
+      return next
+    })
+  }
 
-    if (error) {
-      console.error('입력값 저장 오류:', error)
-      // 실패 시 원래 값으로 롤백
-      setItems(prev =>
-        prev.map(item =>
-          item.id === itemId ? { ...item, input: originalValue } : item,
-        ),
-      )
+  /* ── [저장] 버튼 → pendingInputs 일괄 DB 저장 ─────────────── */
+  const handleSaveInputs = async () => {
+    if (pendingInputs.size === 0) return
+
+    setSaving(true)
+    try {
+      const entries = Array.from(pendingInputs.entries())
+      // 병렬 업데이트 (최대 50개씩 배치)
+      const BATCH = 50
+      for (let i = 0; i < entries.length; i += BATCH) {
+        const batch = entries.slice(i, i + BATCH)
+        await Promise.all(
+          batch.map(([id, value]) =>
+            supabase.from('si_rg_items').update({ input: value }).eq('id', id),
+          ),
+        )
+      }
+      setPendingInputs(new Map())
+      console.log(`[저장] ${entries.length}건 저장 완료`)
+    } catch (err) {
+      console.error('[저장] 실패:', err)
+      alert('저장 중 오류가 발생했습니다.')
+    } finally {
+      setSaving(false)
     }
   }
 
@@ -393,10 +436,18 @@ const PurchaseManagement: React.FC = () => {
   // 검색 & 선택
   // ══════════════════════════════════════════════════════════════
 
-  /* ── 검색 핸들러 (추후 구현) ───────────────────────────────── */
+  /* ── 검색 핸들러 ─────────────────────────────────────────── */
+  // 숫자 → seller_product_id / seller_product_item_id / vendor_item_id 매칭
+  // 문자 → item_name / barcode 부분 일치 (대소문자 무시)
   const handleSearch = () => {
-    // TODO: Supabase 쿼리 연결
-    console.log('검색:', searchValue)
+    setSearchQuery(searchValue.trim())
+    setCurrentPage(1)
+  }
+
+  const handleSearchClear = () => {
+    setSearchValue('')
+    setSearchQuery('')
+    setCurrentPage(1)
   }
 
   /* ── 전체 선택 / 해제 ──────────────────────────────────────── */
@@ -511,13 +562,12 @@ const PurchaseManagement: React.FC = () => {
               onKeyDown={(e) => {
                 if (e.key === 'Enter') {
                   e.preventDefault()
-                  handleInputBlur(item.id!, item.input).then(() => {
-                    const currentIdx = pageItems.findIndex(pi => pi.id === item.id)
-                    const nextItem = pageItems[currentIdx + 1]
-                    if (nextItem?.id) {
-                      handleInputClick(nextItem.id, nextItem.input)
-                    }
-                  })
+                  handleInputBlur(item.id!, item.input)
+                  const currentIdx = pageItems.findIndex(pi => pi.id === item.id)
+                  const nextItem = pageItems[currentIdx + 1]
+                  if (nextItem?.id) {
+                    handleInputClick(nextItem.id, nextItem.input)
+                  }
                 }
               }}
             />
@@ -591,32 +641,44 @@ const PurchaseManagement: React.FC = () => {
         <input
           className="purchase-search-input"
           type="text"
-          placeholder="검색어를 입력하세요"
+          placeholder="상품명, 바코드 또는 ID로 검색"
           value={searchValue}
-          onChange={(e) => setSearchValue(e.target.value)}
+          onChange={(e) => {
+            setSearchValue(e.target.value)
+            if (e.target.value === '') handleSearchClear()
+          }}
           onKeyDown={(e) => { if (e.key === 'Enter') handleSearch() }}
         />
       </div>
 
-      {/* ── 필터 툴바 (테이블 위, 좌측) ──────────────────────── */}
+      {/* ── 필터 툴바 (좌: 필터 버튼, 우: 저장 버튼) ─────────── */}
       <div className="purchase-table-toolbar">
+        <div className="purchase-toolbar-left">
+          <button
+            className={`purchase-filter-btn${activeFilter === 'sales' ? ' active' : ''}`}
+            onClick={() => handleFilterToggle('sales')}
+          >
+            판매량
+          </button>
+          <button
+            className={`purchase-filter-btn${activeFilter === 'storage' ? ' active' : ''}`}
+            onClick={() => handleFilterToggle('storage')}
+          >
+            반출비
+          </button>
+          {activeFilter && (
+            <span className="purchase-filter-count">
+              {filteredCount.toLocaleString()}건
+            </span>
+          )}
+        </div>
         <button
-          className={`purchase-filter-btn${activeFilter === 'sales' ? ' active' : ''}`}
-          onClick={() => handleFilterToggle('sales')}
+          className="purchase-btn purchase-save-btn"
+          onClick={handleSaveInputs}
+          disabled={saving || pendingInputs.size === 0}
         >
-          판매량
+          {saving ? '저장 중...' : `저장${pendingInputs.size > 0 ? ` (${pendingInputs.size})` : ''}`}
         </button>
-        <button
-          className={`purchase-filter-btn${activeFilter === 'storage' ? ' active' : ''}`}
-          onClick={() => handleFilterToggle('storage')}
-        >
-          반출비
-        </button>
-        {activeFilter && (
-          <span className="purchase-filter-count">
-            {filteredCount.toLocaleString()}건
-          </span>
-        )}
       </div>
 
       {/* ── 테이블 섹션 (화면 가득) ──────────────────────────── */}
@@ -711,15 +773,8 @@ const PurchaseManagement: React.FC = () => {
               </table>
             </div>
 
-            {/* ── 페이지네이션 ───────────────────────────────── */}
+            {/* ── 페이지네이션 (가운데 정렬) ─────────────────── */}
             <div className="purchase-pagination">
-              <span className="purchase-pagination-info">
-                전체 {filteredCount.toLocaleString()}개 중{' '}
-                {filteredCount > 0 ? ((currentPage - 1) * PAGE_SIZE + 1).toLocaleString() : 0}
-                {' - '}
-                {Math.min(currentPage * PAGE_SIZE, filteredCount).toLocaleString()} 표시
-              </span>
-
               <div className="purchase-pagination-controls">
                 <button
                   className="purchase-pagination-btn"
