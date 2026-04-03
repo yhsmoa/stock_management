@@ -1,23 +1,25 @@
-import React, { useState, useEffect, useRef } from 'react'
+import React, { useState, useEffect, useRef, useMemo } from 'react'
 import * as XLSX from 'xlsx'
 import './PurchaseManagement.css'
 import {
   fetchAllRgProducts,
   mapListItemToRgItems,
   fetchRgItems,
+  fetchRgItemData,
   saveRgItems,
   validateItemDataExcel,
   parseItemDataExcel,
   saveRgItemData,
 } from '../services/purchaseService'
 import { supabase } from '../services/supabase'
-import type { RgItem } from '../types/purchase'
+import type { RgItem, RgItemData } from '../types/purchase'
 import ProductDetailPanel from '../components/purchase/ProductDetailPanel'
 import UploadProgressModal from '../components/UploadProgressModal'
 
 /* ================================================================
    사입관리 (PurchaseManagement)
-   - 상단: 타이틀(가운데) + 업데이트 버튼(오른쪽)
+   - 상단: 버튼(우측 상단) + 타이틀(가운데)
+   - 필터: 판매량 / 반출비 토글 (item_id 그룹 기준)
    - 검색폼: 타원형 검색바
    - 테이블: 화면 가득 채움, 컬럼 타이트
    - 데이터: 쿠팡 로켓그로스 API → Supabase si_rg_items
@@ -37,25 +39,25 @@ interface Column {
 }
 
 const COLUMNS: Column[] = [
-  { key: 'product',  label: '상품정보', width: '220px', isProduct: true },
-  { key: 'input',    label: '입력',     width: '52px',  isInput: true },
-  { key: 'c_in',     label: 'C.in',     width: '52px' },
-  { key: 'c_stock',  label: 'C.재고',   width: '56px' },
-  { key: 'order',    label: '주문',     width: '52px' },
-  { key: 'personal', label: '개인',     width: '52px' },
-  { key: 'd7',       label: '7d',       width: '44px' },
-  { key: 'd30',      label: '30d',      width: '48px' },
-  { key: 'recommend',label: '추천',     width: '52px' },
-  { key: 'warehouse',label: '창고',     width: '52px' },
-  { key: 'storage',  label: '보관료',   width: '56px' },
-  { key: 'v1',       label: 'V1',       width: '44px' },
-  { key: 'v2',       label: 'V2',       width: '44px' },
-  { key: 'v3',       label: 'V3',       width: '44px' },
-  { key: 'v4',       label: 'V4',       width: '44px' },
-  { key: 'v5',       label: 'V5',       width: '44px' },
-  { key: 'price',    label: 'price',    width: '60px' },
-  { key: 'margin',   label: 'margin',   width: '60px' },
-  { key: 'note',     label: 'note',     width: '80px' },
+  { key: 'product',  label: '상품정보', width: '250px', isProduct: true },
+  { key: 'input',    label: '입력',     width: '46px', isInput: true },
+  { key: 'c_in',     label: 'C.in',     width: '46px' },
+  { key: 'c_stock',  label: 'C.재고',   width: '48px' },
+  { key: 'order',    label: '주문',     width: '44px' },
+  { key: 'personal', label: '개인',     width: '44px' },
+  { key: 'd7',       label: '7d',       width: '40px' },
+  { key: 'd30',      label: '30d',      width: '42px' },
+  { key: 'recommend',label: '추천',     width: '44px' },
+  { key: 'warehouse',label: '창고',     width: '44px' },
+  { key: 'storage',  label: '보관료',   width: '48px' },
+  { key: 'v1',       label: 'V1',       width: '40px' },
+  { key: 'v2',       label: 'V2',       width: '40px' },
+  { key: 'v3',       label: 'V3',       width: '40px' },
+  { key: 'v4',       label: 'V4',       width: '40px' },
+  { key: 'v5',       label: 'V5',       width: '40px' },
+  { key: 'price',    label: 'price',    width: '52px' },
+  { key: 'margin',   label: 'margin',   width: '52px' },
+  { key: 'note',     label: 'note',     width: '70px' },
 ]
 
 // ── 사용자 ID 조회 (프로젝트 공통 패턴) ───────────────────────
@@ -76,8 +78,10 @@ const PurchaseManagement: React.FC = () => {
   /* ── 데이터 & 페이지네이션 상태 ────────────────────────────── */
   const [items, setItems] = useState<RgItem[]>([])
   const [loading, setLoading] = useState(false)
-  const [totalCount, setTotalCount] = useState(0)
   const [currentPage, setCurrentPage] = useState(1)
+
+  /* ── 재고건강 SKU 데이터 (option_id → RgItemData 맵) ────────── */
+  const [itemDataMap, setItemDataMap] = useState<Map<string, RgItemData>>(new Map())
 
   /* ── 업데이트 버튼 로딩 & 진행률 상태 ────────────────────────── */
   const [updating, setUpdating] = useState(false)
@@ -100,17 +104,80 @@ const PurchaseManagement: React.FC = () => {
   const [uploadStatus, setUploadStatus] = useState('')
   const fileInputRef = useRef<HTMLInputElement>(null)
 
-  const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE))
+  /* ── 필터 상태 (판매량 / 반출비 토글) ──────────────────────── */
+  const [activeFilter, setActiveFilter] = useState<'sales' | 'storage' | null>(null)
+
+  // ══════════════════════════════════════════════════════════════
+  // 필터 로직: item_id 기준 그룹 필터링
+  // - 조건에 맞는 option_id의 item_id 수집
+  // - 해당 item_id의 모든 option_id를 포함하여 그룹 표시
+  // ══════════════════════════════════════════════════════════════
+  const filteredItems = useMemo(() => {
+    if (!activeFilter || itemDataMap.size === 0) return items
+
+    // STEP 1: 필터 조건에 맞는 item_id 수집
+    const matchedItemIds = new Set<number>()
+    for (const d of itemDataMap.values()) {
+      if (d.item_id == null) continue
+
+      if (activeFilter === 'sales') {
+        // 판매량: 7d 판매·30d 판매·추천입고수량 중 하나라도 > 0
+        const hasSalesData =
+          (d.recent_sales_qty_7d != null && d.recent_sales_qty_7d > 0) ||
+          (d.recent_sales_qty_30d != null && d.recent_sales_qty_30d > 0) ||
+          (d.recommended_inbound_qty != null && d.recommended_inbound_qty > 0)
+        if (hasSalesData) matchedItemIds.add(d.item_id)
+      } else if (activeFilter === 'storage') {
+        // 반출비: 월 보관료 > 0
+        if (d.monthly_storage_fee != null && d.monthly_storage_fee > 0) {
+          matchedItemIds.add(d.item_id)
+        }
+      }
+    }
+
+    if (matchedItemIds.size === 0) return []
+
+    // STEP 2: 매칭된 item_id의 모든 option_id 수집
+    const matchedOptionIds = new Set<string>()
+    for (const d of itemDataMap.values()) {
+      if (d.item_id != null && matchedItemIds.has(d.item_id) && d.option_id != null) {
+        matchedOptionIds.add(String(d.option_id))
+      }
+    }
+
+    // STEP 3: vendor_item_id로 si_rg_items 필터링
+    const filtered = items.filter(
+      (item) => item.vendor_item_id != null && matchedOptionIds.has(item.vendor_item_id),
+    )
+
+    // STEP 4: item_id 기준 정렬 (같은 item_id끼리 모아서 표시)
+    const getItemIdForSort = (item: RgItem): number => {
+      const data = item.vendor_item_id ? itemDataMap.get(item.vendor_item_id) : undefined
+      return data?.item_id ?? 0
+    }
+    filtered.sort((a, b) => getItemIdForSort(a) - getItemIdForSort(b))
+
+    return filtered
+  }, [activeFilter, items, itemDataMap])
+
+  /* ── 필터 토글 핸들러 ──────────────────────────────────────── */
+  const handleFilterToggle = (filter: 'sales' | 'storage') => {
+    setActiveFilter((prev) => (prev === filter ? null : filter))
+    setCurrentPage(1)
+  }
+
+  const filteredCount = filteredItems.length
+  const totalPages = Math.max(1, Math.ceil(filteredCount / PAGE_SIZE))
 
   /* ── 현재 페이지에 표시할 아이템 ─────────────────────────────── */
   const startIdx = (currentPage - 1) * PAGE_SIZE
-  const pageItems = items.slice(startIdx, startIdx + PAGE_SIZE)
+  const pageItems = filteredItems.slice(startIdx, startIdx + PAGE_SIZE)
 
   // ══════════════════════════════════════════════════════════════
   // 데이터 로드 & 업데이트
   // ══════════════════════════════════════════════════════════════
 
-  /* ── 페이지 로드 시 si_rg_items 조회 ─────────────────────────── */
+  /* ── 페이지 로드 시 si_rg_items + si_rg_item_data 병렬 조회 ──── */
   useEffect(() => {
     const loadItems = async () => {
       const userId = getUserId()
@@ -118,11 +185,25 @@ const PurchaseManagement: React.FC = () => {
 
       setLoading(true)
       try {
-        const data = await fetchRgItems(userId)
-        setItems(data)
-        setTotalCount(data.length)
+        // 두 테이블을 병렬로 조회하여 로딩 시간 최소화
+        const [rgItems, rgItemData] = await Promise.all([
+          fetchRgItems(userId),
+          fetchRgItemData(userId),
+        ])
+
+        setItems(rgItems)
+
+        // option_id(string) → RgItemData 맵 생성 (O(1) 룩업)
+        const dataMap = new Map<string, RgItemData>()
+        for (const d of rgItemData) {
+          if (d.option_id != null) {
+            dataMap.set(String(d.option_id), d)
+          }
+        }
+        setItemDataMap(dataMap)
+        console.log(`[PurchaseManagement] JOIN 맵 생성: ${dataMap.size}건`)
       } catch (error) {
-        console.error('si_rg_items 로드 실패:', error)
+        console.error('데이터 로드 실패:', error)
       } finally {
         setLoading(false)
       }
@@ -156,7 +237,6 @@ const PurchaseManagement: React.FC = () => {
 
       // STEP 4: 로컬 데이터로 즉시 테이블 갱신 (재조회 불필요)
       setItems(allRgItems as RgItem[])
-      setTotalCount(allRgItems.length)
       setCurrentPage(1)
 
       alert(`업데이트 완료! (저장: ${success}건, 실패: ${errors}건)`)
@@ -189,9 +269,14 @@ const PurchaseManagement: React.FC = () => {
     setUploadStatus('파일을 읽는 중...')
 
     try {
-      // STEP 1: 파일 읽기 → XLSX 파싱 (Uint8Array + type:'array'로 ZIP 경고 방지)
-      const raw = await file.arrayBuffer()
-      const workbook = XLSX.read(new Uint8Array(raw), { type: 'array' })
+      // STEP 1: 파일 읽기 → XLSX 파싱 (binary string으로 ZIP 경고 방지)
+      const binaryStr = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader()
+        reader.onload = (e) => resolve(e.target?.result as string)
+        reader.onerror = () => reject(new Error('파일 읽기 실패'))
+        reader.readAsBinaryString(file)
+      })
+      const workbook = XLSX.read(binaryStr, { type: 'binary' })
       const worksheet = workbook.Sheets[workbook.SheetNames[0]]
       const rows = XLSX.utils.sheet_to_json(worksheet, { header: 1 }) as any[][]
 
@@ -220,6 +305,15 @@ const PurchaseManagement: React.FC = () => {
 
       // STEP 4: Supabase 저장 (delete → batch insert)
       const { success, errors } = await saveRgItemData(parsedItems, userId)
+
+      // STEP 5: 저장 완료 후 itemDataMap 즉시 갱신 (새로고침 불필요)
+      const freshData = await fetchRgItemData(userId)
+      const dataMap = new Map<string, RgItemData>()
+      for (const d of freshData) {
+        if (d.option_id != null) dataMap.set(String(d.option_id), d)
+      }
+      setItemDataMap(dataMap)
+      console.log(`[엑셀 업로드] itemDataMap 갱신: ${dataMap.size}건`)
 
       setUploadProgress(100)
       setUploadStatus('완료!')
@@ -358,15 +452,42 @@ const PurchaseManagement: React.FC = () => {
   // 셀 렌더링 헬퍼
   // ══════════════════════════════════════════════════════════════
 
+  /** vendor_item_id로 JOIN된 재고건강 데이터 조회 (O(1)) */
+  const getItemData = (item: RgItem): RgItemData | undefined =>
+    item.vendor_item_id ? itemDataMap.get(item.vendor_item_id) : undefined
+
+  /** 아이템위너 아님 여부 판별 */
+  const isNotItemWinner = (item: RgItem): boolean => {
+    const data = getItemData(item)
+    return data?.item_winner === '아이템위너 아님'
+  }
+
   /** 각 컬럼 키에 따른 셀 콘텐츠 렌더링 */
   const renderCell = (col: Column, item: RgItem) => {
+    // JOIN된 재고건강 데이터 (option_id ↔ vendor_item_id)
+    const data = getItemData(item)
+
     switch (col.key) {
-      /* ── 상품정보 열: 상품명 + 옵션명 ──────────────────────── */
+      /* ── 상품정보 열: 빨간점(아이템위너 아님) + 상품명 + 옵션명 */
       case 'product':
         return (
-          <span>
-            {item.seller_product_name || '-'}
-            {item.item_name ? `, ${item.item_name}` : ''}
+          <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+            {isNotItemWinner(item) && (
+              <span
+                style={{
+                  width: '7px',
+                  height: '7px',
+                  borderRadius: '50%',
+                  backgroundColor: '#EF4444',
+                  flexShrink: 0,
+                }}
+                title="아이템위너 아님"
+              />
+            )}
+            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>
+              {item.seller_product_name || '-'}
+              {item.item_name ? `, ${item.item_name}` : ''}
+            </span>
           </span>
         )
 
@@ -380,8 +501,8 @@ const PurchaseManagement: React.FC = () => {
               inputMode="numeric"
               autoFocus
               value={editingInputValue}
+              onFocus={(e) => e.target.select()}
               onChange={(e) => {
-                // 숫자만 허용 (빈 문자열도 허용)
                 if (e.target.value === '' || /^\d+$/.test(e.target.value)) {
                   setEditingInputValue(e.target.value)
                 }
@@ -390,7 +511,6 @@ const PurchaseManagement: React.FC = () => {
               onKeyDown={(e) => {
                 if (e.key === 'Enter') {
                   e.preventDefault()
-                  // 현재 행 저장 후 다음 행 입력 셀 활성화
                   handleInputBlur(item.id!, item.input).then(() => {
                     const currentIdx = pageItems.findIndex(pi => pi.id === item.id)
                     const nextItem = pageItems[currentIdx + 1]
@@ -407,13 +527,30 @@ const PurchaseManagement: React.FC = () => {
           <span>{item.input != null ? item.input : ''}</span>
         )
 
+      /* ── JOIN 컬럼: si_rg_item_data 필드 매핑 (0/빈값 비표시) ── */
+      case 'c_in':
+        return data?.pending_inbounds ? data.pending_inbounds.toLocaleString() : ''
+      case 'c_stock':
+        return data?.orderable_qty ? data.orderable_qty.toLocaleString() : ''
+      case 'd7':
+        return data?.recent_sales_qty_7d ? data.recent_sales_qty_7d.toLocaleString() : ''
+      case 'd30':
+        return data?.recent_sales_qty_30d ? data.recent_sales_qty_30d.toLocaleString() : ''
+      case 'recommend':
+        return data?.recommended_inbound_qty ? data.recommended_inbound_qty.toLocaleString() : ''
+      case 'storage': {
+        const fee = data?.monthly_storage_fee
+        if (!fee) return ''
+        return <span style={{ color: '#EF4444' }}>{fee.toLocaleString()}</span>
+      }
+
       /* ── 가격 열: 숫자 포맷 ────────────────────────────────── */
       case 'price':
-        return item.sale_price ? item.sale_price.toLocaleString() : '-'
+        return item.sale_price ? item.sale_price.toLocaleString() : ''
 
-      /* ── 기타 열: 기본값 ───────────────────────────────────── */
+      /* ── 기타 열: 빈값 ─────────────────────────────────────── */
       default:
-        return '-'
+        return ''
     }
   }
 
@@ -423,28 +560,30 @@ const PurchaseManagement: React.FC = () => {
   return (
     <div className="purchase-container">
 
-      {/* ── 상단 헤더: 타이틀(가운데) + 버튼(오른쪽) ──────────── */}
+      {/* ── 상단 우측 버튼 영역 ──────────────────────────────── */}
+      <div className="purchase-top-actions">
+        <label className="purchase-btn" style={{ cursor: 'pointer' }}>
+          엑셀 업로드
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".xlsx,.xls"
+            style={{ display: 'none' }}
+            onChange={handleExcelUpload}
+          />
+        </label>
+        <button
+          className="purchase-btn"
+          onClick={handleUpdate}
+          disabled={updating}
+        >
+          {updating ? (updateProgress || '업데이트 중...') : '업데이트'}
+        </button>
+      </div>
+
+      {/* ── 타이틀 헤더 ──────────────────────────────────────── */}
       <div className="purchase-header">
         <h1 className="purchase-title">사입관리</h1>
-        <div className="purchase-header-actions">
-          <label className="purchase-btn" style={{ cursor: 'pointer' }}>
-            엑셀 업로드
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept=".xlsx,.xls"
-              style={{ display: 'none' }}
-              onChange={handleExcelUpload}
-            />
-          </label>
-          <button
-            className="purchase-btn"
-            onClick={handleUpdate}
-            disabled={updating}
-          >
-            {updating ? (updateProgress || '업데이트 중...') : '업데이트'}
-          </button>
-        </div>
       </div>
 
       {/* ── 검색 입력폼 (타원형, 가운데 상단) ────────────────── */}
@@ -459,6 +598,27 @@ const PurchaseManagement: React.FC = () => {
         />
       </div>
 
+      {/* ── 필터 툴바 (테이블 위, 좌측) ──────────────────────── */}
+      <div className="purchase-table-toolbar">
+        <button
+          className={`purchase-filter-btn${activeFilter === 'sales' ? ' active' : ''}`}
+          onClick={() => handleFilterToggle('sales')}
+        >
+          판매량
+        </button>
+        <button
+          className={`purchase-filter-btn${activeFilter === 'storage' ? ' active' : ''}`}
+          onClick={() => handleFilterToggle('storage')}
+        >
+          반출비
+        </button>
+        {activeFilter && (
+          <span className="purchase-filter-count">
+            {filteredCount.toLocaleString()}건
+          </span>
+        )}
+      </div>
+
       {/* ── 테이블 섹션 (화면 가득) ──────────────────────────── */}
       <div className="purchase-table-section">
         {loading ? (
@@ -469,7 +629,7 @@ const PurchaseManagement: React.FC = () => {
               <table className="purchase-table">
                 {/* ── colgroup: 열 너비 정의 ────────────────── */}
                 <colgroup>
-                  <col style={{ width: '34px' }} />
+                  <col style={{ width: '30px' }} />
                   {COLUMNS.map((c) => (
                     <col key={c.key} style={{ width: c.width }} />
                   ))}
@@ -554,10 +714,10 @@ const PurchaseManagement: React.FC = () => {
             {/* ── 페이지네이션 ───────────────────────────────── */}
             <div className="purchase-pagination">
               <span className="purchase-pagination-info">
-                전체 {totalCount.toLocaleString()}개 중{' '}
-                {totalCount > 0 ? ((currentPage - 1) * PAGE_SIZE + 1).toLocaleString() : 0}
+                전체 {filteredCount.toLocaleString()}개 중{' '}
+                {filteredCount > 0 ? ((currentPage - 1) * PAGE_SIZE + 1).toLocaleString() : 0}
                 {' - '}
-                {Math.min(currentPage * PAGE_SIZE, totalCount).toLocaleString()} 표시
+                {Math.min(currentPage * PAGE_SIZE, filteredCount).toLocaleString()} 표시
               </span>
 
               <div className="purchase-pagination-controls">
@@ -600,6 +760,7 @@ const PurchaseManagement: React.FC = () => {
         isOpen={detailPanelOpen}
         onClose={() => setDetailPanelOpen(false)}
         item={detailItem}
+        itemWinner={detailItem ? getItemData(detailItem)?.item_winner : undefined}
       />
 
       {/* ── 엑셀 업로드 프로그레스 모달 ───────────────────────── */}

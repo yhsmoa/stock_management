@@ -43,21 +43,21 @@ export interface RgItemData {
   orderable_qty: number | null
   pending_inbounds: number | null
   item_winner: string | null
-  recent_sales_7d: string | null
-  recent_sales_30d: string | null
-  recent_sales_qty_7d: string | null
-  recent_sales_qty_30d: string | null
-  recommended_inbound_qty: string | null
+  recent_sales_7d: number | null          // numeric
+  recent_sales_30d: number | null         // numeric
+  recent_sales_qty_7d: number | null      // bigint
+  recent_sales_qty_30d: number | null     // bigint
+  recommended_inbound_qty: number | null  // bigint
   recommended_inbound_date: string | null
   days_of_cover: string | null
-  monthly_storage_fee: string | null
-  sku_age_1_30d: string | null
-  sku_age_31_45d: string | null
-  sku_age_46_60d: string | null
-  sku_age_61_120d: string | null
-  sku_age_121_180d: string | null
-  sku_age_181_plus: string | null
-  customer_returns_30d: string | null
+  monthly_storage_fee: number | null      // numeric
+  sku_age_1_30d: number | null            // bigint
+  sku_age_31_45d: number | null           // bigint
+  sku_age_46_60d: number | null           // bigint
+  sku_age_61_120d: number | null          // bigint
+  sku_age_121_180d: number | null         // bigint
+  sku_age_181_plus: number | null         // bigint
+  customer_returns_30d: number | null     // integer
   season: string | null
   product_listing_date: string | null
 }

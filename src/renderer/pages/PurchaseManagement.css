@@ -11,13 +11,21 @@
   padding: 0 16px 16px;
 }
 
-/* ── 상단 헤더 (타이틀 가운데 + 버튼 오른쪽) ─────────────────── */
+/* ── 상단 우측 버튼 영역 (타이틀 위 별도 행) ─────────────────── */
+.purchase-top-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 8px 0 0;
+  flex-shrink: 0;
+}
+
+/* ── 헤더 (타이틀 가운데) ────────────────────────────────────── */
 .purchase-header {
-  position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 16px 0;
+  padding: 8px 0;
   flex-shrink: 0;
 }
 
@@ -28,27 +36,22 @@
   margin: 0;
 }
 
-.purchase-header-actions {
-  position: absolute;
-  right: 0;
-  display: flex;
-  gap: 8px;
-}
-
 .purchase-btn {
-  padding: 8px 18px;
-  border: none;
-  border-radius: 8px;
-  font-size: 13px;
+  padding: 4px 14px;
+  border: 1px solid #D1D5DB;
+  border-radius: 6px;
+  font-size: 12px;
   font-weight: 500;
   cursor: pointer;
   transition: all 0.2s;
-  color: white;
-  background-color: #4A8CF7;
+  color: #374151;
+  background-color: #fff;
+  line-height: 1.4;
 }
 
 .purchase-btn:hover {
-  background-color: #3A7CE6;
+  background-color: #F3F4F6;
+  border-color: #9CA3AF;
 }
 
 /* ── 검색 입력폼 (가운데 상단, 타원형) ───────────────────────── */
@@ -76,6 +79,50 @@
 
 .purchase-search-input::placeholder {
   color: #9CA3AF;
+}
+
+/* ── 필터 툴바 (테이블 위, 좌측) ─────────────────────────────── */
+.purchase-table-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 0 8px;
+  flex-shrink: 0;
+}
+
+.purchase-filter-btn {
+  padding: 4px 14px;
+  border: 1px solid #D1D5DB;
+  border-radius: 9999px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+  color: #374151;
+  background-color: #fff;
+  line-height: 1.4;
+}
+
+.purchase-filter-btn:hover {
+  background-color: #F3F4F6;
+  border-color: #9CA3AF;
+}
+
+.purchase-filter-btn.active {
+  background-color: #4A8CF7;
+  color: #fff;
+  border-color: #4A8CF7;
+}
+
+.purchase-filter-btn.active:hover {
+  background-color: #3B7DE6;
+  border-color: #3B7DE6;
+}
+
+.purchase-filter-count {
+  font-size: 12px;
+  color: #6B7280;
+  margin-left: 4px;
 }
 
 /* ── 테이블 섹션 (화면 가득) ─────────────────────────────────── */
@@ -127,7 +174,7 @@
 }
 
 .purchase-table th.col-checkbox {
-  width: 34px;
+  width: 30px;
 }
 
 /* ── 테이블 셀 ───────────────────────────────────────────────── */

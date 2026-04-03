@@ -15,6 +15,7 @@ interface ProductDetailPanelProps {
   isOpen: boolean
   onClose: () => void
   item: RgItem | null
+  itemWinner?: string | null   // '아이템위너 아님' 등 아이템위너 상태
 }
 
 // ── 스타일 ──────────────────────────────────────────────────────────
@@ -200,6 +201,7 @@ const ProductDetailPanel: React.FC<ProductDetailPanelProps> = ({
   isOpen,
   onClose,
   item,
+  itemWinner,
 }) => {
   /* ── 상태 ─────────────────────────────────────────────────────── */
   const [detailLoading, setDetailLoading] = useState(false)
@@ -330,12 +332,17 @@ const ProductDetailPanel: React.FC<ProductDetailPanelProps> = ({
                 )}
               </div>
 
-              {/* ── 상품명 + 옵션명 ────────────────────────────── */}
+              {/* ── 상품명 + 옵션명 + 아이템위너 상태 ────────────── */}
               <div style={styles.productName}>
                 {productName || '-'}
               </div>
               <div style={styles.itemName}>
                 {itemName ? `옵션: ${itemName}` : ''}
+                {itemWinner === '아이템위너 아님' && (
+                  <span style={{ color: '#EF4444', fontWeight: '600', marginLeft: '8px' }}>
+                    아이템위너 아님
+                  </span>
+                )}
               </div>
 
               {/* ── ID 배지 3개 ─────────────────────────────────── */}

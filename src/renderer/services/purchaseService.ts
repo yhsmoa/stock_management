@@ -337,6 +337,41 @@ export async function fetchRgItems(userId: string): Promise<RgItem[]> {
   return allData
 }
 
+// ── si_rg_item_data 사용자별 전체 조회 ───────────────────────────────
+
+/** si_rg_item_data에서 사용자별 전체 조회 (1000건 배치 패턴) */
+export async function fetchRgItemData(userId: string): Promise<RgItemData[]> {
+  const batches: RgItemData[][] = []
+  let from = 0
+  const batchSize = 1000
+  let hasMore = true
+
+  while (hasMore) {
+    const { data, error } = await supabase
+      .from('si_rg_item_data')
+      .select('*')
+      .eq('user_id', userId)
+      .range(from, from + batchSize - 1)
+
+    if (error) {
+      console.error('si_rg_item_data 조회 오류:', error)
+      throw error
+    }
+
+    if (data && data.length > 0) {
+      batches.push(data)
+      from += batchSize
+      if (data.length < batchSize) hasMore = false
+    } else {
+      hasMore = false
+    }
+  }
+
+  const allData = batches.flat()
+  console.log(`[purchaseService] si_rg_item_data ${allData.length}건 조회`)
+  return allData
+}
+
 // ── 데이터 저장 (delete → 병렬 batch insert) ────────────────────────
 
 /**
@@ -465,21 +500,21 @@ export function parseItemDataExcel(
       orderable_qty: toNum(row[7]),
       pending_inbounds: toNum(row[8]),
       item_winner: toStr(row[9]),
-      recent_sales_7d: toStr(row[10]),
-      recent_sales_30d: toStr(row[11]),
-      recent_sales_qty_7d: toStr(row[12]),
-      recent_sales_qty_30d: toStr(row[13]),
-      recommended_inbound_qty: toStr(row[14]),
+      recent_sales_7d: toNum(row[10]),
+      recent_sales_30d: toNum(row[11]),
+      recent_sales_qty_7d: toNum(row[12]),
+      recent_sales_qty_30d: toNum(row[13]),
+      recommended_inbound_qty: toNum(row[14]),
       recommended_inbound_date: toStr(row[15]),
       days_of_cover: toStr(row[16]),
-      monthly_storage_fee: toStr(row[17]),
-      sku_age_1_30d: toStr(row[18]),
-      sku_age_31_45d: toStr(row[19]),
-      sku_age_46_60d: toStr(row[20]),
-      sku_age_61_120d: toStr(row[21]),
-      sku_age_121_180d: toStr(row[22]),
-      sku_age_181_plus: toStr(row[23]),
-      customer_returns_30d: toStr(row[24]),
+      monthly_storage_fee: toNum(row[17]),
+      sku_age_1_30d: toNum(row[18]),
+      sku_age_31_45d: toNum(row[19]),
+      sku_age_46_60d: toNum(row[20]),
+      sku_age_61_120d: toNum(row[21]),
+      sku_age_121_180d: toNum(row[22]),
+      sku_age_181_plus: toNum(row[23]),
+      customer_returns_30d: toNum(row[24]),
       season: toStr(row[25]),
       product_listing_date: toStr(row[26]),
     })
