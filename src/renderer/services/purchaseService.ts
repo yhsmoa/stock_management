@@ -580,3 +580,193 @@ export async function saveRgItemData(
   console.log(`[purchaseService] si_rg_item_data 저장 완료 — 성공: ${success}, 실패: ${errors}`)
   return { success, errors }
 }
+
+// ══════════════════════════════════════════════════════════════════
+// 신규 아이템만 추가 (기존 데이터 유지)
+// ══════════════════════════════════════════════════════════════════
+
+/**
+ * vendor_item_id 기준으로 기존에 없는 아이템만 insert
+ * - 기존 데이터(barcode, input 등)는 유지
+ * - 삭제하지 않고 신규 항목만 추가
+ */
+export async function upsertNewRgItems(
+  newItems: Omit<RgItem, 'id' | 'created_at'>[],
+  userId: string,
+): Promise<{ inserted: number; skipped: number }> {
+  // STEP 1: 기존 vendor_item_id Set 구축
+  const existing = await fetchRgItems(userId)
+  const existingVendorIds = new Set(
+    existing
+      .filter((item) => item.vendor_item_id)
+      .map((item) => item.vendor_item_id!),
+  )
+
+  // STEP 2: 신규 아이템 필터
+  const toInsert = newItems.filter(
+    (item) => item.vendor_item_id && !existingVendorIds.has(item.vendor_item_id),
+  )
+  const skipped = newItems.length - toInsert.length
+
+  if (toInsert.length === 0) {
+    return { inserted: 0, skipped }
+  }
+
+  // STEP 3: 배치 insert (기존 saveRgItems와 동일한 배치 패턴)
+  const batches: Omit<RgItem, 'id' | 'created_at'>[][] = []
+  for (let i = 0; i < toInsert.length; i += SUPABASE_BATCH_SIZE) {
+    batches.push(toInsert.slice(i, i + SUPABASE_BATCH_SIZE))
+  }
+
+  let inserted = 0
+  for (const batch of batches) {
+    const { error } = await supabase.from('si_rg_items').insert(batch)
+    if (error) {
+      console.error('[upsertNewRgItems] insert 오류:', error)
+    } else {
+      inserted += batch.length
+    }
+  }
+
+  console.log(`[upsertNewRgItems] 신규 ${inserted}건 삽입, ${skipped}건 스킵`)
+  return { inserted, skipped }
+}
+
+// ══════════════════════════════════════════════════════════════════
+// 바코드 연결 xlsx: 엑셀에서 vendor_item_id ↔ barcode 매칭 → DB 저장
+// ══════════════════════════════════════════════════════════════════
+
+/**
+ * 바코드 연결 엑셀 파싱 결과를 DB에 반영
+ * @param barcodeMap - Map<vendor_item_id, barcode>
+ * @param userId    - 사용자 ID
+ */
+export async function updateBarcodesFromMap(
+  barcodeMap: Map<string, string>,
+  userId: string,
+): Promise<{ updated: number; notFound: number }> {
+  const entries = Array.from(barcodeMap.entries())
+  const BATCH = 50
+  let updated = 0
+  let errors = 0
+
+  console.log(`[updateBarcodesFromMap] ${entries.length}건 업데이트 시작 (${BATCH}건씩 병렬)`)
+
+  for (let i = 0; i < entries.length; i += BATCH) {
+    const batch = entries.slice(i, i + BATCH)
+
+    const results = await Promise.allSettled(
+      batch.map(([vendorItemId, barcode]) =>
+        supabase
+          .from('si_rg_items')
+          .update({ barcode })
+          .eq('vendor_item_id', vendorItemId)
+          .eq('user_id', userId)
+          .then(({ error }) => {
+            if (error) throw error
+          }),
+      ),
+    )
+
+    for (const r of results) {
+      if (r.status === 'fulfilled') updated++
+      else errors++
+    }
+
+    if ((i + BATCH) % 500 === 0 || i + BATCH >= entries.length) {
+      console.log(`[updateBarcodesFromMap] 진행: ${Math.min(i + BATCH, entries.length)}/${entries.length}`)
+    }
+  }
+
+  console.log(`[updateBarcodesFromMap] 완료 — 성공: ${updated}건, 실패: ${errors}건`)
+  return { updated, notFound: errors }
+}
+
+// ══════════════════════════════════════════════════════════════════
+// 바코드 연동: 쿠팡 상세 API → barcode 추출 → DB 저장
+// ══════════════════════════════════════════════════════════════════
+
+/**
+ * barcode가 없는 아이템들의 상세 API를 조회하여 barcode를 채운다.
+ * - 5/sec 속도 제한 준수 (기존 DETAIL_CONCURRENCY, REQUEST_INTERVAL_MS 재활용)
+ * - 동일 seller_product_id는 한 번만 조회 (중복 제거)
+ * @param items       - barcode가 없는 RgItem 배열
+ * @param onProgress  - 진행 콜백 (완료 수, 전체 수)
+ */
+export async function fetchBarcodesFromApi(
+  items: RgItem[],
+  onProgress?: (done: number, total: number) => void,
+): Promise<{ found: number; notFound: number; errors: string[] }> {
+  // seller_product_id 기준 중복 제거
+  const uniqueSpIds = [...new Set(
+    items
+      .filter((item) => item.seller_product_id)
+      .map((item) => item.seller_product_id),
+  )]
+
+  let done = 0
+  let found = 0
+  let notFound = 0
+  const errors: string[] = []
+  const inFlight = new Set<Promise<void>>()
+
+  // vendor_item_id → RgItem 맵 (결과 매칭용)
+  const vendorItemMap = new Map<string, RgItem[]>()
+  for (const item of items) {
+    if (item.vendor_item_id) {
+      if (!vendorItemMap.has(item.vendor_item_id)) {
+        vendorItemMap.set(item.vendor_item_id, [])
+      }
+      vendorItemMap.get(item.vendor_item_id)!.push(item)
+    }
+  }
+
+  for (const spId of uniqueSpIds) {
+    if (inFlight.size >= DETAIL_CONCURRENCY) {
+      await Promise.race(inFlight)
+    }
+    await delay(REQUEST_INTERVAL_MS)
+
+    const task = (async () => {
+      try {
+        const detail = await fetchRgProductDetail(Number(spId))
+        const mapped = mapToRgItems(detail, items[0].user_id ?? '')
+
+        for (const row of mapped) {
+          if (row.barcode && row.vendor_item_id) {
+            const targets = vendorItemMap.get(row.vendor_item_id)
+            if (targets && targets.length > 0) {
+              // DB UPDATE
+              const { error } = await supabase
+                .from('si_rg_items')
+                .update({ barcode: row.barcode })
+                .eq('vendor_item_id', row.vendor_item_id)
+                .eq('user_id', items[0].user_id ?? '')
+
+              if (error) {
+                errors.push(`${row.vendor_item_id}: ${error.message}`)
+              } else {
+                found++
+                // 로컬 아이템에도 barcode 반영
+                for (const t of targets) t.barcode = row.barcode
+              }
+            }
+          }
+        }
+      } catch (err: any) {
+        errors.push(`${spId}: ${err.message || '조회 실패'}`)
+        notFound++
+      } finally {
+        done++
+        onProgress?.(done, uniqueSpIds.length)
+      }
+    })()
+
+    inFlight.add(task)
+    task.finally(() => inFlight.delete(task))
+  }
+
+  await Promise.all(inFlight)
+  console.log(`[fetchBarcodesFromApi] 완료 — 매칭: ${found}, 미발견: ${notFound}`)
+  return { found, notFound, errors }
+}

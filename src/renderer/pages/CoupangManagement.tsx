@@ -362,15 +362,23 @@ const CoupangManagement: React.FC = () => {
       return
     }
 
-    // ── STEP 2: si_coupang_items에서 바코드 일괄 존재 확인 ────────────
+    // ── STEP 2: si_coupang_items에서 바코드 일괄 존재 확인 (200건 배치) ──
     const barcodes = parsed.map(r => r.barcode)
-    const { data: foundItems } = await supabase
-      .from('si_coupang_items')
-      .select('barcode')
-      .eq('user_id', userId)
-      .in('barcode', barcodes)
+    const foundBarcodeSet = new Set<string>()
+    const IN_BATCH = 200
 
-    const foundBarcodeSet = new Set((foundItems || []).map((r: { barcode: string }) => r.barcode))
+    for (let bi = 0; bi < barcodes.length; bi += IN_BATCH) {
+      const chunk = barcodes.slice(bi, bi + IN_BATCH)
+      const { data: foundItems } = await supabase
+        .from('si_coupang_items')
+        .select('barcode')
+        .eq('user_id', userId)
+        .in('barcode', chunk)
+
+      if (foundItems) {
+        foundItems.forEach((r: { barcode: string }) => foundBarcodeSet.add(r.barcode))
+      }
+    }
 
     // 조회 안된 바코드 → 오류사유 1, 조회된 바코드만 업데이트 대상으로 분리
     const validRows = parsed.filter(r => {

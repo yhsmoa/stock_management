@@ -209,20 +209,36 @@ export const fetchCoupangReturns = async (): Promise<CoupangReturn[]> => {
  * - 반출건관리 페이지 Q바코드 스캔 시 상품 식별용 lookup 데이터
  * @param userId - si_users.id (UUID)
  */
-export const fetchQBarcodesByUser = async (userId: string): Promise<CoupangReturn[]> => {
+export const fetchQBarcodesByUser = async (userId: string): Promise<QBarcodeRecord[]> => {
   try {
-    const { data, error } = await supabase
-      .from('si_q_barcode')
-      .select('barcode, option_id')
-      .eq('user_id', userId)
+    const allData: QBarcodeRecord[] = []
+    const batchSize = 1000
+    let from = 0
+    let hasMore = true
 
-    if (error) {
-      console.error('Q바코드 조회 오류:', error)
-      return []
+    while (hasMore) {
+      const { data, error } = await supabase
+        .from('si_q_barcode')
+        .select('barcode, option_id')
+        .eq('user_id', userId)
+        .range(from, from + batchSize - 1)
+
+      if (error) {
+        console.error('Q바코드 조회 오류:', error)
+        return allData
+      }
+
+      if (data && data.length > 0) {
+        allData.push(...(data as QBarcodeRecord[]))
+        from += batchSize
+        if (data.length < batchSize) hasMore = false
+      } else {
+        hasMore = false
+      }
     }
 
-    console.log(`Fetched ${data?.length ?? 0} Q barcodes for user ${userId}`)
-    return data ?? []
+    console.log(`Fetched ${allData.length} Q barcodes for user ${userId}`)
+    return allData
   } catch (error) {
     console.error('fetchQBarcodesByUser 오류:', error)
     return []

@@ -12,6 +12,7 @@ import RocketShipment from './pages/RocketShipment'
 import Export from './pages/Export'
 import CoupangManagement from './pages/CoupangManagement'
 import PurchaseManagement from './pages/PurchaseManagement'
+import PersonalOrder from './pages/PersonalOrder'
 
 const App: React.FC = () => {
   return (
@@ -31,6 +32,7 @@ const App: React.FC = () => {
         >
           <Route path="/" element={<Index />} />
           <Route path="/coupang" element={<CoupangManagement />} />
+          <Route path="/personal-order" element={<PersonalOrder />} />
           <Route path="/purchase-management" element={<PurchaseManagement />} />
           <Route path="/inventory" element={<Inventory />} />
           <Route path="/in-management" element={<InManagement />} />

@@ -9,6 +9,8 @@ export interface AuthUser {
   vendor_id: string | null
   coupang_access_key: string | null
   coupang_secret_key: string | null
+  // ── 주문 프로젝트 연동 (ft_users.id 매핑) ──
+  order_user_id: string | null
 }
 
 export interface LoginFormData {

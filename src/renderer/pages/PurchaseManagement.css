@@ -14,10 +14,17 @@
 /* ── 상단 우측 버튼 영역 (타이틀 위 별도 행) ─────────────────── */
 .purchase-top-actions {
   display: flex;
-  justify-content: flex-end;
+  justify-content: space-between;
+  align-items: center;
   gap: 8px;
   padding: 8px 0 0;
   flex-shrink: 0;
+}
+
+.purchase-toolbar-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 
 /* ── 헤더 (타이틀 가운데) ────────────────────────────────────── */

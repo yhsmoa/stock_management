@@ -14,13 +14,14 @@ const linkBase: React.CSSProperties = {
   textDecoration: 'none',
   borderRadius: theme.radius.sm,
   transition: 'background 0.2s',
+  fontSize: '14px',
 }
 
 const subLinkBase: React.CSSProperties = {
   ...linkBase,
   padding: '10px 16px 10px 32px',
   color: theme.colors.sidebarSubText,
-  fontSize: '14px',
+  fontSize: '13px',
 }
 
 const Sidebar: React.FC<SidebarProps> = ({ isOpen }) => {
@@ -83,8 +84,11 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen }) => {
         </div>
         {isCoupangOpen && (
           <>
+            <Link to="/personal-order" style={subLinkBase} onMouseEnter={subHoverIn} onMouseLeave={subHoverOut}>
+              개인주문
+            </Link>
             <Link to="/coupang" style={subLinkBase} onMouseEnter={subHoverIn} onMouseLeave={subHoverOut}>
-              쿠팡관리
+              상품관리
             </Link>
             <Link to="/purchase-management" style={subLinkBase} onMouseEnter={subHoverIn} onMouseLeave={subHoverOut}>
               사입관리
