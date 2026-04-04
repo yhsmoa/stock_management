@@ -10,7 +10,7 @@
     "build": "vite build",
     "build:electron": "vite build && electron-builder",
     "preview": "vite preview",
-    "start": "serve -s dist -l ${PORT:-3000}"
+    "start": "node src/server/prodServer.js"
   },
   "keywords": [
     "electron",
@@ -21,13 +21,14 @@
   "license": "MIT",
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",
-    "serve": "^14.2.0",
     "@supabase/supabase-js": "^2.39.3",
     "exceljs": "^4.4.0",
+    "express": "^4.22.1",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "react-hook-form": "^7.71.1",
     "react-router-dom": "^6.21.3",
+    "serve": "^14.2.0",
     "xlsx": "^0.18.5",
     "zod": "^4.3.6"
   },
