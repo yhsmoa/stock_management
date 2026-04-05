@@ -770,3 +770,130 @@ export async function fetchBarcodesFromApi(
   console.log(`[fetchBarcodesFromApi] 완료 — 매칭: ${found}, 미발견: ${notFound}`)
   return { found, notFound, errors }
 }
+
+// ═══════════════════════════════════════���══════════════════════════
+// 조회수: CSV 파싱 + DB 저장 (si_rg_views)
+// ═════��════════════════��═══════════════════════════════════════════
+
+/** 조회수 CSV 행 타입 */
+export interface ViewsRow {
+  item_id: string
+  item_name: string
+  view: number
+}
+
+/**
+ * 조회수 CSV 텍스트 파싱
+ * - 헤더: 등록상품명, 등록상품ID, 상품조회수
+ * - BOM 자동 제거, 빈 행 무시
+ */
+export function parseViewsCsv(csvText: string): ViewsRow[] {
+  const lines = csvText
+    .replace(/^\uFEFF/, '')   // BOM 제거
+    .split(/\r?\n/)
+    .filter((l) => l.trim())
+
+  if (lines.length < 2) return []
+
+  return lines.slice(1).reduce<ViewsRow[]>((acc, line) => {
+    // CSV 파싱: 큰따옴표 감싸진 필드 + ="..." 패턴 지원
+    const match = line.match(/^"?([^"]*)"?,\s*"?=?"?([^",]+)"?"?\s*,\s*(\d+)\s*$/)
+    if (match) {
+      acc.push({
+        item_name: match[1].trim(),
+        item_id: match[2].trim(),
+        view: parseInt(match[3], 10),
+      })
+    }
+    return acc
+  }, [])
+}
+
+/**
+ * si_rg_views 에 조회수 upsert 저장 (동일 date+item_id+user_id → update)
+ * @param date YYYY-MM-DD 형식 날짜
+ */
+export async function saveViewsData(
+  data: ViewsRow[],
+  userId: string,
+  date: string,
+): Promise<{ saved: number; errors: number }> {
+  let saved = 0
+  let errors = 0
+
+  for (let i = 0; i < data.length; i += SUPABASE_BATCH_SIZE) {
+    const batch = data.slice(i, i + SUPABASE_BATCH_SIZE).map((d) => ({
+      item_id: d.item_id,
+      item_name: d.item_name,
+      view: d.view,
+      date,
+      user_id: userId,
+    }))
+
+    const { error } = await supabase
+      .from('si_rg_views')
+      .upsert(batch, { onConflict: 'date,item_id,user_id' })
+    if (error) {
+      console.error('[saveViewsData] UPSERT 오류:', error.message)
+      errors += batch.length
+    } else {
+      saved += batch.length
+    }
+  }
+
+  console.log(`[saveViewsData] 완료 — 저장: ${saved}, 실패: ${errors}`)
+  return { saved, errors }
+}
+
+// ══════════════════════════════════════════════════════════════════
+// 조회수: 데이터 조회 (si_rg_views → V1~V5 렌더링용)
+// ══════════════════════════════════════════════════════════════════
+
+/** si_rg_views 조회 행 (필요 컬럼만) */
+export interface ViewsDataRow {
+  item_id: string
+  view: number
+  date: string
+}
+
+/** si_rg_views 전체 조회 (1000건 배치 패턴, limit 없음) */
+export async function fetchViewsData(userId: string): Promise<ViewsDataRow[]> {
+  const batches: ViewsDataRow[][] = []
+  let from = 0
+  const batchSize = 1000
+  let hasMore = true
+
+  while (hasMore) {
+    const { data, error } = await supabase
+      .from('si_rg_views')
+      .select('item_id, view, date')
+      .eq('user_id', userId)
+      .range(from, from + batchSize - 1)
+
+    if (error) {
+      console.error('si_rg_views 조회 오류:', error)
+      throw error
+    }
+
+    if (data && data.length > 0) {
+      batches.push(data)
+      from += batchSize
+      if (data.length < batchSize) hasMore = false
+    } else {
+      hasMore = false
+    }
+  }
+
+  const allData = batches.flat()
+  console.log(`[purchaseService] si_rg_views ${allData.length}건 조회`)
+  return allData
+}
+
+/**
+ * 조회수 데이터 → 고유 날짜 추출 → 오래된순 정렬 → 최근 5개 반환
+ * 반환: [V1(가장 오래된), V2, V3, V4, V5(가장 최근)]
+ */
+export function getRecentViewDates(viewsData: ViewsDataRow[]): string[] {
+  const dates = [...new Set(viewsData.map((d) => d.date))].sort()
+  return dates.slice(-5)
+}

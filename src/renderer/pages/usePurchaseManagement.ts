@@ -5,7 +5,7 @@
    - 인라인 편집, 저장, 상품 상세
    ================================================================ */
 
-import { useState, useEffect, useRef, useMemo } from 'react'
+import { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import * as XLSX from 'xlsx'
 import {
   fetchAllRgProducts,
@@ -19,6 +19,10 @@ import {
   upsertNewRgItems,
   updateBarcodesFromMap,
   fetchBarcodesFromApi,
+  parseViewsCsv,
+  saveViewsData,
+  fetchViewsData,
+  getRecentViewDates,
 } from '../services/purchaseService'
 import { supabase } from '../services/supabase'
 import type { RgItem, RgItemData } from '../types/purchase'
@@ -118,6 +122,12 @@ export function usePurchaseManagement() {
   const [barcodesyncing, setBarcodesyncing] = useState(false)
   const [barcodeSyncProgress, setBarcodeSyncProgress] = useState('')
 
+  /* ── 조회수 V1~V5 데이터 ─────────────────────────────────── */
+  // Map<seller_product_id, Map<date, view>>
+  const [viewsDataMap, setViewsDataMap] = useState<Map<string, Map<string, number>>>(new Map())
+  // 최근 5개 날짜 (오래된순: [0]=V1, [4]=V5)
+  const [recentViewDates, setRecentViewDates] = useState<string[]>([])
+
   /* ── 필터 (판매량 / 반출비 토글) ─────────────────────────── */
   const [activeFilter, setActiveFilter] = useState<'sales' | 'storage' | null>(null)
 
@@ -209,18 +219,29 @@ export function usePurchaseManagement() {
 
       setLoading(true)
       try {
-        const [rgItems, rgItemData] = await Promise.all([
+        const [rgItems, rgItemData, viewsData] = await Promise.all([
           fetchRgItems(userId),
           fetchRgItemData(userId),
+          fetchViewsData(userId),
         ])
 
         setItems(rgItems)
 
+        // ── itemDataMap (option_id → RgItemData) ──
         const dataMap = new Map<string, RgItemData>()
         for (const d of rgItemData) {
           if (d.option_id != null) dataMap.set(String(d.option_id), d)
         }
         setItemDataMap(dataMap)
+
+        // ── viewsDataMap (seller_product_id → Map<date, view>) ──
+        const vMap = new Map<string, Map<string, number>>()
+        for (const v of viewsData) {
+          if (!vMap.has(v.item_id)) vMap.set(v.item_id, new Map())
+          vMap.get(v.item_id)!.set(v.date, v.view)
+        }
+        setViewsDataMap(vMap)
+        setRecentViewDates(getRecentViewDates(viewsData))
       } catch (error) {
         console.error('데이터 로드 실패:', error)
       } finally {
@@ -528,6 +549,156 @@ export function usePurchaseManagement() {
   }
 
   // ══════════════════════════════════════════════════════════════
+  // 조회수: 콘솔 스크립트 생성 + CSV 업로드
+  // ══════════════════════════════════════════════════════════════
+
+  /* ── CSV 파일 입력 ref + 날짜 모달 상태 ────────────────────── */
+  const viewsCsvInputRef = useRef<HTMLInputElement>(null)
+  const [viewsDateModalOpen, setViewsDateModalOpen] = useState(false)
+  const [viewsDateValue, setViewsDateValue] = useState('')
+
+  /* ── [콘솔] 쿠팡 Wing 콘솔용 JS 스크립트 생성 → 클립보드 복사 ── */
+  const handleViewsConsole = useCallback(() => {
+    // ── 대상 결정: 선택된 항목 or 전체 (seller_product_id 중복 제거) ──
+    // selectedIds는 filteredItems 인덱스 문자열 ("0","1",...) 저장
+    const source = selectedIds.size > 0
+      ? filteredItems.filter((_, idx) => selectedIds.has(String(idx)))
+      : filteredItems
+    const uniqueIds = [...new Set(
+      source.map((r) => r.seller_product_id).filter(Boolean),
+    )]
+
+    if (uniqueIds.length === 0) {
+      alert('조회할 상품이 없습니다.')
+      return
+    }
+
+    // ── 콘솔 스크립트 생성 (쿠팡 Wing Vue.js 호환) ──
+    const script = `(async()=>{
+const wait=ms=>new Promise(r=>setTimeout(r,ms));
+const IDS=${JSON.stringify(uniqueIds)};
+const B=100,results=[];
+console.log('[조회수] 시작: '+IDS.length+'개 상품, '+Math.ceil(IDS.length/B)+'배치');
+for(let i=0;i<IDS.length;i+=B){
+  const batch=IDS.slice(i,i+B);
+  /* ── textarea 값 설정 (Vue v-model + Wing UI 호환) ── */
+  const ta=document.querySelector('.product-number-input textarea');
+  if(!ta){console.error('textarea를 찾을 수 없습니다.');return;}
+  ta.focus();
+  const setter=Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set;
+  setter.call(ta,batch.join(','));
+  ta.dispatchEvent(new Event('input',{bubbles:true}));
+  ta.dispatchEvent(new Event('change',{bubbles:true}));
+  await wait(500);
+  /* ── 검색 버튼 클릭 ── */
+  const btn=document.querySelector('button[type="submit"]');
+  if(!btn){console.error('검색 버튼을 찾을 수 없습니다.');return;}
+  btn.click();
+  await wait(3000);
+  /* ── 페이지 순회하며 테이블 데이터 추출 ── */
+  let page=1;
+  while(true){
+    const rows=document.querySelectorAll('table tbody tr.table-row');
+    if(rows.length===0){console.warn('배치 '+(Math.floor(i/B)+1)+': 검색 결과 없음');break;}
+    rows.forEach(row=>{
+      const c=row.querySelectorAll('td');
+      if(c.length>=5){
+        /* ── 등록상품ID (2번째 td) ── */
+        const id=c[1]?.textContent?.trim()||'';
+        if(id&&!results.find(r=>r.id===id)){
+          /* ── 등록상품명: .product-name-block 에서 추출 (tooltip 중복 방지) ── */
+          const name=row.querySelector('.product-name-block')?.textContent?.trim()||'';
+          /* ── 상품조회수 (5번째 td, 콤마 제거) ── */
+          const views=(c[4]?.textContent?.trim()||'0').replace(/,/g,'');
+          results.push({name,id,views});
+        }
+      }
+    });
+    /* ── 다음 페이지 ── */
+    const nextBtn=document.querySelector('[data-wuic-partial="next"] a');
+    if(!nextBtn||nextBtn.offsetParent===null){break;}
+    nextBtn.click();page++;await wait(2000);
+  }
+  console.log('[조회수] 배치 '+(Math.floor(i/B)+1)+'/'+Math.ceil(IDS.length/B)+' 완료 (누적 '+results.length+'건, '+page+'페이지)');
+}
+/* ── CSV 다운로드 ── */
+if(results.length===0){console.warn('[조회수] 추출된 데이터가 없습니다.');return;}
+const csv='\\uFEFF등록상품명,등록상품ID,상품조회수\\n'+results.map(r=>'"'+r.name.replace(/"/g,'""')+'","=""'+r.id+'""",'+r.views).join('\\n');
+const blob=new Blob([csv],{type:'text/csv;charset=utf-8'});
+const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='coupang_views.csv';a.click();
+console.log('[조회수] 완료! 총 '+results.length+'건 CSV 저장됨');
+})();`
+
+    // ── 클립보드 복사 (Electron 호환) ──
+    const el = document.createElement('textarea')
+    el.value = script
+    el.style.cssText = 'position:fixed;top:-9999px;left:-9999px;opacity:0'
+    document.body.appendChild(el)
+    el.select()
+    document.execCommand('copy')
+    document.body.removeChild(el)
+
+    alert(`콘솔 스크립트가 클립보드에 복사되었습니다.\n(${uniqueIds.length}개 상품, ${Math.ceil(uniqueIds.length / 100)}배치)`)
+  }, [items, filteredItems, selectedIds])
+
+  /* ── [csv 업로드] STEP 1: 모달 열기 ─────────────────────────── */
+  const handleViewsCsvClick = useCallback(() => {
+    setViewsDateValue('')
+    setViewsDateModalOpen(true)
+  }, [])
+
+  /* ── [csv 업로드] STEP 2: 날짜 확인 → 파일 선택 트리거 ────── */
+  const handleViewsDateConfirm = useCallback(() => {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(viewsDateValue)) {
+      alert('날짜를 YYYY-MM-DD 형식으로 입력해주세요.')
+      return
+    }
+    setViewsDateModalOpen(false)
+    viewsCsvInputRef.current?.click()
+  }, [viewsDateValue])
+
+  /* ── [csv 업로드] STEP 3: 파일 선택 → CSV 파싱 → DB 저장 ──── */
+  const handleViewsCsvUpload = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+
+    const userId = getUserId()
+    if (!userId) {
+      alert('사용자 정보를 찾을 수 없습니다.')
+      return
+    }
+
+    try {
+      const text = await file.text()
+      const rows = parseViewsCsv(text)
+
+      if (rows.length === 0) {
+        alert('CSV에서 유효한 데이터를 찾을 수 없습니다.')
+        return
+      }
+
+      const { saved, errors } = await saveViewsData(rows, userId, viewsDateValue)
+
+      // ── V1~V5 데이터 갱신 ──
+      const freshViews = await fetchViewsData(userId)
+      const vMap = new Map<string, Map<string, number>>()
+      for (const v of freshViews) {
+        if (!vMap.has(v.item_id)) vMap.set(v.item_id, new Map())
+        vMap.get(v.item_id)!.set(v.date, v.view)
+      }
+      setViewsDataMap(vMap)
+      setRecentViewDates(getRecentViewDates(freshViews))
+
+      alert(`조회수 저장 완료!\n날짜: ${viewsDateValue}\n저장: ${saved}건${errors > 0 ? `, 실패: ${errors}건` : ''}`)
+    } catch (err: any) {
+      console.error('[조회수 CSV 업로드] 오류:', err)
+      alert(`CSV 업로드 중 오류가 발생했습니다.\n${err.message || ''}`)
+    } finally {
+      if (viewsCsvInputRef.current) viewsCsvInputRef.current.value = ''
+    }
+  }, [viewsDateValue])
+
+  // ══════════════════════════════════════════════════════════════
   // 인라인 편집 (입력 열)
   // ══════════════════════════════════════════════════════════════
 
@@ -681,6 +852,8 @@ export function usePurchaseManagement() {
     startIdx,
     pageItems,
     itemDataMap,
+    viewsDataMap,
+    recentViewDates,
 
     // 필터
     activeFilter,
@@ -708,6 +881,17 @@ export function usePurchaseManagement() {
     barcodesyncing,
     barcodeSyncProgress,
     handleBarcodeSync,
+
+    // 조회수
+    handleViewsConsole,
+    viewsCsvInputRef,
+    handleViewsCsvClick,
+    handleViewsCsvUpload,
+    viewsDateModalOpen,
+    setViewsDateModalOpen,
+    viewsDateValue,
+    setViewsDateValue,
+    handleViewsDateConfirm,
 
     // 체크박스
     selectedIds,

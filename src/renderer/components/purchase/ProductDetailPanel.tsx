@@ -33,8 +33,8 @@ const styles = {
     position: 'fixed' as const,
     top: 0,
     right: 0,
-    width: '25vw',
-    minWidth: '360px',
+    width: '30vw',
+    minWidth: '420px',
     height: '100%',
     backgroundColor: theme.colors.bgCard,
     boxShadow: '-4px 0 20px rgba(0,0,0,0.08)',
@@ -71,9 +71,10 @@ const styles = {
 
   /* ── 이미지 ──────────────────────────────────────────────────── */
   imageWrapper: {
-    width: '250px',
-    height: '250px',
+    width: '300px',
+    height: '300px',
     alignSelf: 'center',
+    margin: '0 auto',
     borderRadius: theme.radius.lg,
     overflow: 'hidden',
     border: `1px solid ${theme.colors.borderLight}`,

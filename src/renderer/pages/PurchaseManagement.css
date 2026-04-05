@@ -61,6 +61,66 @@
   border-color: #9CA3AF;
 }
 
+/* ── 드롭다운 버튼 ───────────────────────────────────────────── */
+.purchase-dropdown {
+  position: relative;
+}
+
+.purchase-dropdown-menu {
+  display: none;
+  position: absolute;
+  top: 100%;
+  left: 0;
+  margin-top: 2px;
+  min-width: 100%;
+  background: #fff;
+  border: 1px solid #D1D5DB;
+  border-radius: 6px;
+  box-shadow: 0 4px 12px rgba(0,0,0,.1);
+  z-index: 50;
+  overflow: hidden;
+}
+
+.purchase-dropdown:hover .purchase-dropdown-menu {
+  display: block;
+}
+
+.purchase-dropdown-item {
+  display: block;
+  width: 100%;
+  padding: 6px 14px;
+  border: none;
+  background: none;
+  font-size: 12px;
+  font-weight: 500;
+  color: #374151;
+  cursor: pointer;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.purchase-dropdown-item:hover {
+  background-color: #F3F4F6;
+}
+
+/* ── 모달 오버레이 ──────────────────────────────────────────── */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.35);
+}
+
+.modal-content {
+  background: #fff;
+  border-radius: 10px;
+  padding: 24px;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.18);
+}
+
 /* ── 검색 입력폼 (가운데 상단, 타원형) ───────────────────────── */
 .purchase-search-bar {
   display: flex;
