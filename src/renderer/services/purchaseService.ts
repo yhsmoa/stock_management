@@ -783,30 +783,97 @@ export interface ViewsRow {
 }
 
 /**
+ * CSV 한 줄 파싱 (RFC 4180 호환)
+ * - 큰따옴표로 감싼 필드 안의 콤마/개행 보호
+ * - 이스케이프된 큰따옴표("") → " 변환
+ */
+function parseCsvLine(line: string): string[] {
+  const fields: string[] = []
+  let cur = ''
+  let inQuotes = false
+
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i]
+
+    if (inQuotes) {
+      if (ch === '"') {
+        // 다음 문자도 " 면 이스케이프된 따옴표
+        if (line[i + 1] === '"') {
+          cur += '"'
+          i++
+        } else {
+          inQuotes = false
+        }
+      } else {
+        cur += ch
+      }
+    } else {
+      if (ch === '"') {
+        inQuotes = true
+      } else if (ch === ',') {
+        fields.push(cur)
+        cur = ''
+      } else {
+        cur += ch
+      }
+    }
+  }
+  fields.push(cur)
+  return fields
+}
+
+/**
  * 조회수 CSV 텍스트 파싱
- * - 헤더: 등록상품명, 등록상품ID, 상품조회수
- * - BOM 자동 제거, 빈 행 무시
+ * - 헤더: 등록상품명, 등록상품ID, 상품조회수 (순서 유연 대응)
+ * - 지원 형식: 일반 CSV, 따옴표 CSV, ="123" Excel 수식 형식
+ * - BOM 자동 제거, 빈 행 무시, 천단위 콤마 처리
  */
 export function parseViewsCsv(csvText: string): ViewsRow[] {
   const lines = csvText
-    .replace(/^\uFEFF/, '')   // BOM 제거
+    .replace(/^\uFEFF/, '')      // BOM 제거
     .split(/\r?\n/)
     .filter((l) => l.trim())
 
   if (lines.length < 2) return []
 
-  return lines.slice(1).reduce<ViewsRow[]>((acc, line) => {
-    // CSV 파싱: 큰따옴표 감싸진 필드 + ="..." 패턴 지원
-    const match = line.match(/^"?([^"]*)"?,\s*"?=?"?([^",]+)"?"?\s*,\s*(\d+)\s*$/)
-    if (match) {
-      acc.push({
-        item_name: match[1].trim(),
-        item_id: match[2].trim(),
-        view: parseInt(match[3], 10),
-      })
-    }
-    return acc
-  }, [])
+  // ── 헤더에서 컬럼 인덱스 자동 탐지 ─────────────────────────
+  const header = parseCsvLine(lines[0]).map((h) => h.trim().replace(/^=/, '').replace(/^"|"$/g, ''))
+  const findIdx = (...keywords: string[]) =>
+    header.findIndex((h) => keywords.some((kw) => h.includes(kw)))
+
+  let nameIdx = findIdx('상품명')
+  let idIdx = findIdx('상품ID', '등록상품ID', '옵션ID')
+  let viewIdx = findIdx('조회수')
+
+  // 헤더가 없거나 인식 실패 시 기본 순서 (0,1,2) 가정
+  if (nameIdx < 0) nameIdx = 0
+  if (idIdx < 0) idIdx = 1
+  if (viewIdx < 0) viewIdx = 2
+
+  // ── 데이터 행 파싱 ─────────────────────────────────────────
+  const result: ViewsRow[] = []
+  for (const line of lines.slice(1)) {
+    const fields = parseCsvLine(line)
+    if (fields.length <= Math.max(nameIdx, idIdx, viewIdx)) continue
+
+    // ID 정규화: ="123" → 123, 앞뒤 공백/따옴표 제거
+    const rawId = fields[idIdx] ?? ''
+    const item_id = rawId.trim().replace(/^=/, '').replace(/^"|"$/g, '').trim()
+
+    // 조회수: 천단위 콤마 제거 후 정수 변환
+    const rawView = (fields[viewIdx] ?? '').trim().replace(/,/g, '').replace(/^"|"$/g, '')
+    const view = parseInt(rawView, 10)
+
+    if (!item_id || isNaN(view)) continue
+
+    result.push({
+      item_name: (fields[nameIdx] ?? '').trim(),
+      item_id,
+      view,
+    })
+  }
+
+  return result
 }
 
 /**
