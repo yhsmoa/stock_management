@@ -274,16 +274,21 @@ export async function fetchRecentShipments(
 //               WHERE status='PROCESSING'
 //                 AND shipment_type ∈ (COUPANG|DIRECT)  (대소문자 무시)
 //         - Σ ft_fulfillment_inbounds.quantity (type=CANCEL)
-//         - Σ ft_fulfillment_outbounds.quantity (type=PACKED)
-//               EXCLUDING (AND 결합):
+//         - Σ ft_fulfillment_outbounds.quantity
+//               WHERE type='PACKED'
+//                 AND shipment_id IS NOT NULL              ← base 차감 조건
+//               EXCLUDING (AND 결합, 모달 선택값):
 //                 shipment_id ∈ selectedShipmentIds
 //               AND
 //                 shipment_type ∈ selectedShipmentTypes (대소문자 무시)
 //
-//   - 모달에서 선택된 (shipment_id, shipment_type) 조합에 AND 로 일치하는
-//     outbound 는 "아직 물리적으로 떠나지 않은 건" 으로 간주하여 차감 제외.
+//   1단계(base): PACKED + shipment_id NOT NULL 만 차감 대상에 포함
+//                (NULL 인 PACKED 는 애초에 차감하지 않음)
+//   2단계(exclude): 위 대상 중, 모달에서 선택된 (shipment_id, shipment_type)
+//                   에 AND 로 일치하는 건은 "아직 물리적으로 떠나지 않은 건"
+//                   으로 간주하여 차감에서 추가로 제외.
 //   - shipment_id 혹은 shipment_type 한쪽이라도 선택이 비어있으면
-//     제외 로직 비활성 → 모든 PACKED outbound 가 차감 대상.
+//     2단계 제외 로직 비활성 → base 대상(PACKED+non-NULL) 전부 차감.
 // ══════════════════════════════════════════════════════════════════
 
 /** base 대상 shipment_type — PERSONAL 제외, 대소문자 무시 OR 매칭 */
@@ -391,14 +396,15 @@ export async function fetchOrderDelta(
       return rows
     })(),
 
-    // ── (C) 출고 — 전체 PACKED 조회 후 AND 제외 조건 클라이언트 필터 ─
+    // ── (C) 출고 — base: PACKED + shipment_id NOT NULL ────────────
     //   * 조회 키: order_item_id (shipment_type 매핑 위해)
-    //   * shipment_id 필터는 쿼리에서 제거 (NULL 포함 전체 가져옴)
+    //   * base 차감 대상만 조회 → shipment_id=NULL 인 PACKED 는 DB 단에서 제외
+    //   * 이후 클라이언트에서 모달 AND 조건으로 "차감 제외"(2단계) 적용
     (async () => {
       type OutboundRow = {
         order_item_id: string
         quantity: number | null
-        shipment_id: string | null
+        shipment_id: string  // NOT NULL 보장
       }
       const rows: OutboundRow[] = []
       for (let i = 0; i < itemIds.length; i += BATCH_SIZE) {
@@ -407,6 +413,7 @@ export async function fetchOrderDelta(
           .select('order_item_id, quantity, shipment_id')
           .eq('user_id', orderUserId)
           .eq('type', 'PACKED')
+          .not('shipment_id', 'is', null)
           .in('order_item_id', chunk)
         if (error) {
           console.error('[fetchOrderDelta:ft_fulfillment_outbounds]', error)
@@ -429,8 +436,9 @@ export async function fetchOrderDelta(
   }
 
   // ════════════════════════════════════════════════════════════════
-  // 출고 집계 — AND 제외 조건에 일치하는 건은 차감에서 제외
-  //   excludeShipmentIds + excludeTypesLower 둘 다 비어있지 않을 때만 제외 로직 작동
+  // 출고 집계 (2단계) — 모달 AND 제외 조건에 일치하는 건은 차감에서 추가 제외
+  //   outboundRows 는 이미 base(PACKED + shipment_id NOT NULL) 필터 통과분
+  //   excludeShipmentIds + excludeTypesLower 둘 다 비어있지 않을 때만 2단계 작동
   // ════════════════════════════════════════════════════════════════
   const excludeShipmentIds = new Set(selectedShipmentIds)
   const excludeTypesLower = new Set(selectedShipmentTypes.map((t) => t.toLowerCase()))
@@ -444,9 +452,9 @@ export async function fetchOrderDelta(
     if (hasExcludeFilter) {
       const itemTypeLower = itemToTypeLower.get(r.order_item_id) ?? ''
       const isExcluded =
-        excludeShipmentIds.has(r.shipment_id ?? '') &&
+        excludeShipmentIds.has(r.shipment_id) &&
         excludeTypesLower.has(itemTypeLower)
-      if (isExcluded) continue // 차감에서 제외
+      if (isExcluded) continue // 차감에서 제외 (2단계)
     }
 
     outboundMap.set(pid, (outboundMap.get(pid) ?? 0) + (r.quantity ?? 0))
