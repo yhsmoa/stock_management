@@ -111,9 +111,14 @@ export default function OrderModal({ isOpen, onClose, onApply }: OrderModalProps
           주문 조회 조건
         </h3>
 
-        {/* ── 섹션 1: 출고일 (ft_shipments 최근 2일) ──────────── */}
+        {/* ── 섹션 1: 출고일 (ft_shipments 최근 2일) — 차감 제외 AND 조건 ── */}
         <div className="order-modal-section">
-          <div className="order-modal-section-title">출고일</div>
+          <div className="order-modal-section-title">
+            출고일{' '}
+            <span style={{ fontWeight: 400, color: '#6B7280', fontSize: '11px' }}>
+              (차감 제외)
+            </span>
+          </div>
           {loading && <div style={{ fontSize: '12px', color: '#6B7280' }}>불러오는 중...</div>}
           {error && (
             <div style={{ fontSize: '12px', color: '#EF4444' }}>조회 실패: {error}</div>
@@ -138,9 +143,17 @@ export default function OrderModal({ isOpen, onClose, onApply }: OrderModalProps
           ))}
         </div>
 
-        {/* ── 섹션 2: shipment_type ─────────────────────────── */}
+        {/* ── 섹션 2: shipment_type — 차감 제외 AND 조건 ─────── */}
         <div className="order-modal-section">
-          <div className="order-modal-section-title">shipment_type</div>
+          <div className="order-modal-section-title">
+            shipment_type{' '}
+            <span style={{ fontWeight: 400, color: '#6B7280', fontSize: '11px' }}>
+              (차감 제외)
+            </span>
+          </div>
+          <div style={{ fontSize: '11px', color: '#9CA3AF', marginBottom: '6px' }}>
+            * 위 출고일 <b>AND</b> 이 타입 둘 다 일치하는 출고만 차감에서 제외합니다.
+          </div>
           <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap' }}>
             {SHIPMENT_TYPES.map((t) => (
               <label key={t} className="order-modal-checkbox">
