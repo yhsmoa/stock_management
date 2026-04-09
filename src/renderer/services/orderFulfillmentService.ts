@@ -8,7 +8,8 @@
 import { orderSupabase, isOrderSupabaseConfigured } from './orderSupabase'
 
 // ── 상수 ──────────────────────────────────────────────────────────
-const BATCH_SIZE = 100 // .in() URL 길이 제한 대응
+const BATCH_SIZE = 100   // .in() URL 길이 제한 대응
+const QUERY_LIMIT = 10000 // Supabase 기본 1000행 제한 해제 (chunk 당 최대 응답 수)
 
 // ══════════════════════════════════════════════════════════════════
 // 타입 정의
@@ -342,6 +343,7 @@ export async function fetchOrderDelta(
       .eq('status', 'PROCESSING')
       .or(baseTypeOr)
       .in('barcode', chunk)
+      .limit(QUERY_LIMIT)
     if (error) {
       console.error('[fetchOrderDelta:ft_order_items]', error)
       throw error
@@ -388,6 +390,7 @@ export async function fetchOrderDelta(
           .eq('user_id', orderUserId)
           .eq('type', 'CANCEL')
           .in('order_item_id', chunk)
+          .limit(QUERY_LIMIT)
         if (error) {
           console.error('[fetchOrderDelta:ft_fulfillment_inbounds]', error)
           throw error
@@ -416,6 +419,7 @@ export async function fetchOrderDelta(
           .eq('type', 'PACKED')
           .not('shipment_id', 'is', null)
           .in('order_item_id', chunk)
+          .limit(QUERY_LIMIT)
         if (error) {
           console.error('[fetchOrderDelta:ft_fulfillment_outbounds]', error)
           throw error
