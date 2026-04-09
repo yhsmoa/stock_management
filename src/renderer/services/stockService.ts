@@ -8,7 +8,7 @@ export class StockService {
   /**
    * 모든 재고 조회 (페이지네이션 루프 — 1000행 제한 해소)
    */
-  static async getAllStocks(): Promise<Stock[]> {
+  static async getAllStocks(userId?: string): Promise<Stock[]> {
     try {
       let allData: Stock[] = []
       let from = 0
@@ -16,11 +16,12 @@ export class StockService {
       let hasMore = true
 
       while (hasMore) {
-        const { data, error } = await supabase
+        let query = supabase
           .from('si_stocks')
           .select('*')
           .order('location', { ascending: true })
-          .range(from, from + batchSize - 1)
+        if (userId) query = query.eq('user_id', userId)
+        const { data, error } = await query.range(from, from + batchSize - 1)
 
         if (error) {
           console.error('재고 조회 오류:', error)
@@ -46,7 +47,7 @@ export class StockService {
   /**
    * 필터링된 재고 조회 (페이지네이션 루프 — 1000행 제한 해소)
    */
-  static async getFilteredStocks(filters: Partial<StockSearchFilters>): Promise<Stock[]> {
+  static async getFilteredStocks(filters: Partial<StockSearchFilters>, userId?: string): Promise<Stock[]> {
     try {
       let allData: Stock[] = []
       let from = 0
@@ -55,6 +56,9 @@ export class StockService {
 
       while (hasMore) {
         let query = supabase.from('si_stocks').select('*')
+
+        // user_id 격리
+        if (userId) query = query.eq('user_id', userId)
 
         // 키워드 검색 (바코드 또는 상품명)
         if (filters.searchKeyword) {

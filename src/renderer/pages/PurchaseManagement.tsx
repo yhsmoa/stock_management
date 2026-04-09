@@ -91,6 +91,8 @@ const PurchaseManagement: React.FC = () => {
     pendingInputs,
     saving,
     handleSaveInputs,
+    resettingInputs,
+    handleResetInputs,
     detailPanelOpen,
     setDetailPanelOpen,
     detailItem,
@@ -379,13 +381,22 @@ const PurchaseManagement: React.FC = () => {
             </span>
           )}
         </div>
-        <button
-          className="purchase-btn purchase-save-btn"
-          onClick={handleSaveInputs}
-          disabled={saving || pendingInputs.size === 0}
-        >
-          {saving ? '저장 중...' : `저장${pendingInputs.size > 0 ? ` (${pendingInputs.size})` : ''}`}
-        </button>
+        <div className="purchase-toolbar-right">
+          <button
+            className="purchase-btn"
+            onClick={handleResetInputs}
+            disabled={resettingInputs}
+          >
+            {resettingInputs ? '초기화 중...' : '입력 초기화'}
+          </button>
+          <button
+            className="purchase-btn purchase-save-btn"
+            onClick={handleSaveInputs}
+            disabled={saving || pendingInputs.size === 0}
+          >
+            {saving ? '저장 중...' : `저장${pendingInputs.size > 0 ? ` (${pendingInputs.size})` : ''}`}
+          </button>
+        </div>
       </div>
 
       {/* ── 테이블 섹션 ─────────────────────────────────────── */}

@@ -110,6 +110,7 @@ export function usePurchaseManagement() {
   /* ── 변경 추적 (일괄 저장용) ────────────────────────────── */
   const [pendingInputs, setPendingInputs] = useState<Map<string, number | null>>(new Map())
   const [saving, setSaving] = useState(false)
+  const [resettingInputs, setResettingInputs] = useState(false)
 
   /* ── 상품 상세 패널 ──────────────────────────────────────── */
   const [detailPanelOpen, setDetailPanelOpen] = useState(false)
@@ -761,6 +762,32 @@ console.log('[조회수] 완료! 총 '+results.length+'건 CSV 저장됨');
     }
   }
 
+  // ── 입력 열 전체 초기화 (user_id 기준 단일 쿼리) ─────────────
+  const handleResetInputs = async () => {
+    const userId = getUserId()
+    if (!userId) return
+
+    if (!confirm('모든 입력값을 초기화하시겠습니까?')) return
+
+    setResettingInputs(true)
+    try {
+      const { error } = await supabase
+        .from('si_rg_items')
+        .update({ input: null })
+        .eq('user_id', userId)
+        .not('input', 'is', null)
+      if (error) throw error
+
+      setPendingInputs(new Map())
+      setItems((prev) => prev.map((item) => ({ ...item, input: null })))
+    } catch (err) {
+      console.error('[입력 초기화] 실패:', err)
+      alert('입력값 초기화 중 오류가 발생했습니다.')
+    } finally {
+      setResettingInputs(false)
+    }
+  }
+
   // ══════════════════════════════════════════════════════════════
   // 상품 상세 패널
   // ══════════════════════════════════════════════════════════════
@@ -958,10 +985,12 @@ console.log('[조회수] 완료! 총 '+results.length+'건 CSV 저장됨');
     handleInputClick,
     handleInputBlur,
 
-    // 저장
+    // 저장 / 입력 초기화
     pendingInputs,
     saving,
     handleSaveInputs,
+    resettingInputs,
+    handleResetInputs,
 
     // 상품 상세
     detailPanelOpen,

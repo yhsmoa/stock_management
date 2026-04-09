@@ -83,7 +83,7 @@ const Layout: React.FC = () => {
           flex: 1,
           overflow: 'auto',
           padding: '24px',
-          marginLeft: isSidebarOpen ? '250px' : '0',
+          marginLeft: isSidebarOpen ? '270px' : '0',
           transition: 'margin-left 0.3s ease',
         }}>
           <Outlet />

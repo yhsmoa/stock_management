@@ -46,18 +46,23 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen }) => {
     <div
       style={{
         position: 'fixed',
-        top: 0,
-        left: isOpen ? 0 : '-250px',
+        top: '70px',
+        left: isOpen ? '10px' : '-260px',
         width: '250px',
-        height: '100%',
-        backgroundColor: theme.colors.sidebarBg,
+        height: 'calc(100vh - 80px)',
+        backgroundColor: 'rgba(30, 41, 59, 0.85)',
+        backdropFilter: 'blur(20px)',
+        WebkitBackdropFilter: 'blur(20px)',
         color: 'white',
         transition: 'left 0.3s ease',
         zIndex: 998,
         display: 'flex',
         flexDirection: 'column',
         padding: '20px',
-        boxShadow: isOpen ? '4px 0 16px rgba(0,0,0,0.15)' : 'none',
+        borderRadius: '16px',
+        border: '1px solid rgba(255, 255, 255, 0.1)',
+        boxShadow: isOpen ? '0 8px 32px rgba(0, 0, 0, 0.3)' : 'none',
+        overflowY: 'auto',
       }}
     >
       <nav style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '4px' }}>

@@ -1,0 +1,77 @@
+/* ================================================================
+   공통 페이지 스타일 — 사입관리 / 재고관리 등 공유
+   ================================================================ */
+
+/* ── 상단 액션바 (좌/우 분리) ─────────────────────────────── */
+.page-top-actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 0 0;
+  flex-shrink: 0;
+}
+
+.page-toolbar-left {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.page-toolbar-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* ── 소형 버튼 (공통) ────────────────────────────────────── */
+.page-btn {
+  padding: 4px 14px;
+  border: 1px solid #D1D5DB;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+  color: #374151;
+  background-color: #fff;
+  line-height: 1.4;
+}
+
+.page-btn:hover {
+  background-color: #F3F4F6;
+  border-color: #9CA3AF;
+}
+
+.page-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ── 위험 버튼 (삭제 등) ──────────────────────────────────── */
+.page-btn-danger {
+  background-color: #EF4444 !important;
+  color: #fff !important;
+  border-color: #EF4444 !important;
+}
+
+.page-btn-danger:hover:not(:disabled) {
+  background-color: #DC2626 !important;
+  border-color: #DC2626 !important;
+}
+
+/* ── 헤더 (타이틀 가운데) ────────────────────────────────── */
+.page-header {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px 0;
+  flex-shrink: 0;
+}
+
+.page-title {
+  font-size: 20px;
+  font-weight: 700;
+  color: #1F2937;
+  margin: 0;
+}

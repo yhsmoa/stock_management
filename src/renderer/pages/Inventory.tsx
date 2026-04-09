@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { theme } from '../styles/theme'
-import Button from '../components/common/Button'
+import '../styles/page-common.css'
 import SearchForm from '../components/inventory/SearchForm'
 import InventoryTable from '../components/inventory/InventoryTable'
 import UploadProgressModal from '../components/UploadProgressModal'
@@ -8,6 +8,13 @@ import { supabase } from '../services/supabase'
 import { StockService } from '../services/stockService'
 import { parseStockExcelFile, exportStocksToExcel } from '../services/stockExcelService'
 import type { Stock, StockSearchFilters } from '../types/stock'
+
+// ── 사용자 ID 조회 ────────────────────────────────────────────
+const getUserId = (): string | null => {
+  const raw = localStorage.getItem('user')
+  if (!raw) return null
+  try { return JSON.parse(raw)?.id ?? null } catch { return null }
+}
 
 const Inventory: React.FC = () => {
   const [stocks, setStocks] = useState<Stock[]>([])
@@ -31,12 +38,17 @@ const Inventory: React.FC = () => {
     insufficient: { location: string | null; barcode: string; currentQty: number; requestedQty: number }[]  // 오류사유 2: 수량 부족
   } | null>(null)
 
-  // 재고 데이터 로드
+  // 재고 데이터 로드 (user_id 격리)
   const loadStocks = useCallback(async () => {
+    const userId = getUserId()
+    if (!userId) {
+      setError('사용자 정보를 찾을 수 없습니다. 다시 로그인해주세요.')
+      return
+    }
     setIsLoading(true)
     setError(null)
     try {
-      const data = await StockService.getAllStocks()
+      const data = await StockService.getAllStocks(userId)
       setStocks(data)
     } catch (error) {
       console.error('재고 로드 실패:', error)
@@ -46,8 +58,10 @@ const Inventory: React.FC = () => {
     }
   }, [])
 
-  // 검색 처리 함수
+  // 검색 처리 함수 (user_id 격리)
   const handleSearch = useCallback(async (filters: StockSearchFilters) => {
+    const userId = getUserId()
+    if (!userId) return
     setIsLoading(true)
     setError(null)
     try {
@@ -58,10 +72,10 @@ const Inventory: React.FC = () => {
                             !filters.note
 
       if (isEmptyFilters) {
-        const data = await StockService.getAllStocks()
+        const data = await StockService.getAllStocks(userId)
         setStocks(data)
       } else {
-        const data = await StockService.getFilteredStocks(filters)
+        const data = await StockService.getFilteredStocks(filters, userId)
         setStocks(data)
       }
     } catch (error) {
@@ -525,70 +539,30 @@ const Inventory: React.FC = () => {
         title="재고 엑셀 업로드"
       />
 
-      <div style={{
-        display: 'flex',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        marginBottom: '20px'
-      }}>
-        <h1 style={{ fontSize: '28px', color: theme.colors.textPrimary, margin: 0 }}>
-          재고관리
-        </h1>
-        <div style={{ display: 'flex', gap: '10px' }}>
-          {/* 숨겨진 파일 입력 — ⬆️ 엑셀 + (수량 합산) */}
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept=".xlsx,.xls"
-            style={{ display: 'none' }}
-            onChange={handleFileChange}
-          />
-
-          {/* 숨겨진 파일 입력 — ⬆️ 엑셀 - (수량 차감) */}
-          <input
-            ref={fileDeductRef}
-            type="file"
-            accept=".xlsx,.xls"
-            style={{ display: 'none' }}
-            onChange={handleDeductFileChange}
-          />
-
-          {/* 엑셀 수량 합산 업로드 버튼 */}
-          <Button
-            variant="secondary"
-            onClick={handleUploadClick}
-            disabled={isLoading || isUploading}
-          >
-            ⬆️ 엑셀 +
-          </Button>
-
-          {/* 엑셀 수량 차감 업로드 버튼 */}
-          <Button
-            variant="secondary"
-            onClick={() => fileDeductRef.current?.click()}
-            disabled={isLoading || isUploading}
-          >
-            ⬆️ 엑셀 -
-          </Button>
-
-          {/* 엑셀 다운로드 버튼 */}
-          <Button
-            variant="secondary"
-            onClick={handleDownloadExcel}
-            disabled={isLoading || isUploading}
-          >
-            ⬇️ 엑셀
-          </Button>
-
-          {/* 삭제 버튼 */}
-          <Button
-            variant="danger"
-            onClick={handleDeleteSelected}
-            disabled={isLoading || isUploading}
-          >
+      {/* ── 상단 버튼 영역: 좌측 비어있음 | 우측 엑셀·삭제 ── */}
+      <div className="page-top-actions">
+        <div className="page-toolbar-left" />
+        <div className="page-toolbar-right">
+          <input ref={fileInputRef} type="file" accept=".xlsx,.xls" style={{ display: 'none' }} onChange={handleFileChange} />
+          <input ref={fileDeductRef} type="file" accept=".xlsx,.xls" style={{ display: 'none' }} onChange={handleDeductFileChange} />
+          <button className="page-btn" onClick={handleUploadClick} disabled={isLoading || isUploading}>
+            엑셀 +
+          </button>
+          <button className="page-btn" onClick={() => fileDeductRef.current?.click()} disabled={isLoading || isUploading}>
+            엑셀 -
+          </button>
+          <button className="page-btn" onClick={handleDownloadExcel} disabled={isLoading || isUploading}>
+            엑셀 다운
+          </button>
+          <button className="page-btn page-btn-danger" onClick={handleDeleteSelected} disabled={isLoading || isUploading}>
             삭제
-          </Button>
+          </button>
         </div>
+      </div>
+
+      {/* ── 타이틀 (가운데 정렬) ── */}
+      <div className="page-header">
+        <h1 className="page-title">재고관리</h1>
       </div>
 
       {/* 에러 메시지 */}
