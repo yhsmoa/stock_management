@@ -240,16 +240,21 @@ export interface OrderDelta {
 // ── 최근 출고일 N개 조회 ──────────────────────────────────────────
 
 /**
- * ft_shipments 에서 최근 N개 출고일 조회 (date DESC)
+ * ft_shipments 에서 현재 사용자의 최근 N개 출고일 조회 (date DESC)
  *
- * @param limit - 조회 건수 (기본 2)
+ * @param orderUserId - ft_users.id (= si_users.order_user_id) — 필수
+ * @param limit       - 조회 건수 (기본 2)
  * @returns ShipmentOption[]
  */
-export async function fetchRecentShipments(limit = 2): Promise<ShipmentOption[]> {
-  if (!isOrderSupabaseConfigured) return []
+export async function fetchRecentShipments(
+  orderUserId: string,
+  limit = 2,
+): Promise<ShipmentOption[]> {
+  if (!isOrderSupabaseConfigured || !orderUserId) return []
 
   const { data, error } = await (orderSupabase.from('ft_shipments') as any)
     .select('id, user_id, date, shipment_no')
+    .eq('user_id', orderUserId)
     .order('date', { ascending: false })
     .limit(limit)
 
@@ -264,21 +269,24 @@ export async function fetchRecentShipments(limit = 2): Promise<ShipmentOption[]>
 
 /**
  * productIds(rg_items.seller_product_id) 기준으로 주문/취소/출고 합계 조회
+ * - 모든 쿼리는 `orderUserId` 로 격리 (ft_users.id = si_users.order_user_id)
  *
  * @param productIds              - rg_items 에서 추출한 product_id 배열
  * @param selectedShipmentIds     - 모달에서 체크한 ft_shipments.id 배열 (빈 배열이면 출고=0)
  * @param selectedShipmentTypes   - 모달에서 체크한 shipment_type 배열 (빈 배열이면 필터 생략=전체)
+ * @param orderUserId             - ft_users.id — 필수
  * @returns Map<product_id, OrderDelta>
  */
 export async function fetchOrderDelta(
   productIds: string[],
   selectedShipmentIds: string[],
   selectedShipmentTypes: ShipmentType[],
+  orderUserId: string,
 ): Promise<Map<string, OrderDelta>> {
   const result = new Map<string, OrderDelta>()
-  if (!isOrderSupabaseConfigured || productIds.length === 0) return result
+  if (!isOrderSupabaseConfigured || !orderUserId || productIds.length === 0) return result
 
-  // ── (A) ft_order_items — 100개 chunk 로 .in() 순회 ────────────
+  // ── (A) ft_order_items — 100개 chunk 로 .in() 순회 (user_id 필터) ──
   type OrderItemRow = {
     id: string
     product_id: string | null
@@ -289,6 +297,7 @@ export async function fetchOrderDelta(
     const chunk = productIds.slice(i, i + BATCH_SIZE)
     let q = (orderSupabase.from('ft_order_items') as any)
       .select('id, product_id, order_qty')
+      .eq('user_id', orderUserId)
       .in('product_id', chunk)
     if (selectedShipmentTypes.length > 0) {
       q = q.in('shipment_type', selectedShipmentTypes)
@@ -315,7 +324,7 @@ export async function fetchOrderDelta(
   const hasShipmentFilter = selectedShipmentIds.length > 0
 
   const [cancelRows, outboundRows] = await Promise.all([
-    // (B) 취소 — order_item_id 기반 조회, 100개 chunk
+    // (B) 취소 — order_item_id 기반 조회, 100개 chunk (user_id 필터)
     (async () => {
       type InboundRow = { order_item_id: string; quantity: number | null }
       const rows: InboundRow[] = []
@@ -323,6 +332,7 @@ export async function fetchOrderDelta(
         const chunk = itemIds.slice(i, i + BATCH_SIZE)
         const { data, error } = await (orderSupabase.from('ft_fulfillment_inbounds') as any)
           .select('order_item_id, quantity')
+          .eq('user_id', orderUserId)
           .eq('type', 'CANCEL')
           .in('order_item_id', chunk)
         if (error) {
@@ -334,7 +344,7 @@ export async function fetchOrderDelta(
       return rows
     })(),
 
-    // (C) 출고 — shipment_id 선택된 것만, product_id 기반 조회, 100개 chunk
+    // (C) 출고 — shipment_id 선택된 것만, product_id 기반 조회, 100개 chunk (user_id 필터)
     (async () => {
       type OutboundRow = {
         product_id: string | null
@@ -347,6 +357,7 @@ export async function fetchOrderDelta(
         const chunk = productIds.slice(i, i + BATCH_SIZE)
         const { data, error } = await (orderSupabase.from('ft_fulfillment_outbounds') as any)
           .select('product_id, quantity, shipment_id')
+          .eq('user_id', orderUserId)
           .eq('type', 'PACKED')
           .not('shipment_id', 'is', null)
           .in('shipment_id', selectedShipmentIds)

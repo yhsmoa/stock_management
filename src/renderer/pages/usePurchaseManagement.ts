@@ -839,6 +839,21 @@ console.log('[조회수] 완료! 총 '+results.length+'건 CSV 저장됨');
     async (shipmentIds: string[], shipmentTypes: ShipmentType[]) => {
       setIsOrderLoading(true)
       try {
+        // ── order_user_id 조달 (ft_users.id) ──
+        // 주의: 기존 getUserId() 는 si_users.id 라 여기서 사용 불가
+        const orderUserId = (() => {
+          try {
+            const raw = localStorage.getItem('user')
+            return raw ? ((JSON.parse(raw)?.order_user_id as string) ?? '') : ''
+          } catch {
+            return ''
+          }
+        })()
+        if (!orderUserId) {
+          alert('로그인 사용자의 order_user_id 가 없어 주문 데이터를 조회할 수 없습니다.')
+          return
+        }
+
         // 현재 로드된 rg_items 의 product_id (= seller_product_id) 추출
         const productIds = Array.from(
           new Set(
@@ -851,7 +866,8 @@ console.log('[조회수] 완료! 총 '+results.length+'건 CSV 저장됨');
           setOrderDeltaMap(new Map())
           return
         }
-        const map = await fetchOrderDelta(productIds, shipmentIds, shipmentTypes)
+
+        const map = await fetchOrderDelta(productIds, shipmentIds, shipmentTypes, orderUserId)
         setOrderDeltaMap(map)
       } catch (e) {
         console.error('[loadOrderDelta]', e)

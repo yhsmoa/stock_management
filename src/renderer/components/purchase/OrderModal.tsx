@@ -16,6 +16,17 @@ import {
 const SHIPMENT_TYPES: ShipmentType[] = ['COUPANG', 'DIRECT', 'PERSONAL']
 const RECENT_SHIPMENT_LIMIT = 2
 
+// ── localStorage 에서 order_user_id 조달 (ft_users.id) ───────────
+const getOrderUserId = (): string => {
+  try {
+    const raw = localStorage.getItem('user')
+    if (!raw) return ''
+    return (JSON.parse(raw)?.order_user_id as string) ?? ''
+  } catch {
+    return ''
+  }
+}
+
 // ── Props ─────────────────────────────────────────────────────────
 interface OrderModalProps {
   isOpen: boolean
@@ -34,14 +45,21 @@ export default function OrderModal({ isOpen, onClose, onApply }: OrderModalProps
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  // ── 모달 열릴 때 최근 출고일 조회 ──────────────────────────────
+  // ── 모달 열릴 때 최근 출고일 조회 (현재 사용자 기준) ──────────
   useEffect(() => {
     if (!isOpen) return
     let cancelled = false
 
+    const orderUserId = getOrderUserId()
+    if (!orderUserId) {
+      setError('로그인 사용자의 order_user_id 가 없습니다.')
+      setShipments([])
+      return
+    }
+
     setLoading(true)
     setError(null)
-    fetchRecentShipments(RECENT_SHIPMENT_LIMIT)
+    fetchRecentShipments(orderUserId, RECENT_SHIPMENT_LIMIT)
       .then((list) => {
         if (cancelled) return
         setShipments(list)
