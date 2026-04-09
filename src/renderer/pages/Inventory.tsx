@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react'
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { theme } from '../styles/theme'
 import '../styles/page-common.css'
 import SearchForm from '../components/inventory/SearchForm'
@@ -8,6 +8,9 @@ import { supabase } from '../services/supabase'
 import { StockService } from '../services/stockService'
 import { parseStockExcelFile, exportStocksToExcel } from '../services/stockExcelService'
 import type { Stock, StockSearchFilters } from '../types/stock'
+
+// ── 상수 ──────────────────────────────────────────────────────
+const PAGE_SIZE = 100
 
 // ── 사용자 ID 조회 ────────────────────────────────────────────
 const getUserId = (): string | null => {
@@ -31,6 +34,31 @@ const Inventory: React.FC = () => {
   const [uploadProgress, setUploadProgress] = useState(0)
   const [uploadStatus, setUploadStatus] = useState('')
 
+  // ── 페이지네이션 ─────────────────────────────────────────────────
+  const [currentPage, setCurrentPage] = useState(1)
+
+  const totalPages = useMemo(() => Math.max(1, Math.ceil(stocks.length / PAGE_SIZE)), [stocks])
+  const pagedStocks = useMemo(
+    () => stocks.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE),
+    [stocks, currentPage],
+  )
+
+  const getPageNumbers = useCallback(() => {
+    const pages: (number | 'ellipsis')[] = []
+    if (totalPages <= 5) {
+      for (let i = 1; i <= totalPages; i++) pages.push(i)
+    } else {
+      pages.push(1)
+      if (currentPage > 3) pages.push('ellipsis')
+      const start = Math.max(2, currentPage - 1)
+      const end = Math.min(totalPages - 1, currentPage + 1)
+      for (let i = start; i <= end; i++) pages.push(i)
+      if (currentPage < totalPages - 2) pages.push('ellipsis')
+      pages.push(totalPages)
+    }
+    return pages
+  }, [currentPage, totalPages])
+
   // ── 차감 불가 오류 모달 상태 ─────────────────────────────────────
   const [isDeductErrorOpen, setIsDeductErrorOpen] = useState(false)
   const [deductErrors, setDeductErrors] = useState<{
@@ -50,6 +78,7 @@ const Inventory: React.FC = () => {
     try {
       const data = await StockService.getAllStocks(userId)
       setStocks(data)
+      setCurrentPage(1)
     } catch (error) {
       console.error('재고 로드 실패:', error)
       setError('재고 데이터를 불러오는데 실패했습니다.')
@@ -78,6 +107,7 @@ const Inventory: React.FC = () => {
         const data = await StockService.getFilteredStocks(filters, userId)
         setStocks(data)
       }
+      setCurrentPage(1)
     } catch (error) {
       console.error('검색 실패:', error)
       setError('검색 중 오류가 발생했습니다.')
@@ -584,10 +614,45 @@ const Inventory: React.FC = () => {
 
       {/* 재고 테이블 */}
       <InventoryTable
-        data={stocks}
+        data={pagedStocks}
         loading={isLoading}
         onSelectionChange={setSelectedIds}
       />
+
+      {/* ── 페이지네이션 ──────────────────────────────────────── */}
+      {!isLoading && stocks.length > 0 && (
+        <div className="page-pagination">
+          <div className="page-pagination-controls">
+            <button
+              className="page-pagination-btn"
+              disabled={currentPage === 1}
+              onClick={() => setCurrentPage(p => p - 1)}
+            >
+              이전
+            </button>
+            {getPageNumbers().map((p, i) =>
+              p === 'ellipsis' ? (
+                <span key={`e${i}`} className="page-pagination-ellipsis">…</span>
+              ) : (
+                <button
+                  key={p}
+                  className={`page-pagination-btn${currentPage === p ? ' active' : ''}`}
+                  onClick={() => setCurrentPage(p as number)}
+                >
+                  {p}
+                </button>
+              ),
+            )}
+            <button
+              className="page-pagination-btn"
+              disabled={currentPage === totalPages}
+              onClick={() => setCurrentPage(p => p + 1)}
+            >
+              다음
+            </button>
+          </div>
+        </div>
+      )}
 
       {/*
         ── 엑셀 차감 오류 모달 ────────────────────────────────────────

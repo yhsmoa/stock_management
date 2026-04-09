@@ -35,35 +35,42 @@ import type { RgItem, RgItemData } from '../types/purchase'
 // ── 상수 ──────────────────────────────────────────────────────
 const PAGE_SIZE = 100
 
+// ── 편집 가능 필드 타입 ──────────────────────────────────────────
+export type EditableField = 'input' | 'in_qty' | 'out_qty'
+
 // ── 컬럼 정의 ─────────────────────────────────────────────────
 export interface Column {
   key: string
   label: string
   width: string
   isProduct?: boolean
-  isInput?: boolean
-  borderLeft?: boolean   // 좌측 옅은 border (그룹 구분용)
+  isInput?: boolean        // 입력 열 전용 (노란 배경)
+  editable?: boolean       // 인라인 편집 가능 여부 (input, in_qty, out_qty)
+  borderLeft?: boolean     // 좌측 옅은 border (그룹 구분용)
+  colClass?: string        // 추가 CSS 클래스 (배경색 등)
 }
 
 export const COLUMNS: Column[] = [
   { key: 'product',  label: '상품정보', width: '250px', isProduct: true },
-  { key: 'input',    label: '입력',     width: '46px', isInput: true },
-  { key: 'order',    label: '주문',     width: '44px' },     // 입력 오른쪽
+  { key: 'input',    label: '입력',     width: '46px', isInput: true, editable: true },
+  { key: 'order',    label: '주문',     width: '44px' },
   { key: 'c_in',     label: 'C.in',     width: '46px' },
   { key: 'c_stock',  label: 'C.재고',   width: '48px' },
-  { key: 'warehouse',label: '창고',     width: '44px' },     // C.재고 오른쪽
-  { key: 'personal', label: '개인',     width: '44px', borderLeft: true }, // 창고↔7d 그룹 구분
+  { key: 'warehouse',label: '창고',     width: '44px' },
+  { key: 'personal', label: '개인',     width: '44px', borderLeft: true },
   { key: 'd7',       label: '7d',       width: '40px' },
   { key: 'd30',      label: '30d',      width: '42px' },
-  { key: 'recommend',label: '추천',     width: '44px', borderLeft: true }, // 30d↔추천 구분
+  { key: 'recommend',label: '추천',     width: '44px', borderLeft: true },
   { key: 'v1',       label: 'V1',       width: '40px' },
   { key: 'v2',       label: 'V2',       width: '40px' },
   { key: 'v3',       label: 'V3',       width: '40px' },
   { key: 'v4',       label: 'V4',       width: '40px' },
   { key: 'v5',       label: 'V5',       width: '40px' },
-  { key: 'storage',  label: '보관료',   width: '48px', borderLeft: true }, // V5↔보관료 구분
+  { key: 'storage',  label: '보관료',   width: '48px', borderLeft: true },
   { key: 'price',    label: 'price',    width: '52px' },
   { key: 'margin',   label: 'margin',   width: '52px' },
+  { key: 'in_qty',   label: '입고',     width: '46px', editable: true, colClass: 'col-in-qty' },
+  { key: 'out_qty',  label: '반출',     width: '46px', editable: true, colClass: 'col-out-qty' },
   { key: 'note',     label: 'note',     width: '70px' },
 ]
 
@@ -103,12 +110,12 @@ export function usePurchaseManagement() {
   /* ── 체크박스 ────────────────────────────────────────────── */
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
 
-  /* ── 인라인 편집 (입력 열) ──────────────────────────────── */
-  const [editingInputId, setEditingInputId] = useState<string | null>(null)
-  const [editingInputValue, setEditingInputValue] = useState('')
+  /* ── 인라인 편집 (input / in_qty / out_qty 공통) ────────── */
+  const [editingCell, setEditingCell] = useState<{ id: string; field: EditableField } | null>(null)
+  const [editingCellValue, setEditingCellValue] = useState('')
 
-  /* ── 변경 추적 (일괄 저장용) ────────────────────────────── */
-  const [pendingInputs, setPendingInputs] = useState<Map<string, number | null>>(new Map())
+  /* ── 변경 추적 (일괄 저장용, itemId → { input?, in_qty?, out_qty? }) */
+  const [pendingEdits, setPendingEdits] = useState<Map<string, Partial<Record<EditableField, number | null>>>>(new Map())
   const [saving, setSaving] = useState(false)
   const [resettingInputs, setResettingInputs] = useState(false)
 
@@ -134,6 +141,9 @@ export function usePurchaseManagement() {
   const [viewsDataMap, setViewsDataMap] = useState<Map<string, Map<string, number>>>(new Map())
   // 최근 5개 날짜 (오래된순: [0]=V1, [4]=V5)
   const [recentViewDates, setRecentViewDates] = useState<string[]>([])
+
+  /* ── 창고 재고 (barcode → si_stocks.qty 합산) ──────────── */
+  const [warehouseQtyMap, setWarehouseQtyMap] = useState<Map<string, number>>(new Map())
 
   /* ── 필터 (판매량 / 반출비 토글) ─────────────────────────── */
   const [activeFilter, setActiveFilter] = useState<'sales' | 'storage' | null>(null)
@@ -224,16 +234,41 @@ export function usePurchaseManagement() {
   // ══════════════════════════════════════════════════════════════
 
   useEffect(() => {
+    // ── 창고 재고 조회 (barcode → qty 합산, 페이지네이션 루프) ──
+    const fetchWarehouseQty = async (userId: string): Promise<Map<string, number>> => {
+      const wMap = new Map<string, number>()
+      let from = 0
+      const batchSize = 1000
+      while (true) {
+        const { data, error } = await supabase
+          .from('si_stocks')
+          .select('barcode, qty')
+          .eq('user_id', userId)
+          .range(from, from + batchSize - 1)
+        if (error) { console.error('[창고 재고] 조회 오류:', error); break }
+        if (!data || data.length === 0) break
+        for (const row of data) {
+          if (row.barcode) {
+            wMap.set(row.barcode, (wMap.get(row.barcode) || 0) + (row.qty || 0))
+          }
+        }
+        if (data.length < batchSize) break
+        from += batchSize
+      }
+      return wMap
+    }
+
     const loadItems = async () => {
       const userId = getUserId()
       if (!userId) return
 
       setLoading(true)
       try {
-        const [rgItems, rgItemData, viewsData] = await Promise.all([
+        const [rgItems, rgItemData, viewsData, warehouseMap] = await Promise.all([
           fetchRgItems(userId),
           fetchRgItemData(userId),
           fetchViewsData(userId),
+          fetchWarehouseQty(userId),
         ])
 
         setItems(rgItems)
@@ -253,6 +288,9 @@ export function usePurchaseManagement() {
         }
         setViewsDataMap(vMap)
         setRecentViewDates(getRecentViewDates(viewsData))
+
+        // ── warehouseQtyMap (barcode → si_stocks.qty 합산) ──
+        setWarehouseQtyMap(warehouseMap)
       } catch (error) {
         console.error('데이터 로드 실패:', error)
       } finally {
@@ -710,50 +748,56 @@ console.log('[조회수] 완료! 총 '+results.length+'건 CSV 저장됨');
   }, [viewsDateValue])
 
   // ══════════════════════════════════════════════════════════════
-  // 인라인 편집 (입력 열)
+  // 인라인 편집 (input / in_qty / out_qty 공통)
   // ══════════════════════════════════════════════════════════════
 
-  const handleInputClick = (itemId: string, currentValue: number | null) => {
-    setEditingInputId(itemId)
-    setEditingInputValue(currentValue != null ? String(currentValue) : '')
+  /** 셀 클릭 → 편집 모드 진입 */
+  const handleCellClick = (itemId: string, field: EditableField, currentValue: number | null) => {
+    setEditingCell({ id: itemId, field })
+    setEditingCellValue(currentValue != null ? String(currentValue) : '')
   }
 
-  const handleInputBlur = (itemId: string, originalValue: number | null) => {
-    setEditingInputId(null)
-    const trimmed = editingInputValue.trim()
+  /** 셀 blur → 값 비교 → 변경 시 pendingEdits 에 기록 */
+  const handleCellBlur = (itemId: string, field: EditableField, originalValue: number | null) => {
+    setEditingCell(null)
+    const trimmed = editingCellValue.trim()
     const newValue = trimmed === '' ? null : Number(trimmed)
 
     if (newValue === originalValue) return
 
+    // ── 로컬 상태 즉시 반영 ──
     setItems((prev) =>
       prev.map((item) =>
-        item.id === itemId ? { ...item, input: newValue } : item,
+        item.id === itemId ? { ...item, [field]: newValue } : item,
       ),
     )
 
-    setPendingInputs((prev) => {
+    // ── 변경 기록 (행 단위로 병합) ──
+    setPendingEdits((prev) => {
       const next = new Map(prev)
-      next.set(itemId, newValue)
+      const existing = next.get(itemId) || {}
+      next.set(itemId, { ...existing, [field]: newValue })
       return next
     })
   }
 
+  /** 일괄 저장 (input + in_qty + out_qty, 행 단위 병합) */
   const handleSaveInputs = async () => {
-    if (pendingInputs.size === 0) return
+    if (pendingEdits.size === 0) return
 
     setSaving(true)
     try {
-      const entries = Array.from(pendingInputs.entries())
+      const entries = Array.from(pendingEdits.entries())
       const BATCH = 50
       for (let i = 0; i < entries.length; i += BATCH) {
         const batch = entries.slice(i, i + BATCH)
         await Promise.all(
-          batch.map(([id, value]) =>
-            supabase.from('si_rg_items').update({ input: value }).eq('id', id),
+          batch.map(([id, changes]) =>
+            supabase.from('si_rg_items').update(changes).eq('id', id),
           ),
         )
       }
-      setPendingInputs(new Map())
+      setPendingEdits(new Map())
     } catch (err) {
       console.error('[저장] 실패:', err)
       alert('저장 중 오류가 발생했습니다.')
@@ -762,7 +806,7 @@ console.log('[조회수] 완료! 총 '+results.length+'건 CSV 저장됨');
     }
   }
 
-  // ── 입력 열 전체 초기화 (user_id 기준 단일 쿼리) ─────────────
+  // ── 입력 열 전체 초기화 (input + in_qty + out_qty, user_id 기준) ──
   const handleResetInputs = async () => {
     const userId = getUserId()
     if (!userId) return
@@ -773,13 +817,15 @@ console.log('[조회수] 완료! 총 '+results.length+'건 CSV 저장됨');
     try {
       const { error } = await supabase
         .from('si_rg_items')
-        .update({ input: null })
+        .update({ input: null, in_qty: null, out_qty: null })
         .eq('user_id', userId)
-        .not('input', 'is', null)
+        .or('input.not.is.null,in_qty.not.is.null,out_qty.not.is.null')
       if (error) throw error
 
-      setPendingInputs(new Map())
-      setItems((prev) => prev.map((item) => ({ ...item, input: null })))
+      setPendingEdits(new Map())
+      setItems((prev) => prev.map((item) => ({
+        ...item, input: null, in_qty: null, out_qty: null,
+      })))
     } catch (err) {
       console.error('[입력 초기화] 실패:', err)
       alert('입력값 초기화 중 오류가 발생했습니다.')
@@ -978,15 +1024,15 @@ console.log('[조회수] 완료! 총 '+results.length+'건 CSV 저장됨');
     handleSelectAll,
     handleSelectRow,
 
-    // 인라인 편집
-    editingInputId,
-    editingInputValue,
-    setEditingInputValue,
-    handleInputClick,
-    handleInputBlur,
+    // 인라인 편집 (input / in_qty / out_qty 공통)
+    editingCell,
+    editingCellValue,
+    setEditingCellValue,
+    handleCellClick,
+    handleCellBlur,
 
     // 저장 / 입력 초기화
-    pendingInputs,
+    pendingEdits,
     saving,
     handleSaveInputs,
     resettingInputs,
@@ -1010,5 +1056,8 @@ console.log('[조회수] 완료! 총 '+results.length+'건 CSV 저장됨');
     orderDeltaMap,
     isOrderLoading,
     loadOrderDelta,
+
+    // 창고 재고
+    warehouseQtyMap,
   }
 }

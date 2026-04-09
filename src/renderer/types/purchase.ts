@@ -22,6 +22,8 @@ export interface RgItem {
   external_vendor_sku: string | null
   sale_price: number | null
   input: number | null                     // 사용자 입력 수량
+  in_qty: number | null                   // 입고 수량
+  out_qty: number | null                  // 반출 수량
   weight: number | null
   width: number | null
   length: number | null

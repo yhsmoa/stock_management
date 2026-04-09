@@ -321,6 +321,18 @@
   background-color: #FFFDE7;
 }
 
+/* ── 입고 열 (연파랑 배경) ───────────────────────────────────── */
+.purchase-table th.col-in-qty,
+.purchase-table td.col-in-qty {
+  background-color: #EFF6FF;
+}
+
+/* ── 반출 열 (연빨강 배경) ───────────────────────────────────── */
+.purchase-table th.col-out-qty,
+.purchase-table td.col-out-qty {
+  background-color: #FEF2F2;
+}
+
 /* ── 그룹 구분선 (옅은 좌측 border) ───────────────────────────── */
 .purchase-table th.col-border-left,
 .purchase-table td.col-border-left {

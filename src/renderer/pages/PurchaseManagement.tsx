@@ -5,7 +5,7 @@
 
 import React, { useState } from 'react'
 import './PurchaseManagement.css'
-import { usePurchaseManagement, COLUMNS } from './usePurchaseManagement'
+import { usePurchaseManagement, COLUMNS, type EditableField } from './usePurchaseManagement'
 import type { RgItem } from '../types/purchase'
 import ProductDetailPanel from '../components/purchase/ProductDetailPanel'
 import OrderModal from '../components/purchase/OrderModal'
@@ -83,12 +83,12 @@ const PurchaseManagement: React.FC = () => {
     selectedIds,
     handleSelectAll,
     handleSelectRow,
-    editingInputId,
-    editingInputValue,
-    setEditingInputValue,
-    handleInputClick,
-    handleInputBlur,
-    pendingInputs,
+    editingCell,
+    editingCellValue,
+    setEditingCellValue,
+    handleCellClick,
+    handleCellBlur,
+    pendingEdits,
     saving,
     handleSaveInputs,
     resettingInputs,
@@ -106,10 +106,46 @@ const PurchaseManagement: React.FC = () => {
     orderDeltaMap,
     isOrderLoading,
     loadOrderDelta,
+    warehouseQtyMap,
   } = usePurchaseManagement()
 
   // ── 주문 모달 open 상태 ─────────────────────────────────────
   const [orderModalOpen, setOrderModalOpen] = useState(false)
+
+  // ── 편집 가능 셀 공통 렌더러 (input / in_qty / out_qty) ─────
+  const renderEditableCell = (item: RgItem, field: EditableField, value: number | null) => {
+    if (editingCell && editingCell.id === item.id && editingCell.field === field) {
+      return (
+        <input
+          className="purchase-input-cell"
+          type="text"
+          inputMode="numeric"
+          autoFocus
+          value={editingCellValue}
+          onFocus={(e) => e.target.select()}
+          onChange={(e) => {
+            if (e.target.value === '' || /^\d+$/.test(e.target.value)) {
+              setEditingCellValue(e.target.value)
+            }
+          }}
+          onBlur={() => handleCellBlur(item.id!, field, value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault()
+              handleCellBlur(item.id!, field, value)
+              // 같은 필드의 다음 행으로 이동
+              const currentIdx = pageItems.findIndex((pi) => pi.id === item.id)
+              const nextItem = pageItems[currentIdx + 1]
+              if (nextItem?.id) {
+                handleCellClick(nextItem.id, field, nextItem[field] ?? null)
+              }
+            }
+          }}
+        />
+      )
+    }
+    return <span>{value != null ? value : ''}</span>
+  }
 
   // ── 셀 렌더링 ──────────────────────────────────────────────
   const renderCell = (col: typeof COLUMNS[number], item: RgItem) => {
@@ -139,38 +175,13 @@ const PurchaseManagement: React.FC = () => {
           </span>
         )
 
-      /* ── 입력 열: 인라인 편집 ────────────────────────────── */
+      /* ── 편집 가능 열 (입력 / 입고 / 반출) ─────────────── */
       case 'input':
-        if (editingInputId === item.id) {
-          return (
-            <input
-              className="purchase-input-cell"
-              type="text"
-              inputMode="numeric"
-              autoFocus
-              value={editingInputValue}
-              onFocus={(e) => e.target.select()}
-              onChange={(e) => {
-                if (e.target.value === '' || /^\d+$/.test(e.target.value)) {
-                  setEditingInputValue(e.target.value)
-                }
-              }}
-              onBlur={() => handleInputBlur(item.id!, item.input)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') {
-                  e.preventDefault()
-                  handleInputBlur(item.id!, item.input)
-                  const currentIdx = pageItems.findIndex((pi) => pi.id === item.id)
-                  const nextItem = pageItems[currentIdx + 1]
-                  if (nextItem?.id) {
-                    handleInputClick(nextItem.id, nextItem.input)
-                  }
-                }
-              }}
-            />
-          )
-        }
-        return <span>{item.input != null ? item.input : ''}</span>
+        return renderEditableCell(item, 'input', item.input)
+      case 'in_qty':
+        return renderEditableCell(item, 'in_qty', item.in_qty ?? null)
+      case 'out_qty':
+        return renderEditableCell(item, 'out_qty', item.out_qty ?? null)
 
       /* ── 주문 열: ft_order_items delta (주문 - 취소 - 출고) ── */
       case 'order': {
@@ -185,6 +196,15 @@ const PurchaseManagement: React.FC = () => {
         return data?.pending_inbounds ? data.pending_inbounds.toLocaleString() : ''
       case 'c_stock':
         return data?.orderable_qty ? data.orderable_qty.toLocaleString() : ''
+
+      /* ── 창고 열: si_stocks.qty 합산 (barcode 기준) ────── */
+      case 'warehouse': {
+        const bc = item.barcode
+        if (!bc) return ''
+        const qty = warehouseQtyMap.get(bc)
+        return qty ? qty.toLocaleString() : ''
+      }
+
       case 'd7':
         return data?.recent_sales_qty_7d ? data.recent_sales_qty_7d.toLocaleString() : ''
       case 'd30':
@@ -392,9 +412,9 @@ const PurchaseManagement: React.FC = () => {
           <button
             className="purchase-btn purchase-save-btn"
             onClick={handleSaveInputs}
-            disabled={saving || pendingInputs.size === 0}
+            disabled={saving || pendingEdits.size === 0}
           >
-            {saving ? '저장 중...' : `저장${pendingInputs.size > 0 ? ` (${pendingInputs.size})` : ''}`}
+            {saving ? '저장 중...' : `저장${pendingEdits.size > 0 ? ` (${pendingEdits.size})` : ''}`}
           </button>
         </div>
       </div>
@@ -430,6 +450,7 @@ const PurchaseManagement: React.FC = () => {
                       const cls = [
                         c.isProduct && 'col-product',
                         c.isInput && 'col-input',
+                        c.colClass,
                         c.borderLeft && 'col-border-left',
                       ].filter(Boolean).join(' ')
                       return (
@@ -466,6 +487,7 @@ const PurchaseManagement: React.FC = () => {
                             const cls = [
                               c.isProduct && 'col-product',
                               c.isInput && 'col-input',
+                              c.colClass,
                               c.borderLeft && 'col-border-left',
                             ].filter(Boolean).join(' ')
                             return (
@@ -475,11 +497,16 @@ const PurchaseManagement: React.FC = () => {
                                 onClick={
                                   c.isProduct
                                     ? () => handleProductClick(item)
-                                    : c.isInput && editingInputId !== item.id
-                                      ? () => handleInputClick(item.id!, item.input)
+                                    : c.editable
+                                      ? () => {
+                                          const field = c.key as EditableField
+                                          if (!(editingCell && editingCell.id === item.id && editingCell.field === field)) {
+                                            handleCellClick(item.id!, field, item[field] ?? null)
+                                          }
+                                        }
                                       : undefined
                                 }
-                                style={c.isProduct || c.isInput ? { cursor: 'pointer' } : undefined}
+                                style={c.isProduct || c.editable ? { cursor: 'pointer' } : undefined}
                               >
                                 {renderCell(c, item)}
                               </td>

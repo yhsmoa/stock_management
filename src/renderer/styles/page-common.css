@@ -75,3 +75,52 @@
   color: #1F2937;
   margin: 0;
 }
+
+/* ── 페이지네이션 (가운데 정렬) ──────────────────────────── */
+.page-pagination {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 10px 16px;
+  border-top: 1px solid #F3F4F6;
+  flex-shrink: 0;
+}
+
+.page-pagination-controls {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+
+.page-pagination-btn {
+  padding: 6px 10px;
+  border: 1px solid #E5E7EB;
+  background: white;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+  transition: all 0.2s;
+  min-width: 34px;
+}
+
+.page-pagination-btn:hover:not(:disabled) {
+  background: #F8FAFC;
+  border-color: #4A8CF7;
+}
+
+.page-pagination-btn.active {
+  background: #4A8CF7;
+  color: white;
+  border-color: #4A8CF7;
+}
+
+.page-pagination-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.page-pagination-ellipsis {
+  padding: 6px 2px;
+  color: #9CA3AF;
+  font-size: 13px;
+}
