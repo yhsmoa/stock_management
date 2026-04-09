@@ -3,12 +3,44 @@
    - 로직은 usePurchaseManagement 훅에서 관리
    ================================================================ */
 
-import React from 'react'
+import React, { useState } from 'react'
 import './PurchaseManagement.css'
 import { usePurchaseManagement, COLUMNS } from './usePurchaseManagement'
 import type { RgItem } from '../types/purchase'
 import ProductDetailPanel from '../components/purchase/ProductDetailPanel'
+import OrderModal from '../components/purchase/OrderModal'
 import UploadProgressModal from '../components/UploadProgressModal'
+
+// ── 상수: 조회수 변동 색상 ────────────────────────────────────
+const VIEW_DIFF_THRESHOLD = 10
+const COLOR_INCREASE = '#EF4444'  // 빨강 (증가)
+const COLOR_DECREASE = '#3B82F6'  // 파랑 (감소)
+
+/**
+ * 조회수 V열 색상 결정 헬퍼
+ * - 현재 V와 이전 V를 비교하여 차이가 ±10 초과 시 색상 반환
+ * - V1(dateIdx=0)은 비교 대상 없음 → undefined
+ * - 이전 V 데이터 없음 → undefined (기본색 유지)
+ */
+const getViewDiffColor = (
+  current: number,
+  dateIdx: number,
+  itemViews: Map<string, number> | undefined,
+  recentDates: string[],
+): string | undefined => {
+  if (dateIdx === 0 || !itemViews) return undefined
+
+  const prevDate = recentDates[dateIdx - 1]
+  if (!prevDate) return undefined
+
+  const prev = itemViews.get(prevDate)
+  if (prev == null) return undefined
+
+  const diff = current - prev
+  if (diff > VIEW_DIFF_THRESHOLD) return COLOR_INCREASE
+  if (diff < -VIEW_DIFF_THRESHOLD) return COLOR_DECREASE
+  return undefined
+}
 
 const PurchaseManagement: React.FC = () => {
   const {
@@ -69,7 +101,13 @@ const PurchaseManagement: React.FC = () => {
     isNotItemWinner,
     viewsDataMap,
     recentViewDates,
+    orderDeltaMap,
+    isOrderLoading,
+    loadOrderDelta,
   } = usePurchaseManagement()
+
+  // ── 주문 모달 open 상태 ─────────────────────────────────────
+  const [orderModalOpen, setOrderModalOpen] = useState(false)
 
   // ── 셀 렌더링 ──────────────────────────────────────────────
   const renderCell = (col: typeof COLUMNS[number], item: RgItem) => {
@@ -132,6 +170,14 @@ const PurchaseManagement: React.FC = () => {
         }
         return <span>{item.input != null ? item.input : ''}</span>
 
+      /* ── 주문 열: ft_order_items delta (주문 - 취소 - 출고) ── */
+      case 'order': {
+        const pid = item.seller_product_id
+        const delta = pid ? orderDeltaMap.get(pid) : undefined
+        if (!delta || delta.net === 0) return ''
+        return delta.net.toLocaleString()
+      }
+
       /* ── JOIN 컬럼: si_rg_item_data 필드 ────────────────── */
       case 'c_in':
         return data?.pending_inbounds ? data.pending_inbounds.toLocaleString() : ''
@@ -141,8 +187,31 @@ const PurchaseManagement: React.FC = () => {
         return data?.recent_sales_qty_7d ? data.recent_sales_qty_7d.toLocaleString() : ''
       case 'd30':
         return data?.recent_sales_qty_30d ? data.recent_sales_qty_30d.toLocaleString() : ''
-      case 'recommend':
-        return data?.recommended_inbound_qty ? data.recommended_inbound_qty.toLocaleString() : ''
+      case 'recommend': {
+        const qty = data?.recommended_inbound_qty
+        if (!qty) return ''
+        // 1보다 클 때만 파란 동그라미 (border only, 배경 없음)
+        return qty > 1 ? (
+          <span
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              minWidth: '20px',
+              height: '20px',
+              padding: '0 4px',
+              borderRadius: '999px',
+              border: '1px solid #3B82F6',
+              color: '#3B82F6',
+              fontSize: '11px',
+              fontWeight: 600,
+              boxSizing: 'border-box',
+            }}
+          >
+            {qty.toLocaleString()}
+          </span>
+        ) : qty.toLocaleString()
+      }
       case 'storage': {
         const fee = data?.monthly_storage_fee
         if (!fee) return ''
@@ -153,13 +222,23 @@ const PurchaseManagement: React.FC = () => {
       case 'price':
         return item.sale_price ? item.sale_price.toLocaleString() : ''
 
-      /* ── 조회수 V1~V5 (최근 5개 날짜, V1=가장 오래된, V5=최근) ── */
+      /* ── 조회수 V1~V5 (최근 5개 날짜, V1=가장 오래된, V5=최근) ──
+         이전 V와 비교: diff > +10 → 빨강, diff < -10 → 파랑, ±10 이내 → 기본색 */
       case 'v1': case 'v2': case 'v3': case 'v4': case 'v5': {
         const dateIdx = Number(col.key[1]) - 1
         const date = recentViewDates[dateIdx]
         if (!date) return ''
-        const views = viewsDataMap.get(item.seller_product_id)?.get(date)
-        return views != null ? views.toLocaleString() : ''
+
+        const itemViews = viewsDataMap.get(item.seller_product_id)
+        const views = itemViews?.get(date)
+        if (views == null) return ''
+
+        // ── 이전 V 대비 색상 결정 (V1은 비교 대상 없음) ──
+        const color = getViewDiffColor(views, dateIdx, itemViews, recentViewDates)
+
+        return color
+          ? <span style={{ color }}>{views.toLocaleString()}</span>
+          : views.toLocaleString()
       }
 
       /* ── 기타 ────────────────────────────���───────────────── */
@@ -186,6 +265,16 @@ const PurchaseManagement: React.FC = () => {
           </button>
         </div>
         <div className="purchase-toolbar-right">
+          {/* ── 주문 모달 열기 ────────────────────────────── */}
+          <button
+            className="purchase-btn"
+            onClick={() => setOrderModalOpen(true)}
+            disabled={isOrderLoading}
+            title="주문 조회 조건 설정"
+          >
+            {isOrderLoading ? '주문 로딩...' : '주문 🔗'}
+          </button>
+
           {/* ── RG 재고 xlsx ─────────────────────────────────── */}
           <label className="purchase-btn" style={{ cursor: 'pointer' }}>
             RG 재고 xlsx
@@ -326,17 +415,18 @@ const PurchaseManagement: React.FC = () => {
                         onChange={(e) => handleSelectAll(e.target.checked)}
                       />
                     </th>
-                    {COLUMNS.map((c) => (
-                      <th
-                        key={c.key}
-                        className={
-                          c.isProduct ? 'col-product' :
-                          c.isInput ? 'col-input' : ''
-                        }
-                      >
-                        {c.label}
-                      </th>
-                    ))}
+                    {COLUMNS.map((c) => {
+                      const cls = [
+                        c.isProduct && 'col-product',
+                        c.isInput && 'col-input',
+                        c.borderLeft && 'col-border-left',
+                      ].filter(Boolean).join(' ')
+                      return (
+                        <th key={c.key} className={cls}>
+                          {c.label}
+                        </th>
+                      )
+                    })}
                   </tr>
                 </thead>
 
@@ -361,25 +451,29 @@ const PurchaseManagement: React.FC = () => {
                               onChange={(e) => handleSelectRow(rowId, e.target.checked)}
                             />
                           </td>
-                          {COLUMNS.map((c) => (
-                            <td
-                              key={c.key}
-                              className={
-                                c.isProduct ? 'col-product' :
-                                c.isInput ? 'col-input' : ''
-                              }
-                              onClick={
-                                c.isProduct
-                                  ? () => handleProductClick(item)
-                                  : c.isInput && editingInputId !== item.id
-                                    ? () => handleInputClick(item.id!, item.input)
-                                    : undefined
-                              }
-                              style={c.isProduct || c.isInput ? { cursor: 'pointer' } : undefined}
-                            >
-                              {renderCell(c, item)}
-                            </td>
-                          ))}
+                          {COLUMNS.map((c) => {
+                            const cls = [
+                              c.isProduct && 'col-product',
+                              c.isInput && 'col-input',
+                              c.borderLeft && 'col-border-left',
+                            ].filter(Boolean).join(' ')
+                            return (
+                              <td
+                                key={c.key}
+                                className={cls}
+                                onClick={
+                                  c.isProduct
+                                    ? () => handleProductClick(item)
+                                    : c.isInput && editingInputId !== item.id
+                                      ? () => handleInputClick(item.id!, item.input)
+                                      : undefined
+                                }
+                                style={c.isProduct || c.isInput ? { cursor: 'pointer' } : undefined}
+                              >
+                                {renderCell(c, item)}
+                              </td>
+                            )
+                          })}
                         </tr>
                       )
                     })
@@ -440,6 +534,13 @@ const PurchaseManagement: React.FC = () => {
         progress={uploadProgress}
         status={uploadStatus}
         title="재고건강 SKU 엑셀 업로드 중"
+      />
+
+      {/* ── 주문 조회 조건 모달 ──────────────────────────── */}
+      <OrderModal
+        isOpen={orderModalOpen}
+        onClose={() => setOrderModalOpen(false)}
+        onApply={loadOrderDelta}
       />
 
       {/* ── 조회수 날짜 입력 모달 ──────────────────────────── */}

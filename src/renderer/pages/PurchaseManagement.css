@@ -121,6 +121,37 @@
   box-shadow: 0 8px 30px rgba(0, 0, 0, 0.18);
 }
 
+/* ── 주문 모달 섹션 ─────────────────────────────────────────── */
+.order-modal-section {
+  padding: 8px 0;
+}
+.order-modal-section + .order-modal-section {
+  border-top: 1px solid #E5E7EB;
+  margin-top: 12px;
+  padding-top: 12px;
+}
+.order-modal-section-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: #374151;
+  margin-bottom: 8px;
+}
+.order-modal-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+  font-size: 13px;
+  cursor: pointer;
+  user-select: none;
+}
+.order-modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
+}
+
 /* ── 검색 입력폼 (가운데 상단, 타원형) ───────────────────────── */
 .purchase-search-bar {
   display: flex;
@@ -288,6 +319,12 @@
 .purchase-table th.col-input,
 .purchase-table td.col-input {
   background-color: #FFFDE7;
+}
+
+/* ── 그룹 구분선 (옅은 좌측 border) ───────────────────────────── */
+.purchase-table th.col-border-left,
+.purchase-table td.col-border-left {
+  border-left: 1px solid #E5E7EB;
 }
 
 .purchase-input-cell {

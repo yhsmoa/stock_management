@@ -25,6 +25,11 @@ import {
   getRecentViewDates,
 } from '../services/purchaseService'
 import { supabase } from '../services/supabase'
+import {
+  fetchOrderDelta,
+  type OrderDelta,
+  type ShipmentType,
+} from '../services/orderFulfillmentService'
 import type { RgItem, RgItemData } from '../types/purchase'
 
 // ── 상수 ──────────────────────────────────────────────────────
@@ -37,25 +42,26 @@ export interface Column {
   width: string
   isProduct?: boolean
   isInput?: boolean
+  borderLeft?: boolean   // 좌측 옅은 border (그룹 구분용)
 }
 
 export const COLUMNS: Column[] = [
   { key: 'product',  label: '상품정보', width: '250px', isProduct: true },
   { key: 'input',    label: '입력',     width: '46px', isInput: true },
+  { key: 'order',    label: '주문',     width: '44px' },     // 입력 오른쪽
   { key: 'c_in',     label: 'C.in',     width: '46px' },
   { key: 'c_stock',  label: 'C.재고',   width: '48px' },
-  { key: 'order',    label: '주문',     width: '44px' },
-  { key: 'personal', label: '개인',     width: '44px' },
+  { key: 'warehouse',label: '창고',     width: '44px' },     // C.재고 오른쪽
+  { key: 'personal', label: '개인',     width: '44px', borderLeft: true }, // 창고↔7d 그룹 구분
   { key: 'd7',       label: '7d',       width: '40px' },
   { key: 'd30',      label: '30d',      width: '42px' },
-  { key: 'recommend',label: '추천',     width: '44px' },
-  { key: 'warehouse',label: '창고',     width: '44px' },
-  { key: 'storage',  label: '보관료',   width: '48px' },
+  { key: 'recommend',label: '추천',     width: '44px', borderLeft: true }, // 30d↔추천 구분
   { key: 'v1',       label: 'V1',       width: '40px' },
   { key: 'v2',       label: 'V2',       width: '40px' },
   { key: 'v3',       label: 'V3',       width: '40px' },
   { key: 'v4',       label: 'V4',       width: '40px' },
   { key: 'v5',       label: 'V5',       width: '40px' },
+  { key: 'storage',  label: '보관료',   width: '48px', borderLeft: true }, // V5↔보관료 구분
   { key: 'price',    label: 'price',    width: '52px' },
   { key: 'margin',   label: 'margin',   width: '52px' },
   { key: 'note',     label: 'note',     width: '70px' },
@@ -130,6 +136,10 @@ export function usePurchaseManagement() {
 
   /* ── 필터 (판매량 / 반출비 토글) ─────────────────────────── */
   const [activeFilter, setActiveFilter] = useState<'sales' | 'storage' | null>(null)
+
+  /* ── 주문 델타 (주문 - 취소 - 출고, product_id 기준) ─────── */
+  const [orderDeltaMap, setOrderDeltaMap] = useState<Map<string, OrderDelta>>(new Map())
+  const [isOrderLoading, setIsOrderLoading] = useState(false)
 
   // ══════════════════════════════════════════════════════════════
   // 필터 + 검색
@@ -821,6 +831,39 @@ console.log('[조회수] 완료! 총 '+results.length+'건 CSV 저장됨');
   }
 
   // ══════════════════════════════════════════════════════════════
+  // 주문 델타 로드 (OrderModal [적용] 콜백)
+  //   - productIds (rg_items.seller_product_id) 로 주문/취소/출고 합계 조회
+  // ══════════════════════════════════════════════════════════════
+
+  const loadOrderDelta = useCallback(
+    async (shipmentIds: string[], shipmentTypes: ShipmentType[]) => {
+      setIsOrderLoading(true)
+      try {
+        // 현재 로드된 rg_items 의 product_id (= seller_product_id) 추출
+        const productIds = Array.from(
+          new Set(
+            items
+              .map((it) => it.seller_product_id)
+              .filter((id): id is string => !!id),
+          ),
+        )
+        if (productIds.length === 0) {
+          setOrderDeltaMap(new Map())
+          return
+        }
+        const map = await fetchOrderDelta(productIds, shipmentIds, shipmentTypes)
+        setOrderDeltaMap(map)
+      } catch (e) {
+        console.error('[loadOrderDelta]', e)
+        alert('주문 데이터 조회 실패: ' + (e as Error).message)
+      } finally {
+        setIsOrderLoading(false)
+      }
+    },
+    [items],
+  )
+
+  // ══════════════════════════════════════════════════════════════
   // 셀 렌더링 헬퍼
   // ══════════════════════════════════════════════════════════════
 
@@ -923,5 +966,10 @@ console.log('[조회수] 완료! 총 '+results.length+'건 CSV 저장됨');
     // 셀 헬퍼
     getItemData,
     isNotItemWinner,
+
+    // 주문 델타 (주문 모달)
+    orderDeltaMap,
+    isOrderLoading,
+    loadOrderDelta,
   }
 }

@@ -5,7 +5,7 @@
              ft_cancel_details
    ================================================================ */
 
-import { orderSupabase } from './orderSupabase'
+import { orderSupabase, isOrderSupabaseConfigured } from './orderSupabase'
 
 // ── 상수 ──────────────────────────────────────────────────────────
 const BATCH_SIZE = 100 // .in() URL 길이 제한 대응
@@ -208,4 +208,191 @@ export async function fetchFulfillmentHistory(
   return [...inbounds, ...outbounds].sort(
     (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime(),
   )
+}
+
+// ══════════════════════════════════════════════════════════════════
+// 주문 델타 (주문 - 취소 - 출고) 조회
+//   - 사입관리 '주문' 열 표시용
+//   - product_id 기준으로 rg_items 와 매칭
+// ══════════════════════════════════════════════════════════════════
+
+// ── 타입 정의 ──────────────────────────────────────────────────────
+
+/** shipment_type 드롭박스 옵션 */
+export type ShipmentType = 'COUPANG' | 'DIRECT' | 'PERSONAL'
+
+/** ft_shipments 행 (주문 모달 옵션용) */
+export interface ShipmentOption {
+  id: string
+  user_id: string
+  date: string
+  shipment_no: string | null
+}
+
+/** 주문 델타 (product_id 기준 합계) */
+export interface OrderDelta {
+  order: number      // 주문수량 합계
+  cancel: number     // 취소수량 합계
+  outbound: number   // 출고수량 합계
+  net: number        // order - cancel - outbound
+}
+
+// ── 최근 출고일 N개 조회 ──────────────────────────────────────────
+
+/**
+ * ft_shipments 에서 최근 N개 출고일 조회 (date DESC)
+ *
+ * @param limit - 조회 건수 (기본 2)
+ * @returns ShipmentOption[]
+ */
+export async function fetchRecentShipments(limit = 2): Promise<ShipmentOption[]> {
+  if (!isOrderSupabaseConfigured) return []
+
+  const { data, error } = await (orderSupabase.from('ft_shipments') as any)
+    .select('id, user_id, date, shipment_no')
+    .order('date', { ascending: false })
+    .limit(limit)
+
+  if (error) {
+    console.error('[fetchRecentShipments]', error)
+    throw error
+  }
+  return (data ?? []) as ShipmentOption[]
+}
+
+// ── 주문 델타 일괄 조회 ────────────────────────────────────────────
+
+/**
+ * productIds(rg_items.seller_product_id) 기준으로 주문/취소/출고 합계 조회
+ *
+ * @param productIds              - rg_items 에서 추출한 product_id 배열
+ * @param selectedShipmentIds     - 모달에서 체크한 ft_shipments.id 배열 (빈 배열이면 출고=0)
+ * @param selectedShipmentTypes   - 모달에서 체크한 shipment_type 배열 (빈 배열이면 필터 생략=전체)
+ * @returns Map<product_id, OrderDelta>
+ */
+export async function fetchOrderDelta(
+  productIds: string[],
+  selectedShipmentIds: string[],
+  selectedShipmentTypes: ShipmentType[],
+): Promise<Map<string, OrderDelta>> {
+  const result = new Map<string, OrderDelta>()
+  if (!isOrderSupabaseConfigured || productIds.length === 0) return result
+
+  // ── (A) ft_order_items — 100개 chunk 로 .in() 순회 ────────────
+  type OrderItemRow = {
+    id: string
+    product_id: string | null
+    order_qty: number | null
+  }
+  const orderItems: OrderItemRow[] = []
+  for (let i = 0; i < productIds.length; i += BATCH_SIZE) {
+    const chunk = productIds.slice(i, i + BATCH_SIZE)
+    let q = (orderSupabase.from('ft_order_items') as any)
+      .select('id, product_id, order_qty')
+      .in('product_id', chunk)
+    if (selectedShipmentTypes.length > 0) {
+      q = q.in('shipment_type', selectedShipmentTypes)
+    }
+    const { data, error } = await q
+    if (error) {
+      console.error('[fetchOrderDelta:ft_order_items]', error)
+      throw error
+    }
+    if (data) orderItems.push(...(data as OrderItemRow[]))
+  }
+
+  // product_id 별 주문수량 집계 + order_item_id → product_id 매핑
+  const orderMap = new Map<string, number>()
+  const itemToProduct = new Map<string, string>()
+  for (const oi of orderItems) {
+    if (!oi.product_id) continue
+    itemToProduct.set(oi.id, oi.product_id)
+    orderMap.set(oi.product_id, (orderMap.get(oi.product_id) ?? 0) + (oi.order_qty ?? 0))
+  }
+
+  // ── (B) ft_fulfillment_inbounds (CANCEL) + (C) ft_fulfillment_outbounds (PACKED) 병렬 ──
+  const itemIds = Array.from(itemToProduct.keys())
+  const hasShipmentFilter = selectedShipmentIds.length > 0
+
+  const [cancelRows, outboundRows] = await Promise.all([
+    // (B) 취소 — order_item_id 기반 조회, 100개 chunk
+    (async () => {
+      type InboundRow = { order_item_id: string; quantity: number | null }
+      const rows: InboundRow[] = []
+      for (let i = 0; i < itemIds.length; i += BATCH_SIZE) {
+        const chunk = itemIds.slice(i, i + BATCH_SIZE)
+        const { data, error } = await (orderSupabase.from('ft_fulfillment_inbounds') as any)
+          .select('order_item_id, quantity')
+          .eq('type', 'CANCEL')
+          .in('order_item_id', chunk)
+        if (error) {
+          console.error('[fetchOrderDelta:ft_fulfillment_inbounds]', error)
+          throw error
+        }
+        if (data) rows.push(...(data as InboundRow[]))
+      }
+      return rows
+    })(),
+
+    // (C) 출고 — shipment_id 선택된 것만, product_id 기반 조회, 100개 chunk
+    (async () => {
+      type OutboundRow = {
+        product_id: string | null
+        quantity: number | null
+        shipment_id: string | null
+      }
+      if (!hasShipmentFilter) return [] as OutboundRow[]
+      const rows: OutboundRow[] = []
+      for (let i = 0; i < productIds.length; i += BATCH_SIZE) {
+        const chunk = productIds.slice(i, i + BATCH_SIZE)
+        const { data, error } = await (orderSupabase.from('ft_fulfillment_outbounds') as any)
+          .select('product_id, quantity, shipment_id')
+          .eq('type', 'PACKED')
+          .not('shipment_id', 'is', null)
+          .in('shipment_id', selectedShipmentIds)
+          .in('product_id', chunk)
+        if (error) {
+          console.error('[fetchOrderDelta:ft_fulfillment_outbounds]', error)
+          throw error
+        }
+        if (data) rows.push(...(data as OutboundRow[]))
+      }
+      return rows
+    })(),
+  ])
+
+  // 취소 집계 (order_item_id → product_id 변환 후 합산)
+  const cancelMap = new Map<string, number>()
+  for (const r of cancelRows) {
+    const pid = itemToProduct.get(r.order_item_id)
+    if (!pid) continue
+    cancelMap.set(pid, (cancelMap.get(pid) ?? 0) + (r.quantity ?? 0))
+  }
+
+  // 출고 집계 (product_id 별 합산)
+  const outboundMap = new Map<string, number>()
+  for (const r of outboundRows) {
+    if (!r.product_id) continue
+    outboundMap.set(r.product_id, (outboundMap.get(r.product_id) ?? 0) + (r.quantity ?? 0))
+  }
+
+  // ── 최종 합산 → Map<product_id, OrderDelta> ────────────────────
+  const allPids = new Set<string>([
+    ...orderMap.keys(),
+    ...cancelMap.keys(),
+    ...outboundMap.keys(),
+  ])
+  for (const pid of allPids) {
+    const order = orderMap.get(pid) ?? 0
+    const cancel = cancelMap.get(pid) ?? 0
+    const outbound = outboundMap.get(pid) ?? 0
+    result.set(pid, {
+      order,
+      cancel,
+      outbound,
+      net: order - cancel - outbound,
+    })
+  }
+
+  return result
 }
