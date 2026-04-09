@@ -9,7 +9,7 @@ import { orderSupabase, isOrderSupabaseConfigured } from './orderSupabase'
 
 // ── 상수 ──────────────────────────────────────────────────────────
 const BATCH_SIZE = 100   // .in() URL 길이 제한 대응
-const QUERY_LIMIT = 10000 // Supabase 기본 1000행 제한 해제 (chunk 당 최대 응답 수)
+const PAGE_SIZE = 1000   // 페이지네이션 루프 단위 (Supabase 기본 limit 과 동일)
 
 // ══════════════════════════════════════════════════════════════════
 // 타입 정의
@@ -337,18 +337,23 @@ export async function fetchOrderDelta(
 
   for (let i = 0; i < barcodes.length; i += BATCH_SIZE) {
     const chunk = barcodes.slice(i, i + BATCH_SIZE)
-    const { data, error } = await (orderSupabase.from('ft_order_items') as any)
-      .select('id, barcode, order_qty, shipment_type')
-      .eq('user_id', orderUserId)
-      .eq('status', 'PROCESSING')
-      .or(baseTypeOr)
-      .in('barcode', chunk)
-      .limit(QUERY_LIMIT)
-    if (error) {
-      console.error('[fetchOrderDelta:ft_order_items]', error)
-      throw error
+    let from = 0
+    while (true) {
+      const { data, error } = await (orderSupabase.from('ft_order_items') as any)
+        .select('id, barcode, order_qty, shipment_type')
+        .eq('user_id', orderUserId)
+        .eq('status', 'PROCESSING')
+        .or(baseTypeOr)
+        .in('barcode', chunk)
+        .range(from, from + PAGE_SIZE - 1)
+      if (error) {
+        console.error('[fetchOrderDelta:ft_order_items]', error)
+        throw error
+      }
+      if (data) orderItems.push(...(data as OrderItemRow[]))
+      if (!data || data.length < PAGE_SIZE) break
+      from += PAGE_SIZE
     }
-    if (data) orderItems.push(...(data as OrderItemRow[]))
   }
 
   // ── 집계 + 매핑 2종 ─────────────────────────────────────────────
@@ -385,17 +390,22 @@ export async function fetchOrderDelta(
       const rows: InboundRow[] = []
       for (let i = 0; i < itemIds.length; i += BATCH_SIZE) {
         const chunk = itemIds.slice(i, i + BATCH_SIZE)
-        const { data, error } = await (orderSupabase.from('ft_fulfillment_inbounds') as any)
-          .select('order_item_id, quantity')
-          .eq('user_id', orderUserId)
-          .eq('type', 'CANCEL')
-          .in('order_item_id', chunk)
-          .limit(QUERY_LIMIT)
-        if (error) {
-          console.error('[fetchOrderDelta:ft_fulfillment_inbounds]', error)
-          throw error
+        let from = 0
+        while (true) {
+          const { data, error } = await (orderSupabase.from('ft_fulfillment_inbounds') as any)
+            .select('order_item_id, quantity')
+            .eq('user_id', orderUserId)
+            .eq('type', 'CANCEL')
+            .in('order_item_id', chunk)
+            .range(from, from + PAGE_SIZE - 1)
+          if (error) {
+            console.error('[fetchOrderDelta:ft_fulfillment_inbounds]', error)
+            throw error
+          }
+          if (data) rows.push(...(data as InboundRow[]))
+          if (!data || data.length < PAGE_SIZE) break
+          from += PAGE_SIZE
         }
-        if (data) rows.push(...(data as InboundRow[]))
       }
       return rows
     })(),
@@ -413,18 +423,23 @@ export async function fetchOrderDelta(
       const rows: OutboundRow[] = []
       for (let i = 0; i < itemIds.length; i += BATCH_SIZE) {
         const chunk = itemIds.slice(i, i + BATCH_SIZE)
-        const { data, error } = await (orderSupabase.from('ft_fulfillment_outbounds') as any)
-          .select('order_item_id, quantity, shipment_id')
-          .eq('user_id', orderUserId)
-          .eq('type', 'PACKED')
-          .not('shipment_id', 'is', null)
-          .in('order_item_id', chunk)
-          .limit(QUERY_LIMIT)
-        if (error) {
-          console.error('[fetchOrderDelta:ft_fulfillment_outbounds]', error)
-          throw error
+        let from = 0
+        while (true) {
+          const { data, error } = await (orderSupabase.from('ft_fulfillment_outbounds') as any)
+            .select('order_item_id, quantity, shipment_id')
+            .eq('user_id', orderUserId)
+            .eq('type', 'PACKED')
+            .not('shipment_id', 'is', null)
+            .in('order_item_id', chunk)
+            .range(from, from + PAGE_SIZE - 1)
+          if (error) {
+            console.error('[fetchOrderDelta:ft_fulfillment_outbounds]', error)
+            throw error
+          }
+          if (data) rows.push(...(data as OutboundRow[]))
+          if (!data || data.length < PAGE_SIZE) break
+          from += PAGE_SIZE
         }
-        if (data) rows.push(...(data as OutboundRow[]))
       }
       return rows
     })(),
