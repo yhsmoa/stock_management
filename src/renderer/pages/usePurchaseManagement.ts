@@ -116,6 +116,9 @@ export function usePurchaseManagement() {
 
   /* ── 변경 추적 (일괄 저장용, itemId → { input?, in_qty?, out_qty? }) */
   const [pendingEdits, setPendingEdits] = useState<Map<string, Partial<Record<EditableField, number | null>>>>(new Map())
+
+  /* ── DB 원본값 추적 (되돌리기 감지용) ── */
+  const dbOriginalsRef = useRef<Map<string, Partial<Record<EditableField, number | null>>>>(new Map())
   const [saving, setSaving] = useState(false)
   const [resettingInputs, setResettingInputs] = useState(false)
 
@@ -757,22 +760,64 @@ console.log('[조회수] 완료! 총 '+results.length+'건 CSV 저장됨');
     setEditingCellValue(currentValue != null ? String(currentValue) : '')
   }
 
-  /** 셀 blur → 값 비교 → 변경 시 pendingEdits 에 기록 */
-  const handleCellBlur = (itemId: string, field: EditableField, originalValue: number | null) => {
+  /** 셀 blur → DB 원본값과 비교 → 변경/되돌리기 판정 */
+  const handleCellBlur = (itemId: string, field: EditableField, currentValue: number | null) => {
     setEditingCell(null)
     const trimmed = editingCellValue.trim()
     const newValue = trimmed === '' ? null : Number(trimmed)
 
-    if (newValue === originalValue) return
+    // ── DB 원본값 기록 (해당 필드의 첫 편집 시에만) ──
+    const origMap = dbOriginalsRef.current
+    const origRow = origMap.get(itemId)
+    if (!origRow || !(field in origRow)) {
+      // 아직 이 필드의 DB 원본이 기록되지 않음 → currentValue 가 DB 원본
+      origMap.set(itemId, { ...origRow, [field]: currentValue })
+    }
 
-    // ── 로컬 상태 즉시 반영 ──
+    const dbOriginal = origMap.get(itemId)![field] ?? null
+
+    // ── DB 원본과 동일하면 되돌리기 → pendingEdits 에서 제거 ──
+    if (newValue === dbOriginal) {
+      // 로컬 상태를 DB 원본으로 복원
+      setItems((prev) =>
+        prev.map((item) =>
+          item.id === itemId ? { ...item, [field]: dbOriginal } : item,
+        ),
+      )
+      // pendingEdits 에서 해당 필드 제거
+      setPendingEdits((prev) => {
+        const next = new Map(prev)
+        const existing = next.get(itemId)
+        if (existing) {
+          const { [field]: _, ...rest } = existing
+          if (Object.keys(rest).length === 0) {
+            next.delete(itemId)
+          } else {
+            next.set(itemId, rest)
+          }
+        }
+        return next
+      })
+      // DB 원본 추적에서도 해당 필드 정리
+      const origEntry = origMap.get(itemId)
+      if (origEntry) {
+        const { [field]: _, ...rest } = origEntry
+        if (Object.keys(rest).length === 0) {
+          origMap.delete(itemId)
+        } else {
+          origMap.set(itemId, rest)
+        }
+      }
+      return
+    }
+
+    // ── 값이 변경됨 → 로컬 상태 반영 + pendingEdits 기록 ──
     setItems((prev) =>
       prev.map((item) =>
         item.id === itemId ? { ...item, [field]: newValue } : item,
       ),
     )
 
-    // ── 변경 기록 (행 단위로 병합) ──
     setPendingEdits((prev) => {
       const next = new Map(prev)
       const existing = next.get(itemId) || {}
@@ -798,6 +843,7 @@ console.log('[조회수] 완료! 총 '+results.length+'건 CSV 저장됨');
         )
       }
       setPendingEdits(new Map())
+      dbOriginalsRef.current.clear()
     } catch (err) {
       console.error('[저장] 실패:', err)
       alert('저장 중 오류가 발생했습니다.')
@@ -823,6 +869,7 @@ console.log('[조회수] 완료! 총 '+results.length+'건 CSV 저장됨');
       if (error) throw error
 
       setPendingEdits(new Map())
+      dbOriginalsRef.current.clear()
       setItems((prev) => prev.map((item) => ({
         ...item, input: null, in_qty: null, out_qty: null,
       })))
