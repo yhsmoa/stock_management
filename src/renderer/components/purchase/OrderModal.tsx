@@ -11,21 +11,11 @@ import {
   type ShipmentOption,
   type ShipmentType,
 } from '../../services/orderFulfillmentService'
+import { getOrderUserId } from '../../services/supabase'
 
 // ── 상수 ──────────────────────────────────────────────────────────
 const SHIPMENT_TYPES: ShipmentType[] = ['COUPANG', 'DIRECT', 'PERSONAL']
 const RECENT_SHIPMENT_LIMIT = 2
-
-// ── localStorage 에서 order_user_id 조달 (ft_users.id) ───────────
-const getOrderUserId = (): string => {
-  try {
-    const raw = localStorage.getItem('user')
-    if (!raw) return ''
-    return (JSON.parse(raw)?.order_user_id as string) ?? ''
-  } catch {
-    return ''
-  }
-}
 
 // ── Props ─────────────────────────────────────────────────────────
 interface OrderModalProps {
@@ -50,28 +40,31 @@ export default function OrderModal({ isOpen, onClose, onApply }: OrderModalProps
     if (!isOpen) return
     let cancelled = false
 
-    const orderUserId = getOrderUserId()
-    if (!orderUserId) {
-      setError('로그인 사용자의 order_user_id 가 없습니다.')
-      setShipments([])
-      return
-    }
-
-    setLoading(true)
-    setError(null)
-    fetchRecentShipments(orderUserId, RECENT_SHIPMENT_LIMIT)
-      .then((list) => {
+    const run = async () => {
+      setLoading(true)
+      setError(null)
+      try {
+        // ── localStorage → si_users 순으로 order_user_id 조달 ──
+        const orderUserId = await getOrderUserId()
+        if (cancelled) return
+        if (!orderUserId) {
+          setError('로그인 사용자의 order_user_id 가 없습니다.')
+          setShipments([])
+          return
+        }
+        const list = await fetchRecentShipments(orderUserId, RECENT_SHIPMENT_LIMIT)
         if (cancelled) return
         setShipments(list)
-      })
-      .catch((e: Error) => {
+      } catch (e) {
         if (cancelled) return
         console.error('[OrderModal] fetchRecentShipments', e)
-        setError(e.message)
-      })
-      .finally(() => {
+        setError((e as Error).message)
+      } finally {
         if (!cancelled) setLoading(false)
-      })
+      }
+    }
+
+    run()
 
     return () => {
       cancelled = true

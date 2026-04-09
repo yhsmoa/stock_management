@@ -24,7 +24,7 @@ import {
   fetchViewsData,
   getRecentViewDates,
 } from '../services/purchaseService'
-import { supabase } from '../services/supabase'
+import { supabase, getOrderUserId } from '../services/supabase'
 import {
   fetchOrderDelta,
   type OrderDelta,
@@ -840,15 +840,9 @@ console.log('[조회수] 완료! 총 '+results.length+'건 CSV 저장됨');
       setIsOrderLoading(true)
       try {
         // ── order_user_id 조달 (ft_users.id) ──
+        // localStorage → si_users 테이블 순으로 조회하는 공용 헬퍼 사용
         // 주의: 기존 getUserId() 는 si_users.id 라 여기서 사용 불가
-        const orderUserId = (() => {
-          try {
-            const raw = localStorage.getItem('user')
-            return raw ? ((JSON.parse(raw)?.order_user_id as string) ?? '') : ''
-          } catch {
-            return ''
-          }
-        })()
+        const orderUserId = await getOrderUserId()
         if (!orderUserId) {
           alert('로그인 사용자의 order_user_id 가 없어 주문 데이터를 조회할 수 없습니다.')
           return

@@ -86,6 +86,57 @@ export const checkApproval = async (user_id: string) => {
   return { data, error }
 }
 
+/* ================================================================
+   order_user_id 조달 헬퍼
+   - 주문 프로젝트(purchase_agent.ft_users.id) 연동용 UUID
+   - 우선순위: localStorage.user.order_user_id → si_users 테이블 조회
+   - DB 조회에 성공하면 localStorage 에 캐싱하여 다음 호출부터 즉시 반환
+   - 반환값 '' 는 "조달 실패 / 미연동 계정"을 의미
+   ================================================================ */
+export const getOrderUserId = async (): Promise<string> => {
+  // ── 1) localStorage 캐시 우선 ──
+  const raw = localStorage.getItem('user')
+  if (!raw) return ''
+
+  let user: Record<string, unknown>
+  try {
+    user = JSON.parse(raw) as Record<string, unknown>
+  } catch {
+    return ''
+  }
+
+  const cached = (user.order_user_id as string | null | undefined) ?? ''
+  if (cached) return cached
+
+  // ── 2) si_users 테이블에서 order_user_id 조회 ──
+  const siUserId = user.id as string | undefined
+  if (!siUserId) return ''
+
+  const { data, error } = await supabase
+    .from('si_users')
+    .select('order_user_id')
+    .eq('id', siUserId)
+    .maybeSingle()
+
+  if (error) {
+    console.error('[getOrderUserId] si_users 조회 실패:', error)
+    return ''
+  }
+
+  const fetched = ((data as { order_user_id?: string | null } | null)?.order_user_id as string | null) ?? ''
+  if (!fetched) return ''
+
+  // ── 3) localStorage 캐시 갱신 (차후 호출 즉시 반환) ──
+  try {
+    user.order_user_id = fetched
+    localStorage.setItem('user', JSON.stringify(user))
+  } catch {
+    /* 캐싱 실패는 무시 */
+  }
+
+  return fetched
+}
+
 // 쿠팡 아이템 인터페이스
 export interface CoupangItem {
   barcode: string
