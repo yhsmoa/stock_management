@@ -172,8 +172,8 @@ const PurchaseManagement: React.FC = () => {
 
       /* ── 주문 열: ft_order_items delta (주문 - 취소 - 출고) ── */
       case 'order': {
-        const pid = item.seller_product_id
-        const delta = pid ? orderDeltaMap.get(pid) : undefined
+        const bc = item.barcode
+        const delta = bc ? orderDeltaMap.get(bc) : undefined
         if (!delta || delta.net === 0) return ''
         return delta.net.toLocaleString()
       }

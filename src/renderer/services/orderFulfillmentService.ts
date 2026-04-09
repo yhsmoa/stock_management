@@ -295,35 +295,36 @@ export async function fetchRecentShipments(
 const BASE_SHIPMENT_TYPES = ['COUPANG', 'DIRECT'] as const
 
 /**
- * productIds(rg_items.seller_product_id) 기준으로 '주문 - 취소 - (일부)출고' 합계 조회
+ * barcode 기준으로 '주문 - 취소 - (일부)출고' 합계 조회
+ * - si_rg_items.barcode ↔ ft_order_items.barcode 매칭
  * - 모든 쿼리는 `orderUserId` 로 격리 (ft_users.id = si_users.order_user_id)
  *
- * @param productIds              - rg_items 에서 추출한 product_id 배열
+ * @param barcodes                - rg_items 에서 추출한 barcode 배열
  * @param selectedShipmentIds     - 모달에서 체크한 ft_shipments.id — '차감 제외' AND 조건의 한 축
  * @param selectedShipmentTypes   - 모달에서 체크한 shipment_type — '차감 제외' AND 조건의 나머지 축
  * @param orderUserId             - ft_users.id — 필수
- * @returns Map<product_id, OrderDelta>
+ * @returns Map<barcode, OrderDelta>
  */
 export async function fetchOrderDelta(
-  productIds: string[],
+  barcodes: string[],
   selectedShipmentIds: string[],
   selectedShipmentTypes: ShipmentType[],
   orderUserId: string,
 ): Promise<Map<string, OrderDelta>> {
   const result = new Map<string, OrderDelta>()
-  if (!isOrderSupabaseConfigured || !orderUserId || productIds.length === 0) return result
+  if (!isOrderSupabaseConfigured || !orderUserId || barcodes.length === 0) return result
 
   // ════════════════════════════════════════════════════════════════
   // (A) ft_order_items — PROCESSING + (COUPANG|DIRECT) base 조회
   //     - user_id 격리
   //     - status = 'PROCESSING'
   //     - shipment_type ∈ (COUPANG|DIRECT)  대소문자 무시
-  //     - product_id ∈ chunk
+  //     - barcode ∈ chunk  (si_rg_items.barcode ↔ ft_order_items.barcode)
   //     - select 에 shipment_type 포함 (outbound 차감 제외 매핑용)
   // ════════════════════════════════════════════════════════════════
   type OrderItemRow = {
     id: string
-    product_id: string | null
+    barcode: string | null
     order_qty: number | null
     shipment_type: string | null
   }
@@ -333,14 +334,14 @@ export async function fetchOrderDelta(
     .map((t) => `shipment_type.ilike.${t}`)
     .join(',')
 
-  for (let i = 0; i < productIds.length; i += BATCH_SIZE) {
-    const chunk = productIds.slice(i, i + BATCH_SIZE)
+  for (let i = 0; i < barcodes.length; i += BATCH_SIZE) {
+    const chunk = barcodes.slice(i, i + BATCH_SIZE)
     const { data, error } = await (orderSupabase.from('ft_order_items') as any)
-      .select('id, product_id, order_qty, shipment_type')
+      .select('id, barcode, order_qty, shipment_type')
       .eq('user_id', orderUserId)
       .eq('status', 'PROCESSING')
       .or(baseTypeOr)
-      .in('product_id', chunk)
+      .in('barcode', chunk)
     if (error) {
       console.error('[fetchOrderDelta:ft_order_items]', error)
       throw error
@@ -349,20 +350,20 @@ export async function fetchOrderDelta(
   }
 
   // ── 집계 + 매핑 2종 ─────────────────────────────────────────────
-  //   orderMap       : product_id → 주문수량 합
-  //   itemToProduct  : order_item_id → product_id (역매핑)
-  //   itemToTypeLower: order_item_id → shipment_type (소문자 정규화)
+  //   orderMap        : barcode → 주문수량 합
+  //   itemToBarcode   : order_item_id → barcode (역매핑)
+  //   itemToTypeLower : order_item_id → shipment_type (소문자 정규화)
   const orderMap = new Map<string, number>()
-  const itemToProduct = new Map<string, string>()
+  const itemToBarcode = new Map<string, string>()
   const itemToTypeLower = new Map<string, string>()
   for (const oi of orderItems) {
-    if (!oi.product_id) continue
-    itemToProduct.set(oi.id, oi.product_id)
+    if (!oi.barcode) continue
+    itemToBarcode.set(oi.id, oi.barcode)
     itemToTypeLower.set(oi.id, (oi.shipment_type ?? '').toLowerCase())
-    orderMap.set(oi.product_id, (orderMap.get(oi.product_id) ?? 0) + (oi.order_qty ?? 0))
+    orderMap.set(oi.barcode, (orderMap.get(oi.barcode) ?? 0) + (oi.order_qty ?? 0))
   }
 
-  const itemIds = Array.from(itemToProduct.keys())
+  const itemIds = Array.from(itemToBarcode.keys())
   if (itemIds.length === 0) {
     // base 가 비었으면 취소/출고 조회할 필요 없음
     for (const pid of orderMap.keys()) {
@@ -430,7 +431,7 @@ export async function fetchOrderDelta(
   // ════════════════════════════════════════════════════════════════
   const cancelMap = new Map<string, number>()
   for (const r of cancelRows) {
-    const pid = itemToProduct.get(r.order_item_id)
+    const pid = itemToBarcode.get(r.order_item_id)
     if (!pid) continue
     cancelMap.set(pid, (cancelMap.get(pid) ?? 0) + (r.quantity ?? 0))
   }
@@ -446,7 +447,7 @@ export async function fetchOrderDelta(
 
   const outboundMap = new Map<string, number>()
   for (const r of outboundRows) {
-    const pid = itemToProduct.get(r.order_item_id)
+    const pid = itemToBarcode.get(r.order_item_id)
     if (!pid) continue
 
     if (hasExcludeFilter) {

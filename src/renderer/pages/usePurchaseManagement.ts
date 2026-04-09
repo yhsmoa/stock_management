@@ -137,7 +137,7 @@ export function usePurchaseManagement() {
   /* ── 필터 (판매량 / 반출비 토글) ─────────────────────────── */
   const [activeFilter, setActiveFilter] = useState<'sales' | 'storage' | null>(null)
 
-  /* ── 주문 델타 (주문 - 취소 - 출고, product_id 기준) ─────── */
+  /* ── 주문 델타 (주문 - 취소 - 출고, barcode 기준) ──────── */
   const [orderDeltaMap, setOrderDeltaMap] = useState<Map<string, OrderDelta>>(new Map())
   const [isOrderLoading, setIsOrderLoading] = useState(false)
 
@@ -848,20 +848,20 @@ console.log('[조회수] 완료! 총 '+results.length+'건 CSV 저장됨');
           return
         }
 
-        // 현재 로드된 rg_items 의 product_id (= seller_product_id) 추출
-        const productIds = Array.from(
+        // 현재 로드된 rg_items 의 barcode 추출 (ft_order_items.barcode 매칭용)
+        const barcodeList = Array.from(
           new Set(
             items
-              .map((it) => it.seller_product_id)
-              .filter((id): id is string => !!id),
+              .map((it) => it.barcode)
+              .filter((b): b is string => !!b),
           ),
         )
-        if (productIds.length === 0) {
+        if (barcodeList.length === 0) {
           setOrderDeltaMap(new Map())
           return
         }
 
-        const map = await fetchOrderDelta(productIds, shipmentIds, shipmentTypes, orderUserId)
+        const map = await fetchOrderDelta(barcodeList, shipmentIds, shipmentTypes, orderUserId)
         setOrderDeltaMap(map)
       } catch (e) {
         console.error('[loadOrderDelta]', e)
