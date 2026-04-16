@@ -3,7 +3,7 @@
    - 로직은 usePersonalOrder 훅에서 관리
    ================================================================ */
 
-import React from 'react'
+import React, { useRef } from 'react'
 import './PersonalOrder.css'
 import FulfillmentDrawer from './FulfillmentDrawer'
 import {
@@ -40,14 +40,22 @@ const PersonalOrder: React.FC = () => {
     handleExcelDownload,
     handleOrderCopy,
     handleRowClick,
+    handleSearchSubmit,
     handleBarcodeLink,
     barcodeLoading,
+    handleInvoiceLink,
+    invoiceLinking,
+    handleInvoicePrint,
+    invoicePrinting,
     handleSelectAll,
     handleSelectRow,
     toggleUnorderedOnly,
     getAgg,
     getRowStatus,
   } = usePersonalOrder()
+
+  // ── 송장 연결 파일 input ref ────────────────────────────────────
+  const invoiceInputRef = useRef<HTMLInputElement>(null)
 
   return (
     <div className="po-container">
@@ -64,6 +72,7 @@ const PersonalOrder: React.FC = () => {
               {tab}
             </button>
           ))}
+          <span className="po-separator">|</span>
           <button
             className="po-btn"
             onClick={handleUpdate}
@@ -77,6 +86,34 @@ const PersonalOrder: React.FC = () => {
             disabled={barcodeLoading}
           >
             {barcodeLoading ? '매칭 중...' : '바코드 연결'}
+          </button>
+          {/* ── 송장 연결 (PDF 업로드 → 주문번호 매핑 → Storage 저장) ── */}
+          <input
+            ref={invoiceInputRef}
+            type="file"
+            accept=".pdf"
+            style={{ display: 'none' }}
+            onChange={(e) => {
+              const file = e.target.files?.[0]
+              if (file) handleInvoiceLink(file)
+              e.target.value = ''
+            }}
+          />
+          <button
+            className="po-btn"
+            onClick={() => invoiceInputRef.current?.click()}
+            disabled={invoiceLinking}
+          >
+            {invoiceLinking ? '연결 중...' : '송장 연결'}
+          </button>
+          <button
+            className="po-btn"
+            onClick={handleInvoicePrint}
+            disabled={invoicePrinting || selectedIds.size === 0}
+          >
+            {invoicePrinting
+              ? '인쇄 준비 중...'
+              : `송장 인쇄${selectedIds.size > 0 ? ` (${selectedIds.size})` : ''}`}
           </button>
         </div>
         <div className="po-toolbar-right">
@@ -99,14 +136,17 @@ const PersonalOrder: React.FC = () => {
         <div className="po-update-msg">{updateMsg}</div>
       )}
 
-      {/* ── 검색바 (UI만) ─────────────────────────────────────── */}
+      {/* ── 검색바 (Enter 키로 검색 실행) ────────────────────── */}
       <div className="po-search-bar">
         <input
           className="po-search-input"
           type="text"
-          placeholder="주문번호, 상품명 또는 수취인으로 검색"
+          placeholder="주문번호, 상품명 또는 수취인으로 검색 (Enter)"
           value={searchValue}
           onChange={(e) => setSearchValue(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') handleSearchSubmit()
+          }}
         />
       </div>
 

@@ -27,6 +27,11 @@ import {
   matchBarcodes,
   saveBarcodes,
 } from '../services/barcodeMatchingService'
+import {
+  parsePdfInvoices,
+  splitAndUploadPages,
+  printMultipleInvoices,
+} from '../services/invoiceService'
 import type { AuthUser } from '../types/auth'
 
 // ── 상수 ──────────────────────────────────────────────────────────
@@ -35,6 +40,7 @@ const TEST_MAX_PER_PAGE = 5 // 테스트용: 상태당 최대 5건
 
 /** 주문 상태 탭 */
 export const ORDER_STATUS_TABS = [
+  '전체',
   '결제완료',
   '상품준비중',
   '배송지시',
@@ -124,8 +130,9 @@ export interface DrawerItemState {
 
 export function usePersonalOrder() {
   // ── 상태 ──────────────────────────────────────────────────────
-  const [activeTab, setActiveTab] = useState<OrderStatusTab>('결제완료')
+  const [activeTab, setActiveTab] = useState<OrderStatusTab>('전체')
   const [searchValue, setSearchValue] = useState('')
+  const [appliedSearch, setAppliedSearch] = useState('')
   const [currentPage, setCurrentPage] = useState(1)
   const [items, setItems] = useState<PersonalOrderRow[]>([])
   const [loading, setLoading] = useState(false)
@@ -319,10 +326,31 @@ export function usePersonalOrder() {
     setCurrentPage(1)
   }, [])
 
-  // ── 필터링 (activeTab + 미주문 필터 + 주문일시 오름차순) ───────
+  // ── 검색 제출 (Enter 키) ────────────────────────────────────────
+  const handleSearchSubmit = useCallback(() => {
+    setAppliedSearch(searchValue.trim())
+    setCurrentPage(1)
+  }, [searchValue])
+
+  // ── 필터링 (activeTab + 검색 + 미주문 필터 + 주문일시 오름차순) ──
   const filteredItems = useMemo(() => {
     const statusCode = STATUS_REVERSE_MAP[activeTab]
     let result = statusCode ? items.filter((row) => row.status === statusCode) : items
+
+    // 검색 필터 (Enter로 적용된 검색어 기준)
+    if (appliedSearch) {
+      const keyword = appliedSearch.toLowerCase()
+      result = result.filter((row) => {
+        const targets = [
+          row.order_id,
+          row.item_name,
+          row.option_name,
+          row.product_name,
+          row.receiver_name,
+        ]
+        return targets.some((v) => v && v.toLowerCase().includes(keyword))
+      })
+    }
 
     // 미주문 필터 (getRowStatus 참조 불가 → 인라인 판별)
     if (showUnorderedOnly) {
@@ -341,7 +369,7 @@ export function usePersonalOrder() {
       const dateB = b.ordered_at ? new Date(b.ordered_at).getTime() : 0
       return dateA - dateB
     })
-  }, [items, activeTab, showUnorderedOnly, aggMap, orderItemMap])
+  }, [items, activeTab, appliedSearch, showUnorderedOnly, aggMap, orderItemMap])
 
   // ── [엑셀 다운] 핸들러 (쿠팡 DeliveryList 양식) ────────────────
   const handleExcelDownload = useCallback(() => {
@@ -516,6 +544,121 @@ export function usePersonalOrder() {
     }
   }, [items, getUserInfo])
 
+  // ── [송장 연결] 핸들러 ────────────────────────────────────────────
+  const [invoiceLinking, setInvoiceLinking] = useState(false)
+
+  const handleInvoiceLink = useCallback(async (file: File) => {
+    const { userId } = getUserInfo()
+    if (!userId) {
+      alert('로그인 정보를 확인해 주세요.')
+      return
+    }
+
+    setInvoiceLinking(true)
+    try {
+      // 1) PDF에서 페이지별 주문번호 추출
+      const pages = await parsePdfInvoices(file)
+      if (pages.length === 0) {
+        alert('PDF에서 주문번호를 추출할 수 없습니다.')
+        return
+      }
+
+      // 2) 현재 주문 데이터와 매칭 확인
+      const orderIdSet = new Set(items.map((r) => r.order_id))
+      const matched = pages.filter((p) => orderIdSet.has(p.orderId))
+      const unmatched = pages.filter((p) => !orderIdSet.has(p.orderId))
+
+      // 디버그 로그 — PDF 추출값 vs DB 주문번호 비교
+      console.log('[송장 연결] PDF에서 추출된 주문번호:', pages.map((p) => p.orderId))
+      console.log('[송장 연결] DB 주문번호 샘플(상위 10개):', Array.from(orderIdSet).slice(0, 10))
+      console.log('[송장 연결] 매칭 결과:', { matched: matched.map((p) => p.orderId), unmatched: unmatched.map((p) => p.orderId) })
+
+      if (unmatched.length > 0) {
+        console.warn('[송장 연결] 매칭 실패 주문번호:', unmatched.map((p) => p.orderId))
+      }
+
+      if (matched.length === 0) {
+        alert(
+          `매칭된 주문이 없습니다.\n` +
+          `추출된 주문번호 ${pages.length}건 중 현재 주문 데이터와 일치하는 건이 없습니다.`,
+        )
+        return
+      }
+
+      // 3) Storage 업로드
+      const result = await splitAndUploadPages(file, matched, userId)
+
+      alert(
+        `송장 연결 완료\n` +
+        `- 추출: ${pages.length}건\n` +
+        `- 매칭 성공: ${matched.length}건\n` +
+        `- 매칭 실패: ${unmatched.length}건\n` +
+        `- 업로드 성공: ${result.success}건` +
+        (result.failed > 0 ? `\n- 업로드 실패: ${result.failed}건` : ''),
+      )
+    } catch (err: any) {
+      console.error('[송장 연결] 실패:', err)
+      alert(`송장 연결 실패: ${err.message}`)
+    } finally {
+      setInvoiceLinking(false)
+    }
+  }, [items, getUserInfo])
+
+  // ── [송장 인쇄] 핸들러 (체크된 주문 일괄 인쇄) ───────────────────
+  const [invoicePrinting, setInvoicePrinting] = useState(false)
+
+  const handleInvoicePrint = useCallback(async () => {
+    if (selectedIds.size === 0) {
+      alert('주문을 선택해 주세요.')
+      return
+    }
+
+    const { userId } = getUserInfo()
+    if (!userId) {
+      alert('로그인 정보를 확인해 주세요.')
+      return
+    }
+
+    // 선택된 shipment_box_id → order_id 매핑 (중복 제거)
+    const orderIds = Array.from(
+      new Set(
+        items
+          .filter((r) => selectedIds.has(r.shipment_box_id))
+          .map((r) => r.order_id)
+          .filter(Boolean),
+      ),
+    )
+
+    if (orderIds.length === 0) {
+      alert('선택된 주문의 주문번호를 찾을 수 없습니다.')
+      return
+    }
+
+    setInvoicePrinting(true)
+    try {
+      const result = await printMultipleInvoices(userId, orderIds)
+
+      // 결과 요약 (인쇄 창은 서비스에서 열림)
+      const parts = [`인쇄 준비 완료\n- 선택: ${orderIds.length}건\n- 성공: ${result.success}건`]
+      if (result.missing.length > 0) {
+        parts.push(`- 송장 미등록: ${result.missing.length}건\n  (${result.missing.slice(0, 5).join(', ')}${result.missing.length > 5 ? '...' : ''})`)
+      }
+      if (result.failed.length > 0) {
+        parts.push(`- 처리 실패: ${result.failed.length}건`)
+      }
+      if (result.success === 0) {
+        alert(parts.join('\n'))
+      } else if (result.missing.length > 0 || result.failed.length > 0) {
+        alert(parts.join('\n'))
+      }
+    } catch (err: any) {
+      console.error('[송장 인쇄] 실패:', err)
+      alert(`송장 인쇄 실패: ${err.message}`)
+    } finally {
+      setInvoicePrinting(false)
+    }
+  }, [selectedIds, items, getUserInfo])
+
   // ── 페이지네이션 ──────────────────────────────────────────────
   const filteredCount = filteredItems.length
   const totalPages = Math.max(1, Math.ceil(filteredCount / PAGE_SIZE))
@@ -594,6 +737,7 @@ export function usePersonalOrder() {
     getPageNumbers,
 
     // 핸들러
+    handleSearchSubmit,
     handleTabChange,
     handleUpdate,
     handleAcknowledge,
@@ -602,6 +746,10 @@ export function usePersonalOrder() {
     handleRowClick,
     handleBarcodeLink,
     barcodeLoading,
+    handleInvoiceLink,
+    invoiceLinking,
+    handleInvoicePrint,
+    invoicePrinting,
     handleSelectAll,
     handleSelectRow,
     toggleUnorderedOnly,

@@ -9,6 +9,7 @@ import {
   fetchFulfillmentHistory,
   type FulfillmentRow,
 } from '../services/orderFulfillmentService'
+import { checkInvoiceExists, printInvoice } from '../services/invoiceService'
 import type { AuthUser } from '../types/auth'
 
 // ── Props ──────────────────────────────────────────────────────────
@@ -45,6 +46,7 @@ const FulfillmentDrawer: React.FC<Props> = ({
 }) => {
   const [rows, setRows] = useState<FulfillmentRow[]>([])
   const [isLoading, setIsLoading] = useState(false)
+  const [hasInvoice, setHasInvoice] = useState(false)
 
   const isOpen = itemId !== null
 
@@ -56,25 +58,51 @@ const FulfillmentDrawer: React.FC<Props> = ({
     return user.order_user_id ?? ''
   }, [])
 
-  // ── 이력 조회 ──────────────────────────────────────────────────
+  // ── 사용자 ID (Storage 경로용) ──────────────────────────────────
+  const getUserId = useCallback((): string => {
+    const raw = localStorage.getItem('user')
+    if (!raw) return ''
+    const user: AuthUser = JSON.parse(raw)
+    return user.id ?? ''
+  }, [])
+
+  // ── 이력 조회 + 송장 존재 확인 ────────────────────────────────
   const fetchData = useCallback(async () => {
-    if (!itemId) { setRows([]); return }
+    if (!itemId) { setRows([]); setHasInvoice(false); return }
     const orderUserId = getOrderUserId()
-    if (!orderUserId) { setRows([]); return }
+    if (!orderUserId) { setRows([]); setHasInvoice(false); return }
 
     setIsLoading(true)
+    setHasInvoice(false)
     try {
       const data = await fetchFulfillmentHistory(itemId, orderUserId)
       setRows(data)
+
+      // 송장 PDF 존재 여부 확인
+      if (orderNo) {
+        const userId = getUserId()
+        if (userId) {
+          const exists = await checkInvoiceExists(userId, orderNo)
+          setHasInvoice(exists)
+        }
+      }
     } catch (err) {
       console.error('[FulfillmentDrawer] 이력 조회 실패:', err)
       setRows([])
     } finally {
       setIsLoading(false)
     }
-  }, [itemId, getOrderUserId])
+  }, [itemId, orderNo, getOrderUserId, getUserId])
 
   useEffect(() => { fetchData() }, [fetchData])
+
+  // ── 송장 인쇄 ─────────────────────────────────────────────────
+  const handlePrintInvoice = useCallback(async () => {
+    if (!orderNo) return
+    const userId = getUserId()
+    if (!userId) return
+    await printInvoice(userId, orderNo)
+  }, [orderNo, getUserId])
 
   // ── ESC 키로 닫기 ──────────────────────────────────────────────
   useEffect(() => {
@@ -104,7 +132,18 @@ const FulfillmentDrawer: React.FC<Props> = ({
             <p className="po-drawer-product">
               {[itemName, optionName].filter(Boolean).join(', ') || '상품 정보 없음'}
             </p>
-            <p className="po-drawer-meta">{orderNo ?? '-'}</p>
+            <p className="po-drawer-meta">
+              {orderNo ?? '-'}
+              {hasInvoice && (
+                <button
+                  className="po-invoice-print-btn"
+                  title="송장 인쇄"
+                  onClick={handlePrintInvoice}
+                >
+                  📄
+                </button>
+              )}
+            </p>
             <p className="po-drawer-meta">
               {[productNo, itemNo].filter(Boolean).join(' | ') || '-'}
             </p>

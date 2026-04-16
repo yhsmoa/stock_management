@@ -124,9 +124,11 @@
   gap: 6px;
 }
 
-/* 업데이트 버튼과 탭 사이 간격 */
-.po-toolbar-left > .po-btn {
-  margin-left: 8px;
+/* 탭과 액션 버튼 구분선 */
+.po-separator {
+  color: #D1D5DB;
+  margin: 0 4px;
+  user-select: none;
 }
 
 .po-tab-btn {
@@ -428,6 +430,25 @@
   color: #9CA3AF;
   font-family: monospace;
   margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* 송장 인쇄 버튼 */
+.po-invoice-print-btn {
+  background: none;
+  border: 1px solid #D1D5DB;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 14px;
+  padding: 2px 6px;
+  line-height: 1;
+  transition: background 0.2s;
+}
+
+.po-invoice-print-btn:hover {
+  background: #F3F4F6;
 }
 
 .po-drawer-close {
