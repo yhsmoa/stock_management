@@ -6,10 +6,12 @@
    - Supabase si_rg_items 테이블 CRUD
    ================================================================ */
 
+import * as XLSX from 'xlsx'
 import { supabase } from './supabase'
 import type {
   RgItem,
   RgItemData,
+  ShipmentSize,
   CoupangProductListItem,
   CoupangProductDetail,
 } from '../types/purchase'
@@ -963,4 +965,195 @@ export async function fetchViewsData(userId: string): Promise<ViewsDataRow[]> {
 export function getRecentViewDates(viewsData: ViewsDataRow[]): string[] {
   const dates = [...new Set(viewsData.map((d) => d.date))].sort()
   return dates.slice(-5)
+}
+
+// ══════════════════════════════════════════════════════════════════
+// 쉽먼트 사이즈 xlsx 업로드 (si_coupang_shipment_size)
+// - 시트명 '상품별 사이즈 리포트' 검증
+// - 17행부터 데이터 (index 16, 0-based)
+// - 컬럼: A=item_id, B=option_id, C=sku_id, D=item_name,
+//        E=option_name, F=shipment_size_before, G=shipment_size_after
+// - Upsert 키: (user_id, option_id)
+// ══════════════════════════════════════════════════════════════════
+
+// ── 상수 ──────────────────────────────────────────────────────────
+const SHIPMENT_SIZE_SHEET_NAME = '상품별 사이즈 리포트'
+const SHIPMENT_SIZE_DATA_START_ROW = 16 // 0-based (엑셀 17행)
+
+// ── 파싱 결과 인터페이스 ──────────────────────────────────────────
+export interface ParseShipmentSizeResult {
+  items: Omit<ShipmentSize, 'id'>[]
+  skippedRows: number[] // option_id 누락으로 스킵된 엑셀 행번호 (1-based)
+}
+
+// ── 엑셀 파싱 ─────────────────────────────────────────────────────
+
+/**
+ * 쉽먼트 사이즈 엑셀 파싱
+ * - 시트명이 '상품별 사이즈 리포트'가 아니면 Error throw
+ * - item_id(A) 비어있는 행: 완전 스킵 (빈 말미 행)
+ * - option_id(B) 비어있는 행: skippedRows에 엑셀 행번호(1-based) 추가 후 스킵
+ */
+export function parseShipmentSizeExcel(
+  workbook: XLSX.WorkBook,
+  userId: string,
+): ParseShipmentSizeResult {
+  const worksheet = workbook.Sheets[SHIPMENT_SIZE_SHEET_NAME]
+  if (!worksheet) {
+    throw new Error(`시트 "${SHIPMENT_SIZE_SHEET_NAME}"를 찾을 수 없습니다.`)
+  }
+
+  // 모든 셀을 문자열로 읽기 (raw 숫자 변환 방지)
+  const rows = XLSX.utils.sheet_to_json(worksheet, {
+    header: 1,
+    raw: false,
+    defval: null,
+  }) as any[][]
+
+  const toStr = (v: any): string | null => {
+    if (v == null) return null
+    const s = String(v).trim()
+    return s === '' ? null : s
+  }
+
+  const items: Omit<ShipmentSize, 'id'>[] = []
+  const skippedRows: number[] = []
+
+  for (let i = SHIPMENT_SIZE_DATA_START_ROW; i < rows.length; i++) {
+    const row = rows[i]
+    if (!row) continue
+
+    const itemId = toStr(row[0])
+    // item_id 비어있는 행은 완전 스킵 (꼬리 빈 행)
+    if (!itemId) continue
+
+    const optionId = toStr(row[1])
+    // option_id 비어있으면 엑셀 행번호(1-based) 기록 후 스킵
+    if (!optionId) {
+      skippedRows.push(i + 1)
+      continue
+    }
+
+    items.push({
+      item_id: itemId,
+      option_id: optionId,
+      sku_id: toStr(row[2]),
+      item_name: toStr(row[3]),
+      option_name: toStr(row[4]),
+      shipment_size_before: toStr(row[5]),
+      shipment_size_after: toStr(row[6]),
+      user_id: userId,
+    })
+  }
+
+  console.log(
+    `[parseShipmentSizeExcel] ${items.length}건 파싱, ${skippedRows.length}건 스킵(option_id 누락)`,
+  )
+  return { items, skippedRows }
+}
+
+// ── 데이터 저장 (배치 upsert, onConflict: user_id,option_id) ──────
+
+/**
+ * si_coupang_shipment_size 에 배치 upsert
+ * - (user_id, option_id) onConflict → 동일 유저의 같은 option_id 는 갱신
+ * - SUPABASE_BATCH_SIZE(500) 로 배치, Promise.allSettled 병렬
+ * - Prerequisite: DB UNIQUE(user_id, option_id) 제약 필수
+ */
+export async function saveShipmentSize(
+  items: Omit<ShipmentSize, 'id'>[],
+  userId: string,
+): Promise<{ success: number; errors: number }> {
+  if (items.length === 0) return { success: 0, errors: 0 }
+
+  // user_id 강제 주입 (호출자 오남용 방지)
+  const normalized = items.map((item) => ({ ...item, user_id: userId }))
+
+  // 배치 분할
+  const batches: Omit<ShipmentSize, 'id'>[][] = []
+  for (let i = 0; i < normalized.length; i += SUPABASE_BATCH_SIZE) {
+    batches.push(normalized.slice(i, i + SUPABASE_BATCH_SIZE))
+  }
+
+  // 병렬 upsert
+  const results = await Promise.allSettled(
+    batches.map((batch, idx) =>
+      supabase
+        .from('si_coupang_shipment_size')
+        .upsert(batch, { onConflict: 'user_id,option_id' })
+        .then(({ error }) => {
+          if (error) {
+            console.error(`si_coupang_shipment_size upsert 오류 (batch ${idx + 1}):`, error)
+            throw error
+          }
+          return batch.length
+        }),
+    ),
+  )
+
+  // 결과 집계
+  let success = 0
+  let errors = 0
+  for (const result of results) {
+    if (result.status === 'fulfilled') {
+      success += result.value
+    } else {
+      errors += SUPABASE_BATCH_SIZE
+    }
+  }
+
+  console.log(
+    `[purchaseService] si_coupang_shipment_size 저장 완료 — 성공: ${success}, 실패: ${errors}`,
+  )
+  return { success, errors }
+}
+
+// ══════════════════════════════════════════════════════════════════
+// shipment_size 부분 조회 — option_id IN() 배치 쿼리
+// - 대량 전체 로드 지양 (테이블 10만+ 예상)
+// - 선택된 option_id 만 배치로 조회하여 Map 반환
+// ══════════════════════════════════════════════════════════════════
+
+const SHIPMENT_SIZE_IN_BATCH = 500 // .in() URL 길이 안전 한계
+
+/**
+ * si_coupang_shipment_size 에서 option_id 목록에 해당하는 shipment_size_before 조회
+ * - 배치 크기 500: Supabase URL 길이 제약(약 16KB) 고려
+ * - user_id 필터 필수 (다른 사용자 데이터 누출 방지)
+ * @returns Map<option_id, shipment_size_before>
+ */
+export async function fetchShipmentSizesByOptionIds(
+  userId: string,
+  optionIds: string[],
+): Promise<Map<string, string>> {
+  const result = new Map<string, string>()
+  if (!userId || optionIds.length === 0) return result
+
+  // 중복 제거 (호출자 오용 방지)
+  const uniqueIds = Array.from(new Set(optionIds.filter(Boolean)))
+
+  for (let i = 0; i < uniqueIds.length; i += SHIPMENT_SIZE_IN_BATCH) {
+    const batch = uniqueIds.slice(i, i + SHIPMENT_SIZE_IN_BATCH)
+    const { data, error } = await supabase
+      .from('si_coupang_shipment_size')
+      .select('option_id, shipment_size_before')
+      .eq('user_id', userId)
+      .in('option_id', batch)
+
+    if (error) {
+      console.error(`[fetchShipmentSizesByOptionIds] 조회 오류 (batch ${i / SHIPMENT_SIZE_IN_BATCH + 1}):`, error)
+      continue
+    }
+
+    for (const row of data ?? []) {
+      if (row.option_id && row.shipment_size_before) {
+        result.set(row.option_id, row.shipment_size_before)
+      }
+    }
+  }
+
+  console.log(
+    `[fetchShipmentSizesByOptionIds] 요청 ${uniqueIds.length}건 중 ${result.size}건 매칭`,
+  )
+  return result
 }

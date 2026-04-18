@@ -16,6 +16,9 @@ import {
   validateItemDataExcel,
   parseItemDataExcel,
   saveRgItemData,
+  parseShipmentSizeExcel,
+  saveShipmentSize,
+  fetchShipmentSizesByOptionIds,
   upsertNewRgItems,
   updateBarcodesFromMap,
   fetchBarcodesFromApi,
@@ -134,6 +137,9 @@ export function usePurchaseManagement() {
 
   /* ── 바코드 연결 xlsx 업로드 ─────────────────────────────── */
   const barcodeExcelInputRef = useRef<HTMLInputElement>(null)
+
+  /* ── 쉽먼트 사이즈 xlsx 업로드 ───────────────────────────── */
+  const shipmentSizeExcelInputRef = useRef<HTMLInputElement>(null)
 
   /* ── 바코드 연동 ─────────────────────────────────────────── */
   const [barcodesyncing, setBarcodesyncing] = useState(false)
@@ -458,6 +464,81 @@ export function usePurchaseManagement() {
       alert(`엑셀 업로드 중 오류가 발생했습니다.\n${err.message || ''}`)
     } finally {
       if (rgExcelInputRef.current) rgExcelInputRef.current.value = ''
+      setTimeout(() => {
+        setIsUploading(false)
+        setUploadProgress(0)
+        setUploadStatus('')
+      }, 1500)
+    }
+  }
+
+  // ══════════════════════════════════════════════════════════════
+  // [쉽먼트 사이즈 xlsx] — si_coupang_shipment_size upsert
+  // - 시트명 '상품별 사이즈 리포트' 강제 검증
+  // - option_id 누락 행은 리스트로 알림
+  // ══════════════════════════════════════════════════════════════
+
+  const handleShipmentSizeExcelUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0]
+    if (!file) return
+
+    const userId = getUserId()
+    if (!userId) {
+      alert('사용자 정보를 찾을 수 없습니다. 다시 로그인해주세요.')
+      return
+    }
+
+    setIsUploading(true)
+    setUploadProgress(0)
+    setUploadStatus('파일을 읽는 중...')
+
+    try {
+      // STEP 1: 파일 읽기
+      const binaryStr = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader()
+        reader.onload = (e) => resolve(e.target?.result as string)
+        reader.onerror = () => reject(new Error('파일 읽기 실패'))
+        reader.readAsBinaryString(file)
+      })
+      const workbook = XLSX.read(binaryStr, { type: 'binary' })
+
+      setUploadProgress(20)
+      setUploadStatus('시트 검증 및 파싱 중...')
+
+      // STEP 2: 파싱 (시트명 불일치 시 throw)
+      const { items: parsedItems, skippedRows } = parseShipmentSizeExcel(workbook, userId)
+
+      if (parsedItems.length === 0 && skippedRows.length === 0) {
+        alert('업로드할 데이터가 없습니다. 엑셀 파일을 확인해주세요.')
+        return
+      }
+
+      setUploadProgress(40)
+      setUploadStatus(`${parsedItems.length}건 저장 중...`)
+
+      // STEP 3: 배치 upsert
+      const { success, errors } = await saveShipmentSize(parsedItems, userId)
+
+      setUploadProgress(100)
+      setUploadStatus('완료!')
+
+      // STEP 4: 완료 알림 (스킵된 행 리스트 포함, 50건 초과 시 축약)
+      let message = `쉽먼트 사이즈 업로드 완료!\n성공: ${success.toLocaleString()}건, 실패: ${errors.toLocaleString()}건`
+      if (skippedRows.length > 0) {
+        const SKIP_PREVIEW = 50
+        const previewRows = skippedRows.slice(0, SKIP_PREVIEW).join(', ')
+        const suffix =
+          skippedRows.length > SKIP_PREVIEW
+            ? ` ...외 ${skippedRows.length - SKIP_PREVIEW}건`
+            : ''
+        message += `\n\noption_id 누락으로 스킵된 행:\n${previewRows}행${suffix}`
+      }
+      alert(message)
+    } catch (err: any) {
+      console.error('[쉽먼트 사이즈 xlsx] 실패:', err)
+      alert(`쉽먼트 사이즈 업로드 중 오류가 발생했습니다.\n${err.message || ''}`)
+    } finally {
+      if (shipmentSizeExcelInputRef.current) shipmentSizeExcelInputRef.current.value = ''
       setTimeout(() => {
         setIsUploading(false)
         setUploadProgress(0)
@@ -914,8 +995,8 @@ console.log('[조회수] 완료! 총 '+results.length+'건 CSV 저장됨');
   //     E: input (수량)
   //     F: barcode
   //     G~T: 빈칸 (14컬럼)
-  //     U: vendor_item_id
-  //     V: 빈칸 (향후 사이즈 입력 공간)
+  //     U: vendor_item_id (= option_id)
+  //     V: shipment_size_before (si_coupang_shipment_size JOIN)
   // ══════════════════════════════════════════════════════════════
 
   const [copying, setCopying] = useState(false)
@@ -936,8 +1017,22 @@ console.log('[조회수] 완료! 총 '+results.length+'건 CSV 저장됨');
 
     setCopying(true)
     try {
+      // ── 사이즈 조회: 대상 option_id 배치 .in() 쿼리 ──────────
+      const userId = getUserId()
+      const optionIds = targets
+        .map((r) => r.vendor_item_id)
+        .filter((id): id is string => !!id)
+
+      const sizeMap = userId
+        ? await fetchShipmentSizesByOptionIds(userId, optionIds)
+        : new Map<string, string>()
+
+      // ── TSV 조립 ──────────────────────────────────────────────
       const GAP = new Array(14).fill('') // G~T 빈 열
       const lines = targets.map((r) => {
+        const optionId = r.vendor_item_id ?? ''
+        const shipmentSizeBefore = optionId ? (sizeMap.get(optionId) ?? '') : ''
+
         const cols = [
           '', '',                                    // A, B
           sanitizeCell(r.seller_product_name),       // C
@@ -946,7 +1041,7 @@ console.log('[조회수] 완료! 총 '+results.length+'건 CSV 저장됨');
           sanitizeCell(r.barcode),                   // F
           ...GAP,                                    // G~T
           sanitizeCell(r.vendor_item_id),            // U
-          '',                                        // V (향후 사이즈 입력)
+          sanitizeCell(shipmentSizeBefore),          // V
         ]
         return cols.join('\t')
       })
@@ -963,7 +1058,12 @@ console.log('[조회수] 완료! 총 '+results.length+'건 CSV 저장됨');
 
       if (!ok) throw new Error('execCommand copy 실패')
 
-      alert(`${targets.length.toLocaleString()}건이 클립보드에 복사되었습니다.`)
+      // 사이즈 매칭 결과 표시
+      const matched = Array.from(sizeMap.keys()).length
+      alert(
+        `${targets.length.toLocaleString()}건이 클립보드에 복사되었습니다.\n` +
+        `(사이즈 매칭: ${matched.toLocaleString()}건 / 대상 ${optionIds.length.toLocaleString()}건)`,
+      )
     } catch (err) {
       console.error('[복사] 실패:', err)
       alert('복사 중 오류가 발생했습니다.')
@@ -1136,6 +1236,10 @@ console.log('[조회수] 완료! 총 '+results.length+'건 CSV 저장됨');
     uploadStatus,
     rgExcelInputRef,
     handleRgExcelUpload,
+
+    // 쉽먼트 사이즈 xlsx
+    shipmentSizeExcelInputRef,
+    handleShipmentSizeExcelUpload,
 
     // 바코드 연결 xlsx
     barcodeExcelInputRef,

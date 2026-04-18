@@ -64,6 +64,19 @@ export interface RgItemData {
   product_listing_date: string | null
 }
 
+// ── si_coupang_shipment_size 테이블 행 인터페이스 ───────────────────
+export interface ShipmentSize {
+  id?: string
+  item_id: string                        // NOT NULL (xlsx A col)
+  option_id: string | null               // B col — upsert 키 (유저별)
+  sku_id: string | null                  // C col
+  item_name: string | null               // D col
+  option_name: string | null             // E col
+  shipment_size_before: string | null    // F col
+  shipment_size_after: string | null     // G col
+  user_id: string | null                 // 로그인 유저
+}
+
 // ── 쿠팡 상품 목록 API 응답 (단일 상품) ───────────────────────────
 export interface CoupangProductListItem {
   sellerProductId: number

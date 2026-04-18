@@ -128,6 +128,8 @@ const PurchaseManagement: React.FC = () => {
     uploadStatus,
     rgExcelInputRef,
     handleRgExcelUpload,
+    shipmentSizeExcelInputRef,
+    handleShipmentSizeExcelUpload,
     barcodeExcelInputRef,
     handleBarcodeExcel,
     barcodesyncing,
@@ -377,6 +379,18 @@ const PurchaseManagement: React.FC = () => {
               accept=".xlsx,.xls"
               style={{ display: 'none' }}
               onChange={handleRgExcelUpload}
+            />
+          </label>
+
+          {/* ── 쉽먼트 사이즈 xlsx (si_coupang_shipment_size upsert) ─── */}
+          <label className="purchase-btn" style={{ cursor: 'pointer' }}>
+            쉽먼트 사이즈 xlsx
+            <input
+              ref={shipmentSizeExcelInputRef}
+              type="file"
+              accept=".xlsx,.xls"
+              style={{ display: 'none' }}
+              onChange={handleShipmentSizeExcelUpload}
             />
           </label>
 
