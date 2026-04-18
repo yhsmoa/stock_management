@@ -10,6 +10,7 @@ import type { RgItem } from '../types/purchase'
 import ProductDetailPanel from '../components/purchase/ProductDetailPanel'
 import OrderModal from '../components/purchase/OrderModal'
 import UploadProgressModal from '../components/UploadProgressModal'
+import PasswordConfirmModal from '../components/common/PasswordConfirmModal'
 
 // ── 상수: 조회수 변동 색상 ────────────────────────────────────
 const VIEW_DIFF_THRESHOLD = 10
@@ -168,10 +169,15 @@ const PurchaseManagement: React.FC = () => {
     isOrderLoading,
     loadOrderDelta,
     warehouseQtyMap,
+    copying,
+    handleCopy,
   } = usePurchaseManagement()
 
   // ── 주문 모달 open 상태 ─────────────────────────────────────
   const [orderModalOpen, setOrderModalOpen] = useState(false)
+
+  // ── 리셋 확인 모달 (비밀번호 재확인) ────────────────────────
+  const [resetModalOpen, setResetModalOpen] = useState(false)
 
   // ── 편집 가능 셀 공통 렌더러 (input / in_qty / out_qty) ─────
   const renderEditableCell = (item: RgItem, field: EditableField, value: number | null) => {
@@ -231,7 +237,7 @@ const PurchaseManagement: React.FC = () => {
             )}
             <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>
               {item.seller_product_name || '-'}
-              {item.item_name ? `, ${item.item_name}` : ''}
+              {item.option_name ? `, ${item.option_name}` : ''}
             </span>
           </span>
         )
@@ -330,12 +336,22 @@ const PurchaseManagement: React.FC = () => {
   return (
     <div className="purchase-container">
 
-      {/* ── 상단 버튼 영역: 좌측 리셋 | 우측 xlsx·바코드·업데이트 ── */}
+      {/* ── 상단 버튼 영역: 좌측 업데이트·리셋 | 우측 주문·xlsx·바코드·조회수·복사 ── */}
       <div className="purchase-top-actions">
         <div className="purchase-toolbar-left">
+          {/* ── 업데이트 ──────────────────────────────────────── */}
           <button
             className="purchase-btn"
-            onClick={handleReset}
+            onClick={handleUpdate}
+            disabled={updating}
+          >
+            {updating ? (updateProgress || '업데이트 중...') : '업데이트'}
+          </button>
+
+          {/* ── 리셋 (비밀번호 확인 후 실행) ───────────────────── */}
+          <button
+            className="purchase-btn"
+            onClick={() => setResetModalOpen(true)}
             disabled={resetting}
           >
             {resetting ? (updateProgress || '리셋 중...') : '리셋'}
@@ -404,13 +420,14 @@ const PurchaseManagement: React.FC = () => {
             </div>
           </div>
 
-          {/* ── 업데이트 ──────────────────────────────────────── */}
+          {/* ── 복사 (구글 시트 TSV: input > 0 행만) ──────────── */}
           <button
             className="purchase-btn"
-            onClick={handleUpdate}
-            disabled={updating}
+            onClick={handleCopy}
+            disabled={copying}
+            title="입력 수량이 있는 행을 구글 시트용 TSV로 클립보드 복사"
           >
-            {updating ? (updateProgress || '업데이트 중...') : '업데이트'}
+            {copying ? '복사 중...' : '복사'}
           </button>
         </div>
       </div>
@@ -450,6 +467,33 @@ const PurchaseManagement: React.FC = () => {
           >
             반출비
           </button>
+
+          {/* ── 구분자 ─────────────────────────────────────── */}
+          <span className="purchase-separator">|</span>
+
+          {/* ── 입력 컬럼 기반 필터 (input / in_qty / out_qty) ─ */}
+          <button
+            className={`purchase-filter-btn${activeFilter === 'input' ? ' active' : ''}`}
+            onClick={() => handleFilterToggle('input')}
+            title="입력(주문) 수량이 1 이상인 행"
+          >
+            주문
+          </button>
+          <button
+            className={`purchase-filter-btn${activeFilter === 'in_qty' ? ' active' : ''}`}
+            onClick={() => handleFilterToggle('in_qty')}
+            title="입고 수량이 1 이상인 행"
+          >
+            입고
+          </button>
+          <button
+            className={`purchase-filter-btn${activeFilter === 'out_qty' ? ' active' : ''}`}
+            onClick={() => handleFilterToggle('out_qty')}
+            title="반출 수량이 1 이상인 행"
+          >
+            반출
+          </button>
+
           {activeFilter && (
             <span className="purchase-filter-count">
               {filteredCount.toLocaleString()}건
@@ -634,6 +678,20 @@ const PurchaseManagement: React.FC = () => {
         isOpen={orderModalOpen}
         onClose={() => setOrderModalOpen(false)}
         onApply={loadOrderDelta}
+      />
+
+      {/* ── 리셋 비밀번호 확인 모달 ──────────────────────────── */}
+      <PasswordConfirmModal
+        isOpen={resetModalOpen}
+        onClose={() => setResetModalOpen(false)}
+        onConfirm={async () => {
+          setResetModalOpen(false)
+          await handleReset()
+        }}
+        title="리셋 확인"
+        description="사입관리 데이터를 리셋합니다. 계속하려면 비밀번호를 입력해주세요."
+        confirmLabel="리셋"
+        confirmVariant="danger"
       />
 
       {/* ── 조회수 날짜 입력 모달 ──────────────────────────── */}

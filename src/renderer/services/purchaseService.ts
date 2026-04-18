@@ -242,7 +242,7 @@ export function mapToRgItems(
       sale_started_at: detail.saleStartedAt ?? null,
       display_product_name: detail.displayProductName ?? null,
       general_product_name: detail.generalProductName ?? null,
-      item_name: item.itemName ?? null,
+      option_name: item.itemName ?? null,
       img_url: imgUrl,
       seller_product_item_id: (item.sellerProductItemId ?? item.rocketGrowthItemData?.sellerProductItemId) != null
         ? String(item.sellerProductItemId ?? item.rocketGrowthItemData!.sellerProductItemId) : null,
@@ -278,7 +278,7 @@ export function mapListItemToRgItems(
     sale_started_at: listItem.saleStartedAt ?? null,
     display_product_name: null,
     general_product_name: null,
-    item_name: item.itemName ?? null,
+    option_name: item.itemName ?? null,
     img_url: null,
     seller_product_item_id: item.rocketGrowthItemData
       ? String(item.rocketGrowthItemData.sellerProductItemId)

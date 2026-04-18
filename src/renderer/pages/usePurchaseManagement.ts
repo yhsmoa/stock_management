@@ -148,8 +148,9 @@ export function usePurchaseManagement() {
   /* ── 창고 재고 (barcode → si_stocks.qty 합산) ──────────── */
   const [warehouseQtyMap, setWarehouseQtyMap] = useState<Map<string, number>>(new Map())
 
-  /* ── 필터 (판매량 / 반출비 토글) ─────────────────────────── */
-  const [activeFilter, setActiveFilter] = useState<'sales' | 'storage' | null>(null)
+  /* ── 필터 (판매량 / 반출비 / 주문(input) / 입고 / 반출 토글) ─ */
+  type FilterKey = 'sales' | 'storage' | 'input' | 'in_qty' | 'out_qty'
+  const [activeFilter, setActiveFilter] = useState<FilterKey | null>(null)
 
   /* ── 주문 델타 (주문 - 취소 - 출고, barcode 기준) ──────── */
   const [orderDeltaMap, setOrderDeltaMap] = useState<Map<string, OrderDelta>>(new Map())
@@ -163,7 +164,16 @@ export function usePurchaseManagement() {
     let result = items
 
     // ── STEP A: 필터 토글 ──────────────────────────────────
-    if (activeFilter && itemDataMap.size > 0) {
+    // A-1) RgItem 컬럼 기반 필터 (input/in_qty/out_qty): itemDataMap 불필요
+    if (activeFilter === 'input' || activeFilter === 'in_qty' || activeFilter === 'out_qty') {
+      const col = activeFilter
+      result = result.filter((item) => {
+        const v = item[col]
+        return v != null && v > 0
+      })
+    }
+    // A-2) 외부 itemData(재고건강) 기반 필터 (판매량/반출비)
+    else if (activeFilter && itemDataMap.size > 0) {
       const matchedItemIds = new Set<number>()
       for (const d of itemDataMap.values()) {
         if (d.item_id == null) continue
@@ -212,7 +222,7 @@ export function usePurchaseManagement() {
       } else {
         const q = searchQuery.toLowerCase()
         result = result.filter((item) =>
-          (item.item_name && item.item_name.toLowerCase().includes(q)) ||
+          (item.option_name && item.option_name.toLowerCase().includes(q)) ||
           (item.seller_product_name && item.seller_product_name.toLowerCase().includes(q)) ||
           (item.barcode && item.barcode.toLowerCase().includes(q)),
         )
@@ -222,7 +232,7 @@ export function usePurchaseManagement() {
     return result
   }, [activeFilter, items, itemDataMap, searchQuery])
 
-  const handleFilterToggle = (filter: 'sales' | 'storage') => {
+  const handleFilterToggle = (filter: FilterKey) => {
     setActiveFilter((prev) => (prev === filter ? null : filter))
     setCurrentPage(1)
   }
@@ -314,7 +324,7 @@ export function usePurchaseManagement() {
       return
     }
 
-    if (!confirm('기존 데이터를 모두 삭제하고 다시 받아옵니다.\n진행하시겠습니까?')) return
+    // 진입 전 비밀번호 재확인 모달에서 이미 인증 완료 — 추가 confirm 생략
 
     setResetting(true)
     setUpdateProgress('목록 수집 중...')
@@ -895,6 +905,74 @@ console.log('[조회수] 완료! 총 '+results.length+'건 CSV 저장됨');
   }
 
   // ══════════════════════════════════════════════════════════════
+  // 클립보드 복사 (구글 시트 TSV)
+  // - 대상: 현재 filteredItems 중 input > 0 인 행
+  // - 포맷 (22컬럼, 탭 구분):
+  //     A,B: 빈칸
+  //     C: seller_product_name
+  //     D: option_name
+  //     E: input (수량)
+  //     F: barcode
+  //     G~T: 빈칸 (14컬럼)
+  //     U: vendor_item_id
+  //     V: 빈칸 (향후 사이즈 입력 공간)
+  // ══════════════════════════════════════════════════════════════
+
+  const [copying, setCopying] = useState(false)
+
+  /** TSV 안전용: 탭/개행 제거 */
+  const sanitizeCell = (v: string | null | undefined): string =>
+    (v ?? '').replace(/[\t\r\n]+/g, ' ').trim()
+
+  const handleCopy = async () => {
+    const targets = filteredItems.filter(
+      (item) => item.input != null && item.input > 0,
+    )
+
+    if (targets.length === 0) {
+      alert('복사할 데이터가 없습니다. (입력 수량이 1 이상인 행 없음)')
+      return
+    }
+
+    setCopying(true)
+    try {
+      const GAP = new Array(14).fill('') // G~T 빈 열
+      const lines = targets.map((r) => {
+        const cols = [
+          '', '',                                    // A, B
+          sanitizeCell(r.seller_product_name),       // C
+          sanitizeCell(r.option_name),               // D
+          r.input != null ? String(r.input) : '',    // E
+          sanitizeCell(r.barcode),                   // F
+          ...GAP,                                    // G~T
+          sanitizeCell(r.vendor_item_id),            // U
+          '',                                        // V (향후 사이즈 입력)
+        ]
+        return cols.join('\t')
+      })
+      const tsv = lines.join('\n')
+
+      // ── execCommand 방식 (Electron + 웹 공용) ──
+      const el = document.createElement('textarea')
+      el.value = tsv
+      el.style.cssText = 'position:fixed;top:-9999px;left:-9999px;opacity:0'
+      document.body.appendChild(el)
+      el.select()
+      const ok = document.execCommand('copy')
+      document.body.removeChild(el)
+
+      if (!ok) throw new Error('execCommand copy 실패')
+
+      alert(`${targets.length.toLocaleString()}건이 클립보드에 복사되었습니다.`)
+    } catch (err) {
+      console.error('[복사] 실패:', err)
+      alert('복사 중 오류가 발생했습니다.')
+    } finally {
+      setCopying(false)
+    }
+  }
+
+  // ══════════════════════════════════════════════════════════════
   // 상품 상세 패널
   // ══════════════════════════════════════════════════════════════
 
@@ -1097,6 +1175,10 @@ console.log('[조회수] 완료! 총 '+results.length+'건 CSV 저장됨');
     handleSaveInputs,
     resettingInputs,
     handleResetInputs,
+
+    // 클립보드 복사 (구글 시트 TSV)
+    copying,
+    handleCopy,
 
     // 상품 상세
     detailPanelOpen,
