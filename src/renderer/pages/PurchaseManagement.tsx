@@ -16,6 +16,57 @@ const VIEW_DIFF_THRESHOLD = 10
 const COLOR_INCREASE = '#EF4444'  // 빨강 (증가)
 const COLOR_DECREASE = '#3B82F6'  // 파랑 (감소)
 
+// ══════════════════════════════════════════════════════════════════
+// CellBadge — 셀 내 값 강조용 배지 컴포넌트
+// - gray-label : 창고 열 (연회색 배경 라벨)
+// - blue-label : C.in / 추천 열 (연파랑 배경 라벨)
+// - blue-circle: C.재고 열 (파랑 테두리 동그라미)
+// ══════════════════════════════════════════════════════════════════
+
+type BadgeVariant = 'gray-label' | 'blue-label' | 'blue-circle'
+
+const BADGE_STYLES: Record<BadgeVariant, React.CSSProperties> = {
+  'gray-label': {
+    display: 'inline-block',
+    padding: '1px 8px',
+    borderRadius: '4px',
+    background: '#F3F4F6',
+    color: '#374151',
+    fontSize: '12px',
+    fontWeight: 500,
+  },
+  'blue-label': {
+    display: 'inline-block',
+    padding: '1px 8px',
+    borderRadius: '4px',
+    background: '#EFF6FF',
+    color: '#3B82F6',
+    fontSize: '12px',
+    fontWeight: 500,
+  },
+  'blue-circle': {
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    minWidth: '20px',
+    height: '20px',
+    padding: '0 4px',
+    borderRadius: '999px',
+    border: '1px solid #3B82F6',
+    color: '#3B82F6',
+    fontSize: '11px',
+    fontWeight: 600,
+    boxSizing: 'border-box',
+  },
+}
+
+const CellBadge: React.FC<{
+  variant: BadgeVariant
+  children: React.ReactNode
+}> = ({ variant, children }) => (
+  <span style={BADGE_STYLES[variant]}>{children}</span>
+)
+
 /**
  * 조회수 V열 색상 결정 헬퍼
  * - 현재 V와 이전 V를 비교하여 차이가 ±10 초과 시 색상 반환
@@ -192,10 +243,16 @@ const PurchaseManagement: React.FC = () => {
       }
 
       /* ── JOIN 컬럼: si_rg_item_data 필드 ────────────────── */
-      case 'c_in':
-        return data?.pending_inbounds ? data.pending_inbounds.toLocaleString() : ''
-      case 'c_stock':
-        return data?.orderable_qty ? data.orderable_qty.toLocaleString() : ''
+      case 'c_in': {
+        // C.in: 파란 배경 라벨
+        const v = data?.pending_inbounds
+        return v ? <CellBadge variant="blue-label">{v.toLocaleString()}</CellBadge> : ''
+      }
+      case 'c_stock': {
+        // C.재고: 파란 테두리 동그라미
+        const v = data?.orderable_qty
+        return v ? <CellBadge variant="blue-circle">{v.toLocaleString()}</CellBadge> : ''
+      }
 
       /* ── 창고 열: si_stocks.qty 합산 (barcode 기준) ────── */
       case 'warehouse': {
@@ -203,22 +260,8 @@ const PurchaseManagement: React.FC = () => {
         if (!bc) return ''
         const qty = warehouseQtyMap.get(bc)
         if (!qty) return ''
-        // 연한 회색 라벨 스타일 (미니멀)
-        return (
-          <span
-            style={{
-              display: 'inline-block',
-              padding: '1px 8px',
-              borderRadius: '4px',
-              background: '#F3F4F6',
-              color: '#374151',
-              fontSize: '12px',
-              fontWeight: 500,
-            }}
-          >
-            {qty.toLocaleString()}
-          </span>
-        )
+        // 연한 회색 라벨
+        return <CellBadge variant="gray-label">{qty.toLocaleString()}</CellBadge>
       }
 
       case 'd7':
@@ -228,27 +271,10 @@ const PurchaseManagement: React.FC = () => {
       case 'recommend': {
         const qty = data?.recommended_inbound_qty
         if (!qty) return ''
-        // 1보다 클 때만 파란 동그라미 (border only, 배경 없음)
-        return qty > 1 ? (
-          <span
-            style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              minWidth: '20px',
-              height: '20px',
-              padding: '0 4px',
-              borderRadius: '999px',
-              border: '1px solid #3B82F6',
-              color: '#3B82F6',
-              fontSize: '11px',
-              fontWeight: 600,
-              boxSizing: 'border-box',
-            }}
-          >
-            {qty.toLocaleString()}
-          </span>
-        ) : qty.toLocaleString()
+        // 1보다 클 때만 파란 배경 라벨로 강조
+        return qty > 1
+          ? <CellBadge variant="blue-label">{qty.toLocaleString()}</CellBadge>
+          : qty.toLocaleString()
       }
       case 'storage': {
         const fee = data?.monthly_storage_fee
