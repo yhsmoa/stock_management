@@ -764,7 +764,20 @@ console.log('[조회수] 완료! 총 '+results.length+'건 CSV 저장됨');
   const handleCellBlur = (itemId: string, field: EditableField, currentValue: number | null) => {
     setEditingCell(null)
     const trimmed = editingCellValue.trim()
-    const newValue = trimmed === '' ? null : Number(trimmed)
+    let newValue = trimmed === '' ? null : Number(trimmed)
+
+    // ── 입고 필드 상한 검증: 창고 수량을 초과할 수 없음 ──
+    if (field === 'in_qty' && newValue != null && newValue > 0) {
+      const targetItem = items.find((it) => it.id === itemId)
+      const maxQty = targetItem?.barcode
+        ? (warehouseQtyMap.get(targetItem.barcode) ?? 0)
+        : 0
+
+      if (newValue > maxQty) {
+        alert(`입고 수량은 창고 수량(${maxQty.toLocaleString()})을 초과할 수 없습니다.`)
+        newValue = maxQty > 0 ? maxQty : null
+      }
+    }
 
     // ── DB 원본값 기록 (해당 필드의 첫 편집 시에만) ──
     const origMap = dbOriginalsRef.current
