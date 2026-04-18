@@ -300,7 +300,7 @@ const ProductDetailPanel: React.FC<ProductDetailPanelProps> = ({
 
   // 각 필드: 직접 → rocketGrowthItemData → DB 폴백
   const productName = detail?.sellerProductName ?? item.seller_product_name
-  const itemName = detailItem?.itemName ?? item.item_name
+  const itemName = detailItem?.itemName ?? item.option_name
   const rgData = detailItem?.rocketGrowthItemData
   const barcode = detailItem?.barcode ?? rgData?.barcode ?? item.barcode
   const salePrice = detailItem?.salePrice ?? rgData?.priceData?.salePrice ?? item.sale_price

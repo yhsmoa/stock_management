@@ -14,7 +14,7 @@ export interface RgItem {
   sale_started_at: string | null
   display_product_name: string | null
   general_product_name: string | null
-  item_name: string | null
+  option_name: string | null
   img_url: string | null
   seller_product_item_id: string | null
   vendor_item_id: string | null             // 쿠팡 vendorItemId → DB vendor_item_id

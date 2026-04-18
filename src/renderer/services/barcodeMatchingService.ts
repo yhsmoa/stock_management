@@ -59,7 +59,7 @@ export async function fetchRgItemsWithBarcode(userId: string): Promise<RgItem[]>
   while (hasMore) {
     const { data, error } = await (supabase.from('si_rg_items') as any)
       .select(
-        'id, seller_product_id, seller_product_name, vendor_item_id, item_name, barcode, user_id',
+        'id, seller_product_id, seller_product_name, vendor_item_id, option_name, barcode, user_id',
       )
       .eq('user_id', userId)
       .not('barcode', 'is', null)
@@ -91,7 +91,7 @@ export async function fetchRgItemsWithBarcode(userId: string): Promise<RgItem[]>
  *   2. seller_product_id + option_name 정확 일치 (다건 → vendor_item_id 정렬)
  *   3. seller_product_id + option_name 토큰정렬 일치
  *   4. seller_product_id + option_name 토큰 subset (1건만)
- *   5. 상품명(seller_product_name) + 옵션명(item_name) 이름 매칭 (ID 무관 폴백)
+ *   5. 상품명(seller_product_name) + 옵션명(option_name) 이름 매칭 (ID 무관 폴백)
  *      5a. 정확 일치 (다건 → vendor_item_id 정렬)
  *      5b. 토큰정렬 일치
  *   6. 매칭 불가
@@ -141,7 +141,7 @@ export function matchBarcodes(
     // ── 규칙 1: vendor_item_id + option_name 정확 일치 ──
     const r1Candidates = byVendorItemId.get(order.vendor_item_id)
     if (r1Candidates) {
-      const match = r1Candidates.find((rg) => rg.item_name === optName)
+      const match = r1Candidates.find((rg) => rg.option_name === optName)
       if (match?.barcode) {
         result.set(order.id, match.barcode)
         continue
@@ -151,7 +151,7 @@ export function matchBarcodes(
     // ── 규칙 2: seller_product_id + option_name 정확 일치 ──
     const r2Candidates = bySellerProductId.get(order.seller_product_id)
     if (r2Candidates) {
-      const matches = r2Candidates.filter((rg) => rg.item_name === optName)
+      const matches = r2Candidates.filter((rg) => rg.option_name === optName)
       if (matches.length === 1 && matches[0].barcode) {
         result.set(order.id, matches[0].barcode)
         continue
@@ -172,7 +172,7 @@ export function matchBarcodes(
     if (r2Candidates) {
       const sortedOpt = tokenSort(optName)
       const match = r2Candidates.find(
-        (rg) => rg.item_name && tokenSort(rg.item_name) === sortedOpt,
+        (rg) => rg.option_name && tokenSort(rg.option_name) === sortedOpt,
       )
       if (match?.barcode) {
         result.set(order.id, match.barcode)
@@ -184,7 +184,7 @@ export function matchBarcodes(
     if (r2Candidates) {
       const orderTokens = tokenize(optName)
       const subsetMatches = r2Candidates.filter(
-        (rg) => rg.item_name && isSubset(orderTokens, tokenize(rg.item_name)),
+        (rg) => rg.option_name && isSubset(orderTokens, tokenize(rg.option_name)),
       )
       // 1건만 매칭된 경우만 채택 (2건 이상이면 매칭 실패)
       if (subsetMatches.length === 1 && subsetMatches[0].barcode) {
@@ -195,11 +195,11 @@ export function matchBarcodes(
 
     // ── 규칙 5: 상품명 + 옵션명 이름 매칭 (ID 무관 폴백) ──
     // order.item_name(sellerProductName) ↔ rg.seller_product_name
-    // order.option_name ↔ rg.item_name
+    // order.option_name ↔ rg.option_name
     const r5Candidates = bySellerProductName.get(order.item_name)
     if (r5Candidates) {
       // 5a: 정확 일치
-      const exactMatches = r5Candidates.filter((rg) => rg.item_name === optName)
+      const exactMatches = r5Candidates.filter((rg) => rg.option_name === optName)
       if (exactMatches.length === 1 && exactMatches[0].barcode) {
         result.set(order.id, exactMatches[0].barcode)
         continue
@@ -218,7 +218,7 @@ export function matchBarcodes(
       // 5b: 토큰정렬 일치
       const sortedOpt = tokenSort(optName)
       const tokenMatch = r5Candidates.find(
-        (rg) => rg.item_name && tokenSort(rg.item_name) === sortedOpt,
+        (rg) => rg.option_name && tokenSort(rg.option_name) === sortedOpt,
       )
       if (tokenMatch?.barcode) {
         result.set(order.id, tokenMatch.barcode)
