@@ -202,7 +202,23 @@ const PurchaseManagement: React.FC = () => {
         const bc = item.barcode
         if (!bc) return ''
         const qty = warehouseQtyMap.get(bc)
-        return qty ? qty.toLocaleString() : ''
+        if (!qty) return ''
+        // 연한 회색 라벨 스타일 (미니멀)
+        return (
+          <span
+            style={{
+              display: 'inline-block',
+              padding: '1px 8px',
+              borderRadius: '4px',
+              background: '#F3F4F6',
+              color: '#374151',
+              fontSize: '12px',
+              fontWeight: 500,
+            }}
+          >
+            {qty.toLocaleString()}
+          </span>
+        )
       }
 
       case 'd7':
