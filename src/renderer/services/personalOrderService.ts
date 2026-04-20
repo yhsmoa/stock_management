@@ -231,8 +231,9 @@ export async function fetchAllOrdersheets(
   // ── 태스크 빌드: (status, from, to, label) ─────────────────
   type Task = { status: string; fromDate: string; toDate: string; label: string }
 
-  const longStatuses = ['ACCEPT', 'INSTRUCT', 'DEPARTURE', 'DELIVERING']
-  const shortStatuses = ['FINAL_DELIVERY', 'NONE_TRACKING']
+  // 60일(2분할): 장기 체류 가능 상태 / 30일(1회): 배송 이후 상태 + 배송중(단기 체류)
+  const longStatuses = ['ACCEPT', 'INSTRUCT', 'DEPARTURE']
+  const shortStatuses = ['DELIVERING', 'FINAL_DELIVERY', 'NONE_TRACKING']
 
   const tasks: Task[] = [
     // 60일 상태 — 2분할 (API 31일 제한 대응)
