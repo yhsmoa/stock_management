@@ -32,6 +32,7 @@ import {
   splitAndUploadPages,
   printMultipleInvoices,
 } from '../services/invoiceService'
+import type { ProgressStep } from '../components/common/ProgressModal'
 import type { AuthUser } from '../types/auth'
 
 // ── 상수 ──────────────────────────────────────────────────────────
@@ -148,6 +149,37 @@ export function usePersonalOrder() {
   // ── 드로어 선택 상태 ──────────────────────────────────────────
   const [selectedDrawerItem, setSelectedDrawerItem] = useState<DrawerItemState | null>(null)
 
+  // ── 진행 모달 상태 (업데이트/바코드연결/송장연결 공용) ─────
+  const [progressOpen, setProgressOpen] = useState(false)
+  const [progressTitle, setProgressTitle] = useState('처리 중')
+  const [progressSteps, setProgressSteps] = useState<ProgressStep[]>([])
+  const [progressStatus, setProgressStatus] = useState('')
+
+  /**
+   * 단계 배열의 idx 번째를 state 로, detail 로 갱신 (immutable)
+   * - 이전 단계가 pending 이면 자동으로 done 처리 (선형 진행 가정)
+   */
+  const updateStep = useCallback(
+    (idx: number, state: ProgressStep['state'], detail?: string) => {
+      setProgressSteps((prev) => {
+        if (!prev[idx]) return prev
+        return prev.map((s, i) => {
+          if (i < idx && s.state === 'pending') return { ...s, state: 'done' }
+          if (i === idx) return { ...s, state, detail }
+          return s
+        })
+      })
+    },
+    [],
+  )
+
+  /** 모달 닫기 + 상태 초기화 */
+  const closeProgress = useCallback(() => {
+    setProgressOpen(false)
+    setProgressSteps([])
+    setProgressStatus('')
+  }, [])
+
   // ── 사용자 정보 ───────────────────────────────────────────────
   const getUserInfo = useCallback((): { userId: string; vendorId: string; orderUserId: string } => {
     const raw = localStorage.getItem('user')
@@ -222,43 +254,70 @@ export function usePersonalOrder() {
       return
     }
 
+    // ── 진행 모달 초기화 ──────────────────────────────────────
+    setProgressTitle('개인주문 업데이트')
+    setProgressSteps([
+      { label: '쿠팡 발주서 조회', state: 'pending' },
+      { label: '데이터 변환', state: 'pending' },
+      { label: 'DB 저장', state: 'pending' },
+      { label: '재조회', state: 'pending' },
+      { label: '진행상황(fulfillment) 조회', state: 'pending' },
+    ])
+    setProgressStatus('')
+    setProgressOpen(true)
     setUpdating(true)
-    setUpdateMsg('쿠팡 API 호출 중...')
 
     try {
+      // STEP 1: 쿠팡 API
+      updateStep(0, 'active')
       const apiData = await fetchAllOrdersheets((msg) => {
-        setUpdateMsg(msg)
+        updateStep(0, 'active', msg)
       })
+      updateStep(0, 'done', `${apiData.length}건`)
 
-      setUpdateMsg(`${apiData.length}건 변환 중...`)
+      // STEP 2: 변환
+      updateStep(1, 'active')
       const rows = mapOrderToRows(apiData, vendorId, userId)
+      updateStep(1, 'done', `${rows.length}건`)
 
-      setUpdateMsg(`${rows.length}건 저장 중...`)
+      // STEP 3: 저장
+      updateStep(2, 'active', `${rows.length}건 저장 중`)
       const result = await savePersonalOrders(rows, userId)
-
       if (!result.success) {
+        updateStep(2, 'error')
+        setProgressStatus(`저장 실패: ${result.error}`)
         alert(`저장 실패: ${result.error}`)
         return
       }
+      updateStep(2, 'done', `${result.count}건`)
 
+      // STEP 4: 재조회
+      updateStep(3, 'active')
       const freshData = await fetchPersonalOrders(userId)
       setItems(freshData)
       setCurrentPage(1)
       setSelectedIds(new Set())
+      updateStep(3, 'done', `${freshData.length}건`)
 
-      setUpdateMsg('진행상황 조회 중...')
+      // STEP 5: fulfillment
+      updateStep(4, 'active')
       await loadFulfillmentData(freshData)
-      setUpdateMsg('')
+      updateStep(4, 'done')
 
-      alert(`${result.count}건 업데이트 완료`)
+      setProgressStatus(`${result.count}건 업데이트 완료`)
+      // 완료 메시지를 잠깐 보여준 후 자동 닫기
+      setTimeout(() => closeProgress(), 1200)
     } catch (err: any) {
       console.error('업데이트 실패:', err)
+      setProgressSteps((prev) =>
+        prev.map((s) => (s.state === 'active' ? { ...s, state: 'error' } : s)),
+      )
+      setProgressStatus(`실패: ${err.message}`)
       alert(`업데이트 실패: ${err.message}`)
     } finally {
       setUpdating(false)
-      setUpdateMsg('')
     }
-  }, [getUserInfo, loadFulfillmentData])
+  }, [getUserInfo, loadFulfillmentData, updateStep, closeProgress])
 
   // ── [주문확인] 핸들러 (결제완료 → 상품준비중) ──────────────────
   const handleAcknowledge = useCallback(async () => {
@@ -494,27 +553,46 @@ export function usePersonalOrder() {
       return
     }
 
+    // ── 진행 모달 초기화 ──────────────────────────────────────
+    setProgressTitle('바코드 연결')
+    setProgressSteps([
+      { label: '로켓그로스 상품(si_rg_items) 조회', state: 'pending' },
+      { label: '6단계 규칙 매칭', state: 'pending' },
+      { label: 'DB 저장', state: 'pending' },
+    ])
+    setProgressStatus(`대상 ${targets.length}건`)
+    setProgressOpen(true)
     setBarcodeLoading(true)
+
     try {
-      // 1) 로켓그로스 상품 조회
+      // STEP 1: 로켓그로스 상품 조회
+      updateStep(0, 'active')
       const rgItems = await fetchRgItemsWithBarcode(userId)
       if (rgItems.length === 0) {
+        updateStep(0, 'error')
         alert('로켓그로스 상품(si_rg_items)에 바코드 데이터가 없습니다.')
+        closeProgress()
         return
       }
+      updateStep(0, 'done', `${rgItems.length}건`)
 
-      // 2) 6단계 규칙으로 매칭
+      // STEP 2: 매칭
+      updateStep(1, 'active')
       const matches = matchBarcodes(targets, rgItems)
-
       if (matches.size === 0) {
+        updateStep(1, 'error')
         alert(`매칭 결과: 0건\n대상 ${targets.length}건 중 매칭된 바코드가 없습니다.`)
+        closeProgress()
         return
       }
+      updateStep(1, 'done', `${matches.size}/${targets.length}건`)
 
-      // 3) DB 저장
+      // STEP 3: DB 저장
+      updateStep(2, 'active')
       const saveResult = await saveBarcodes(matches, userId)
+      updateStep(2, 'done', `${saveResult.updated}건`)
 
-      // 4) 로컬 상태 업데이트
+      // 로컬 상태 업데이트
       setItems((prev) =>
         prev.map((row) => {
           if (row.id && matches.has(row.id)) {
@@ -525,23 +603,19 @@ export function usePersonalOrder() {
       )
 
       const unmatched = targets.length - matches.size
-      alert(
-        `바코드 매칭 완료\n` +
-        `- 대상: ${targets.length}건\n` +
-        `- 매칭 성공: ${matches.size}건\n` +
-        `- 매칭 실패: ${unmatched}건\n` +
-        `- DB 저장: ${saveResult.updated}건` +
-        (saveResult.errors.length > 0
-          ? `\n- 저장 오류: ${saveResult.errors.length}건`
-          : ''),
-      )
+      setProgressStatus(`성공 ${matches.size} / 실패 ${unmatched} / 저장 ${saveResult.updated}`)
+      setTimeout(() => closeProgress(), 1500)
     } catch (err: any) {
       console.error('[바코드 연결] 실패:', err)
+      setProgressSteps((prev) =>
+        prev.map((s) => (s.state === 'active' ? { ...s, state: 'error' } : s)),
+      )
+      setProgressStatus(`실패: ${err.message}`)
       alert(`바코드 연결 실패: ${err.message}`)
     } finally {
       setBarcodeLoading(false)
     }
-  }, [items, getUserInfo])
+  }, [items, getUserInfo, updateStep, closeProgress])
 
   // ── [송장 연결] 핸들러 ────────────────────────────────────────────
   const [invoiceLinking, setInvoiceLinking] = useState(false)
@@ -553,55 +627,67 @@ export function usePersonalOrder() {
       return
     }
 
+    // ── 진행 모달 초기화 ──────────────────────────────────────
+    setProgressTitle('송장 연결')
+    setProgressSteps([
+      { label: 'PDF 페이지 파싱 (주문번호 추출)', state: 'pending' },
+      { label: '주문 데이터와 매칭', state: 'pending' },
+      { label: 'Supabase Storage 업로드', state: 'pending' },
+    ])
+    setProgressStatus(file.name)
+    setProgressOpen(true)
     setInvoiceLinking(true)
+
     try {
-      // 1) PDF에서 페이지별 주문번호 추출
+      // STEP 1: PDF 파싱
+      updateStep(0, 'active')
       const pages = await parsePdfInvoices(file)
       if (pages.length === 0) {
+        updateStep(0, 'error')
         alert('PDF에서 주문번호를 추출할 수 없습니다.')
+        closeProgress()
         return
       }
+      updateStep(0, 'done', `${pages.length}페이지`)
 
-      // 2) 현재 주문 데이터와 매칭 확인
+      // STEP 2: 매칭
+      updateStep(1, 'active')
       const orderIdSet = new Set(items.map((r) => r.order_id))
       const matched = pages.filter((p) => orderIdSet.has(p.orderId))
       const unmatched = pages.filter((p) => !orderIdSet.has(p.orderId))
 
-      // 디버그 로그 — PDF 추출값 vs DB 주문번호 비교
-      console.log('[송장 연결] PDF에서 추출된 주문번호:', pages.map((p) => p.orderId))
-      console.log('[송장 연결] DB 주문번호 샘플(상위 10개):', Array.from(orderIdSet).slice(0, 10))
-      console.log('[송장 연결] 매칭 결과:', { matched: matched.map((p) => p.orderId), unmatched: unmatched.map((p) => p.orderId) })
-
-      if (unmatched.length > 0) {
-        console.warn('[송장 연결] 매칭 실패 주문번호:', unmatched.map((p) => p.orderId))
-      }
-
       if (matched.length === 0) {
+        updateStep(1, 'error')
         alert(
           `매칭된 주문이 없습니다.\n` +
           `추출된 주문번호 ${pages.length}건 중 현재 주문 데이터와 일치하는 건이 없습니다.`,
         )
+        closeProgress()
         return
       }
+      updateStep(1, 'done', `${matched.length}/${pages.length}건`)
 
-      // 3) Storage 업로드
+      // STEP 3: Storage 업로드
+      updateStep(2, 'active', `0/${matched.length}`)
       const result = await splitAndUploadPages(file, matched, userId)
+      updateStep(2, 'done', `${result.success}/${matched.length}`)
 
-      alert(
-        `송장 연결 완료\n` +
-        `- 추출: ${pages.length}건\n` +
-        `- 매칭 성공: ${matched.length}건\n` +
-        `- 매칭 실패: ${unmatched.length}건\n` +
-        `- 업로드 성공: ${result.success}건` +
-        (result.failed > 0 ? `\n- 업로드 실패: ${result.failed}건` : ''),
+      setProgressStatus(
+        `완료 — 성공 ${result.success}, 매칭 실패 ${unmatched.length}` +
+        (result.failed > 0 ? `, 업로드 실패 ${result.failed}` : ''),
       )
+      setTimeout(() => closeProgress(), 1500)
     } catch (err: any) {
       console.error('[송장 연결] 실패:', err)
+      setProgressSteps((prev) =>
+        prev.map((s) => (s.state === 'active' ? { ...s, state: 'error' } : s)),
+      )
+      setProgressStatus(`실패: ${err.message}`)
       alert(`송장 연결 실패: ${err.message}`)
     } finally {
       setInvoiceLinking(false)
     }
-  }, [items, getUserInfo])
+  }, [items, getUserInfo, updateStep, closeProgress])
 
   // ── [송장 인쇄] 핸들러 (체크된 주문 일괄 인쇄) ───────────────────
   const [invoicePrinting, setInvoicePrinting] = useState(false)
@@ -727,6 +813,12 @@ export function usePersonalOrder() {
     showUnorderedOnly,
     selectedDrawerItem,
     setSelectedDrawerItem,
+
+    // 진행 모달
+    progressOpen,
+    progressTitle,
+    progressSteps,
+    progressStatus,
 
     // 필터/페이지네이션
     filteredCount,

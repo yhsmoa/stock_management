@@ -6,6 +6,7 @@
 import React, { useRef } from 'react'
 import './PersonalOrder.css'
 import FulfillmentDrawer from './FulfillmentDrawer'
+import ProgressModal from '../components/common/ProgressModal'
 import {
   usePersonalOrder,
   ORDER_STATUS_TABS,
@@ -47,6 +48,11 @@ const PersonalOrder: React.FC = () => {
     invoiceLinking,
     handleInvoicePrint,
     invoicePrinting,
+    // 진행 모달
+    progressOpen,
+    progressTitle,
+    progressSteps,
+    progressStatus,
     handleSelectAll,
     handleSelectRow,
     toggleUnorderedOnly,
@@ -339,6 +345,14 @@ const PersonalOrder: React.FC = () => {
         itemNo={selectedDrawerItem?.itemNo ?? null}
         productNo={selectedDrawerItem?.productNo ?? null}
         onClose={() => setSelectedDrawerItem(null)}
+      />
+
+      {/* ── 진행 모달 (업데이트 / 바코드 연결 / 송장 연결 공용) ── */}
+      <ProgressModal
+        isOpen={progressOpen}
+        title={progressTitle}
+        steps={progressSteps}
+        status={progressStatus}
       />
     </div>
   )
