@@ -11,7 +11,9 @@ import type { AuthUser } from '../types/auth'
 // ── 상수 ──────────────────────────────────────────────────────────
 const SUPABASE_BATCH_SIZE = 500
 const ORDERSHEET_MAX_PER_PAGE = 50  // 쿠팡 API 최대값 (1회 요청당 행 수)
-const FETCH_CONCURRENCY = 3          // rate limit 보호용 동시 요청 제한
+const FETCH_CONCURRENCY = 2          // rate limit 보호용 동시 요청 제한
+const MAX_RETRIES = 3                // 요청 실패 시 재시도 횟수
+const RETRY_BASE_DELAY_MS = 500      // 지수 백오프 기본 지연 (0.5s, 1s, 2s)
 
 // ══════════════════════════════════════════════════════════════════
 // 동시 실행 제한 러너 — Promise-returning 함수 배열을 limit 만큼만 동시 실행
@@ -151,6 +153,42 @@ function toCoupangDate(date: string): string {
 // 쿠팡 발주서 API 호출
 // ══════════════════════════════════════════════════════════════════
 
+/**
+ * 단일 페이지 호출 (재시도 포함) — 빈 응답/500 에러 시 지수 백오프로 재시도
+ * - 프록시가 Coupang 비JSON 응답을 status=500 + error 로 래핑해주므로
+ *   이 함수에서는 JSON 응답이 보장됨
+ */
+async function fetchOrdersheetsPage(
+  params: URLSearchParams,
+  headers: Record<string, string>,
+): Promise<any> {
+  let lastErr: Error | null = null
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      const res = await fetch(`/api/coupang/ordersheets?${params.toString()}`, { headers })
+      const text = await res.text()
+      if (!text) {
+        throw new Error(`프록시 응답 비어있음 (status=${res.status})`)
+      }
+      const json = JSON.parse(text)
+      if (!json.success) {
+        throw new Error(json.error || `발주서 조회 실패 (status=${res.status})`)
+      }
+      return json.data
+    } catch (err: any) {
+      lastErr = err
+      if (attempt < MAX_RETRIES) {
+        const delay = RETRY_BASE_DELAY_MS * Math.pow(2, attempt)
+        console.warn(
+          `[ordersheets 재시도] ${attempt + 1}/${MAX_RETRIES} — ${err.message} (${delay}ms 대기)`,
+        )
+        await new Promise((r) => setTimeout(r, delay))
+      }
+    }
+  }
+  throw lastErr ?? new Error('발주서 조회 실패 (알 수 없는 오류)')
+}
+
 /** 특정 상태 + 기간에 대한 발주서 목록 조회 (nextToken 페이징) */
 async function fetchOrdersheetsByStatus(
   status: string,
@@ -170,16 +208,8 @@ async function fetchOrdersheetsByStatus(
     })
     if (nextToken) params.set('nextToken', nextToken)
 
-    const res = await fetch(`/api/coupang/ordersheets?${params.toString()}`, {
-      headers,
-    })
-    const json = await res.json()
+    const apiData = await fetchOrdersheetsPage(params, headers)
 
-    if (!json.success) {
-      throw new Error(json.error || '발주서 조회 실패')
-    }
-
-    const apiData = json.data
     if (apiData?.data && Array.isArray(apiData.data)) {
       allData = allData.concat(apiData.data)
     }

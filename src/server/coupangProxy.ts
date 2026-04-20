@@ -72,6 +72,7 @@ async function callCoupangAPI(
   accessKey: string,
   secretKey: string,
   body?: unknown,
+  vendorCode?: string,
 ) {
   const baseUrl = 'https://api-gateway.coupang.com'
   const queryString = queryParams
@@ -80,16 +81,36 @@ async function callCoupangAPI(
   const authorization = generateAuth(method, apiPath, queryString, accessKey, secretKey)
   const fullUrl = baseUrl + apiPath + (queryString ? '?' + queryString : '')
 
+  // X-EXTENDED-TIMEOUT: 대용량 응답 타임아웃 대응 (Coupang 공식 가이드)
+  const headers: Record<string, string> = {
+    Authorization: authorization,
+    'Content-Type': 'application/json;charset=UTF-8',
+    'X-EXTENDED-TIMEOUT': '90000',
+  }
+  if (vendorCode) headers['X-Requested-By'] = vendorCode
+
   const response = await fetch(fullUrl, {
     method,
-    headers: {
-      Authorization: authorization,
-      'Content-Type': 'application/json;charset=UTF-8',
-    },
+    headers,
     ...(body ? { body: JSON.stringify(body) } : {}),
   })
 
-  return response.json()
+  const text = await response.text()
+
+  // ── JSON 파싱 안전장치 (빈 body / HTML 응답 등 방어) ──
+  if (!text) {
+    const err: any = new Error(`Coupang 응답 비어있음 (status=${response.status})`)
+    err.status = response.status
+    throw err
+  }
+  try {
+    return JSON.parse(text)
+  } catch {
+    const preview = text.slice(0, 200).replace(/\s+/g, ' ')
+    const err: any = new Error(`Coupang 비JSON 응답 (status=${response.status}): ${preview}`)
+    err.status = response.status
+    throw err
+  }
 }
 
 // ── JSON 응답 헬퍼 ────────────────────────────────────────────────
@@ -147,7 +168,7 @@ export function coupangProxyPlugin(): Plugin {
             params.nextToken = nextToken
           }
 
-          const result = await callCoupangAPI('GET', apiPath, params, keys.accessKey, keys.secretKey)
+          const result = await callCoupangAPI('GET', apiPath, params, keys.accessKey, keys.secretKey, undefined, keys.vendorCode)
 
           sendJson(res, 200, { success: true, data: result })
         } catch (error: any) {
@@ -176,7 +197,7 @@ export function coupangProxyPlugin(): Plugin {
           }
 
           const apiPath = `/v2/providers/seller_api/apis/api/v1/marketplace/seller-products/${sellerProductId}`
-          const result = await callCoupangAPI('GET', apiPath, null, keys.accessKey, keys.secretKey)
+          const result = await callCoupangAPI('GET', apiPath, null, keys.accessKey, keys.secretKey, undefined, keys.vendorCode)
 
           sendJson(res, 200, { success: true, data: result })
         } catch (error: any) {
@@ -218,7 +239,7 @@ export function coupangProxyPlugin(): Plugin {
             params.nextToken = nextToken
           }
 
-          const result = await callCoupangAPI('GET', apiPath, params, keys.accessKey, keys.secretKey)
+          const result = await callCoupangAPI('GET', apiPath, params, keys.accessKey, keys.secretKey, undefined, keys.vendorCode)
 
           sendJson(res, 200, { success: true, data: result })
         } catch (error: any) {
@@ -252,6 +273,7 @@ export function coupangProxyPlugin(): Plugin {
             keys.accessKey,
             keys.secretKey,
             { vendorId: keys.vendorCode, shipmentBoxIds },
+            keys.vendorCode,
           )
 
           sendJson(res, 200, { success: true, data: result })

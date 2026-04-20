@@ -58,7 +58,7 @@ function generateAuth(method, apiPath, queryString, accessKey, secretKey) {
 // 쿠팡 API Gateway 호출
 // ══════════════════════════════════════════════════════════════════
 
-async function callCoupangAPI(method, apiPath, queryParams, accessKey, secretKey, body) {
+async function callCoupangAPI(method, apiPath, queryParams, accessKey, secretKey, body, vendorCode) {
   const baseUrl = 'https://api-gateway.coupang.com'
   const queryString = queryParams
     ? new URLSearchParams(queryParams).toString()
@@ -66,17 +66,37 @@ async function callCoupangAPI(method, apiPath, queryParams, accessKey, secretKey
   const authorization = generateAuth(method, apiPath, queryString, accessKey, secretKey)
   const fullUrl = baseUrl + apiPath + (queryString ? '?' + queryString : '')
 
+  // X-EXTENDED-TIMEOUT: 대용량 응답 타임아웃 대응 (Coupang 공식 가이드)
+  const headers = {
+    Authorization: authorization,
+    'Content-Type': 'application/json;charset=UTF-8',
+    'X-EXTENDED-TIMEOUT': '90000',
+  }
+  if (vendorCode) headers['X-Requested-By'] = vendorCode
+
   const options = {
     method,
-    headers: {
-      Authorization: authorization,
-      'Content-Type': 'application/json;charset=UTF-8',
-    },
+    headers,
   }
   if (body) options.body = JSON.stringify(body)
 
   const response = await fetch(fullUrl, options)
-  return response.json()
+  const text = await response.text()
+
+  // ── JSON 파싱 안전장치 (빈 body / HTML 응답 등 방어) ──
+  if (!text) {
+    const err = new Error(`Coupang 응답 비어있음 (status=${response.status})`)
+    err.status = response.status
+    throw err
+  }
+  try {
+    return JSON.parse(text)
+  } catch {
+    const preview = text.slice(0, 200).replace(/\s+/g, ' ')
+    const err = new Error(`Coupang 비JSON 응답 (status=${response.status}): ${preview}`)
+    err.status = response.status
+    throw err
+  }
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -100,7 +120,7 @@ app.get('/api/coupang/rg-products', async (req, res) => {
     }
     if (nextToken) params.nextToken = nextToken
 
-    const result = await callCoupangAPI('GET', apiPath, params, keys.accessKey, keys.secretKey)
+    const result = await callCoupangAPI('GET', apiPath, params, keys.accessKey, keys.secretKey, null, keys.vendorCode)
     res.json({ success: true, data: result })
   } catch (error) {
     console.error('[prod-server] rg-products 오류:', error.message)
@@ -118,7 +138,7 @@ app.get('/api/coupang/rg-product/:sellerProductId', async (req, res) => {
     if (!sellerProductId) return res.status(400).json({ success: false, error: 'sellerProductId 필요' })
 
     const apiPath = `/v2/providers/seller_api/apis/api/v1/marketplace/seller-products/${sellerProductId}`
-    const result = await callCoupangAPI('GET', apiPath, null, keys.accessKey, keys.secretKey)
+    const result = await callCoupangAPI('GET', apiPath, null, keys.accessKey, keys.secretKey, null, keys.vendorCode)
     res.json({ success: true, data: result })
   } catch (error) {
     console.error('[prod-server] rg-product 오류:', error.message)
@@ -141,7 +161,7 @@ app.get('/api/coupang/ordersheets', async (req, res) => {
     const params = { createdAtFrom, createdAtTo, status, maxPerPage: maxPerPage || '50' }
     if (nextToken) params.nextToken = nextToken
 
-    const result = await callCoupangAPI('GET', apiPath, params, keys.accessKey, keys.secretKey)
+    const result = await callCoupangAPI('GET', apiPath, params, keys.accessKey, keys.secretKey, null, keys.vendorCode)
     res.json({ success: true, data: result })
   } catch (error) {
     console.error('[prod-server] ordersheets 오류:', error.message)
@@ -165,6 +185,7 @@ app.put('/api/coupang/ordersheets-acknowledge', async (req, res) => {
       'PUT', apiPath, null,
       keys.accessKey, keys.secretKey,
       { vendorId: keys.vendorCode, shipmentBoxIds },
+      keys.vendorCode,
     )
     res.json({ success: true, data: result })
   } catch (error) {
