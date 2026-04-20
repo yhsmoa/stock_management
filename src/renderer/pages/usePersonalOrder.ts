@@ -7,6 +7,7 @@ import { useState, useMemo, useCallback, useEffect } from 'react'
 import * as XLSX from 'xlsx'
 import {
   fetchAllOrdersheets,
+  fetchAllReturnRequests,
   mapOrderToRows,
   savePersonalOrders,
   fetchPersonalOrders,
@@ -31,6 +32,8 @@ import {
   parsePdfInvoices,
   splitAndUploadPages,
   printMultipleInvoices,
+  fetchInvoiceOrderIds,
+  deleteInvoicesByOrderIds,
 } from '../services/invoiceService'
 import type { ProgressStep } from '../components/common/ProgressModal'
 import type { AuthUser } from '../types/auth'
@@ -141,6 +144,13 @@ export function usePersonalOrder() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [acknowledging, setAcknowledging] = useState(false)
   const [showUnorderedOnly, setShowUnorderedOnly] = useState(false)
+  const [showReleaseStopOnly, setShowReleaseStopOnly] = useState(false)
+  const [showNoInvoiceOnly, setShowNoInvoiceOnly] = useState(false)
+  // 상태 점(green/red/gray) 필터 — 멀티 선택(OR). 빈 Set = 필터 없음
+  const [selectedStatuses, setSelectedStatuses] = useState<Set<StatusType>>(new Set())
+
+  // ── 송장 파일 매칭 Set (Storage 에서 일괄 로드) ───────────
+  const [invoiceOrderIds, setInvoiceOrderIds] = useState<Set<string>>(new Set())
 
   // ── fulfillment 상태 ──────────────────────────────────────────
   const [aggMap, setAggMap] = useState<Map<string, FulfillmentAgg>>(new Map())
@@ -234,8 +244,13 @@ export function usePersonalOrder() {
       if (!userId) return
       setLoading(true)
       try {
-        const data = await fetchPersonalOrders(userId)
+        // DB 주문 조회 + Storage 송장 파일 목록 조회 (병렬)
+        const [data, invIds] = await Promise.all([
+          fetchPersonalOrders(userId),
+          fetchInvoiceOrderIds(userId),
+        ])
         setItems(data)
+        setInvoiceOrderIds(invIds)
         await loadFulfillmentData(data)
       } catch (err) {
         console.error('데이터 로드 실패:', err)
@@ -258,6 +273,7 @@ export function usePersonalOrder() {
     setProgressTitle('개인주문 업데이트')
     setProgressSteps([
       { label: '쿠팡 발주서 조회', state: 'pending' },
+      { label: '출고중지/반품 조회', state: 'pending' },
       { label: '데이터 변환', state: 'pending' },
       { label: 'DB 저장', state: 'pending' },
       { label: '재조회', state: 'pending' },
@@ -268,41 +284,48 @@ export function usePersonalOrder() {
     setUpdating(true)
 
     try {
-      // STEP 1: 쿠팡 API
+      // STEP 1: 쿠팡 발주서 API
       updateStep(0, 'active')
       const apiData = await fetchAllOrdersheets((msg) => {
         updateStep(0, 'active', msg)
       })
       updateStep(0, 'done', `${apiData.length}건`)
 
-      // STEP 2: 변환
+      // STEP 2: 출고중지/반품 요청 조회
       updateStep(1, 'active')
-      const rows = mapOrderToRows(apiData, vendorId, userId)
-      updateStep(1, 'done', `${rows.length}건`)
+      const releaseStopSet = await fetchAllReturnRequests((msg) => {
+        updateStep(1, 'active', msg)
+      })
+      updateStep(1, 'done', `${releaseStopSet.size}건`)
 
-      // STEP 3: 저장
-      updateStep(2, 'active', `${rows.length}건 저장 중`)
+      // STEP 3: 변환 (release_stop 플래그 주입)
+      updateStep(2, 'active')
+      const rows = mapOrderToRows(apiData, vendorId, userId, releaseStopSet)
+      updateStep(2, 'done', `${rows.length}건`)
+
+      // STEP 4: 저장
+      updateStep(3, 'active', `${rows.length}건 저장 중`)
       const result = await savePersonalOrders(rows, userId)
       if (!result.success) {
-        updateStep(2, 'error')
+        updateStep(3, 'error')
         setProgressStatus(`저장 실패: ${result.error}`)
         alert(`저장 실패: ${result.error}`)
         return
       }
-      updateStep(2, 'done', `${result.count}건`)
+      updateStep(3, 'done', `${result.count}건`)
 
-      // STEP 4: 재조회
-      updateStep(3, 'active')
+      // STEP 5: 재조회
+      updateStep(4, 'active')
       const freshData = await fetchPersonalOrders(userId)
       setItems(freshData)
       setCurrentPage(1)
       setSelectedIds(new Set())
-      updateStep(3, 'done', `${freshData.length}건`)
+      updateStep(4, 'done', `${freshData.length}건`)
 
-      // STEP 5: fulfillment
-      updateStep(4, 'active')
+      // STEP 6: fulfillment
+      updateStep(5, 'active')
       await loadFulfillmentData(freshData)
-      updateStep(4, 'done')
+      updateStep(5, 'done')
 
       setProgressStatus(`${result.count}건 업데이트 완료`)
       // 완료 메시지를 잠깐 보여준 후 자동 닫기
@@ -376,11 +399,37 @@ export function usePersonalOrder() {
     setCurrentPage(1)
     setSelectedIds(new Set())
     setShowUnorderedOnly(false)
+    setShowReleaseStopOnly(false)
+    setShowNoInvoiceOnly(false)
+    setSelectedStatuses(new Set())
   }, [])
 
   // ── 미주문 필터 토글 ──────────────────────────────────────────
   const toggleUnorderedOnly = useCallback(() => {
     setShowUnorderedOnly((prev) => !prev)
+    setCurrentPage(1)
+  }, [])
+
+  // ── 출고중지 필터 토글 ────────────────────────────────────────
+  const toggleReleaseStopOnly = useCallback(() => {
+    setShowReleaseStopOnly((prev) => !prev)
+    setCurrentPage(1)
+  }, [])
+
+  // ── 송장 미연결 필터 토글 ────────────────────────────────────
+  const toggleNoInvoiceOnly = useCallback(() => {
+    setShowNoInvoiceOnly((prev) => !prev)
+    setCurrentPage(1)
+  }, [])
+
+  // ── 상태 점(green/red/gray) 필터 토글 — 멀티 선택(OR) ─────
+  const toggleStatusFilter = useCallback((status: StatusType) => {
+    setSelectedStatuses((prev) => {
+      const next = new Set(prev)
+      if (next.has(status)) next.delete(status)
+      else next.add(status)
+      return next
+    })
     setCurrentPage(1)
   }, [])
 
@@ -422,12 +471,38 @@ export function usePersonalOrder() {
       })
     }
 
+    // 출고중지 필터
+    if (showReleaseStopOnly) {
+      result = result.filter((row) => row.release_stop)
+    }
+
+    // 송장 미연결 필터
+    if (showNoInvoiceOnly) {
+      result = result.filter(
+        (row) => !!row.order_id && !invoiceOrderIds.has(row.order_id),
+      )
+    }
+
+    // 상태 점 필터 (멀티 선택 OR)
+    if (selectedStatuses.size > 0) {
+      result = result.filter((row) => {
+        const agg = row.order_id ? (aggMap.get(row.order_id) ?? EMPTY_AGG) : EMPTY_AGG
+        const qty = row.shipping_count ?? 0
+        let st: StatusType
+        if (qty > 0 && agg.cancel >= qty) st = 'red'
+        else if (agg.packed > 0) st = 'green'
+        else if (row.order_id && orderItemMap.has(row.order_id)) st = 'gray'
+        else st = 'none'
+        return selectedStatuses.has(st)
+      })
+    }
+
     return result.sort((a, b) => {
       const dateA = a.ordered_at ? new Date(a.ordered_at).getTime() : 0
       const dateB = b.ordered_at ? new Date(b.ordered_at).getTime() : 0
       return dateA - dateB
     })
-  }, [items, activeTab, appliedSearch, showUnorderedOnly, aggMap, orderItemMap])
+  }, [items, activeTab, appliedSearch, showUnorderedOnly, showReleaseStopOnly, showNoInvoiceOnly, selectedStatuses, invoiceOrderIds, aggMap, orderItemMap])
 
   // ── [엑셀 다운] 핸들러 (쿠팡 DeliveryList 양식) ────────────────
   const handleExcelDownload = useCallback(() => {
@@ -633,6 +708,7 @@ export function usePersonalOrder() {
       { label: 'PDF 페이지 파싱 (주문번호 추출)', state: 'pending' },
       { label: '주문 데이터와 매칭', state: 'pending' },
       { label: 'Supabase Storage 업로드', state: 'pending' },
+      { label: '배송완료 송장 정리', state: 'pending' },
     ])
     setProgressStatus(file.name)
     setProgressOpen(true)
@@ -672,8 +748,62 @@ export function usePersonalOrder() {
       const result = await splitAndUploadPages(file, matched, userId)
       updateStep(2, 'done', `${result.success}/${matched.length}`)
 
+      // 업로드된 order_id 를 invoiceOrderIds 에 즉시 반영 (📝 표시 제거)
+      if (result.success > 0) {
+        setInvoiceOrderIds((prev) => {
+          const next = new Set(prev)
+          for (const p of matched) next.add(p.orderId)
+          return next
+        })
+      }
+
+      // STEP 4: 배송완료 송장 정리 — 준비중/배송지시 없이 배송완료만 남은 주문의 파일 삭제
+      updateStep(3, 'active')
+      const ACTIVE_STATUSES = new Set(['INSTRUCT', 'DEPARTURE'])
+      const TERMINAL_STATUS = 'FINAL_DELIVERY'
+
+      // order_id → 현재 주문의 status Set (동일 order_id 여러 행 고려)
+      const orderStatuses = new Map<string, Set<string>>()
+      for (const row of items) {
+        if (!row.order_id) continue
+        const s = orderStatuses.get(row.order_id) ?? new Set<string>()
+        s.add(row.status)
+        orderStatuses.set(row.order_id, s)
+      }
+
+      // 삭제 대상 추출:
+      //   - 활성 상태(상품준비중/배송지시) 없음
+      //   - 배송완료 포함
+      //   - Storage 파일 존재(invoiceOrderIds) — 불필요한 remove 호출 방지
+      // 업로드 직후 반영된 Set 기준으로 판단
+      const nowInvoiceSet = new Set(invoiceOrderIds)
+      for (const p of matched) nowInvoiceSet.add(p.orderId)
+
+      const deleteOrderIds: string[] = []
+      for (const [orderId, statuses] of orderStatuses) {
+        const hasActive = [...statuses].some((st) => ACTIVE_STATUSES.has(st))
+        const hasTerminal = statuses.has(TERMINAL_STATUS)
+        if (!hasActive && hasTerminal && nowInvoiceSet.has(orderId)) {
+          deleteOrderIds.push(orderId)
+        }
+      }
+
+      let cleanupResult: { deleted: number; errors: string[] } = { deleted: 0, errors: [] }
+      if (deleteOrderIds.length > 0) {
+        cleanupResult = await deleteInvoicesByOrderIds(userId, deleteOrderIds)
+        if (cleanupResult.deleted > 0) {
+          // 로컬 Set 에서도 제거 (📝 표시 갱신)
+          setInvoiceOrderIds((prev) => {
+            const next = new Set(prev)
+            for (const id of deleteOrderIds) next.delete(id)
+            return next
+          })
+        }
+      }
+      updateStep(3, 'done', `${cleanupResult.deleted}건 정리`)
+
       setProgressStatus(
-        `완료 — 성공 ${result.success}, 매칭 실패 ${unmatched.length}` +
+        `완료 — 업로드 ${result.success}, 매칭 실패 ${unmatched.length}, 정리 ${cleanupResult.deleted}` +
         (result.failed > 0 ? `, 업로드 실패 ${result.failed}` : ''),
       )
       setTimeout(() => closeProgress(), 1500)
@@ -687,7 +817,7 @@ export function usePersonalOrder() {
     } finally {
       setInvoiceLinking(false)
     }
-  }, [items, getUserInfo, updateStep, closeProgress])
+  }, [items, invoiceOrderIds, getUserInfo, updateStep, closeProgress])
 
   // ── [송장 인쇄] 핸들러 (체크된 주문 일괄 인쇄) ───────────────────
   const [invoicePrinting, setInvoicePrinting] = useState(false)
@@ -811,6 +941,10 @@ export function usePersonalOrder() {
     selectedIds,
     acknowledging,
     showUnorderedOnly,
+    showReleaseStopOnly,
+    showNoInvoiceOnly,
+    selectedStatuses,
+    invoiceOrderIds,
     selectedDrawerItem,
     setSelectedDrawerItem,
 
@@ -844,6 +978,9 @@ export function usePersonalOrder() {
     handleSelectAll,
     handleSelectRow,
     toggleUnorderedOnly,
+    toggleReleaseStopOnly,
+    toggleNoInvoiceOnly,
+    toggleStatusFilter,
 
     // fulfillment 헬퍼
     getAgg,

@@ -28,6 +28,10 @@ const PersonalOrder: React.FC = () => {
     selectedIds,
     acknowledging,
     showUnorderedOnly,
+    showReleaseStopOnly,
+    showNoInvoiceOnly,
+    selectedStatuses,
+    invoiceOrderIds,
     selectedDrawerItem,
     setSelectedDrawerItem,
     filteredCount,
@@ -56,6 +60,9 @@ const PersonalOrder: React.FC = () => {
     handleSelectAll,
     handleSelectRow,
     toggleUnorderedOnly,
+    toggleReleaseStopOnly,
+    toggleNoInvoiceOnly,
+    toggleStatusFilter,
     getAgg,
     getRowStatus,
   } = usePersonalOrder()
@@ -168,6 +175,31 @@ const PersonalOrder: React.FC = () => {
           >
             미주문
           </button>
+          <button
+            className={`po-tab-btn${showReleaseStopOnly ? ' active' : ''}`}
+            onClick={toggleReleaseStopOnly}
+          >
+            ⚠️출고중지
+          </button>
+          <button
+            className={`po-tab-btn${showNoInvoiceOnly ? ' active' : ''}`}
+            onClick={toggleNoInvoiceOnly}
+          >
+            📝송장필요
+          </button>
+
+          {/* ── 상태 점 필터 (green/red/gray) ─────────────────── */}
+          {(['green', 'red', 'gray'] as const).map((st) => (
+            <button
+              key={st}
+              className={`po-status-filter-btn${selectedStatuses.has(st) ? ' active' : ''}`}
+              onClick={() => toggleStatusFilter(st)}
+              title={STATUS_DOT_LABELS[st]}
+              aria-label={STATUS_DOT_LABELS[st]}
+            >
+              <span className={`po-status-dot ${st}`} />
+            </button>
+          ))}
         </div>
         {activeTab === '결제완료' && (
           <button
@@ -275,14 +307,40 @@ const PersonalOrder: React.FC = () => {
 
                         // ── 상품정보 (클릭 → 드로어) ──
                         if (col.key === 'product_info') {
+                          const needInvoice =
+                            !!row.order_id && !invoiceOrderIds.has(row.order_id)
+                          const baseTitle = getCellValue(row, col.key)
+                          const titleParts: string[] = []
+                          if (row.release_stop) titleParts.push('[출고중지요청]')
+                          if (needInvoice) titleParts.push('[송장 미연결]')
+                          titleParts.push(baseTitle)
+
                           return (
                             <td
                               key={col.key}
                               className="col-product po-clickable"
-                              title={getCellValue(row, col.key)}
+                              title={titleParts.join(' ')}
                               onClick={() => handleRowClick(row)}
                             >
-                              {getCellValue(row, col.key)}
+                              {row.release_stop && (
+                                <span
+                                  style={{ marginRight: 4 }}
+                                  title="출고중지요청"
+                                  aria-label="출고중지요청"
+                                >
+                                  ⚠️
+                                </span>
+                              )}
+                              {baseTitle}
+                              {needInvoice && (
+                                <span
+                                  style={{ marginLeft: 4 }}
+                                  title="송장 미연결"
+                                  aria-label="송장 미연결"
+                                >
+                                  📝
+                                </span>
+                              )}
                             </td>
                           )
                         }

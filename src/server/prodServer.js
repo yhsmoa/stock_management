@@ -169,6 +169,30 @@ app.get('/api/coupang/ordersheets', async (req, res) => {
   }
 })
 
+// ── GET /api/coupang/return-requests — 반품/취소 요청 목록 ──────
+// 출고중지요청(RU) / 반품접수(UC) 조회. 일단위 페이징 (nextToken).
+app.get('/api/coupang/return-requests', async (req, res) => {
+  try {
+    const keys = extractCoupangKeys(req)
+    if (!keys) return res.status(401).json({ success: false, error: '쿠팡 API 키가 요청에 포함되지 않았습니다.' })
+
+    const { createdAtFrom, createdAtTo, status, maxPerPage, nextToken } = req.query
+    if (!createdAtFrom || !createdAtTo || !status) {
+      return res.status(400).json({ success: false, error: 'createdAtFrom, createdAtTo, status 파라미터 필수' })
+    }
+
+    const apiPath = `/v2/providers/openapi/apis/api/v6/vendors/${keys.vendorCode}/returnRequests`
+    const params = { createdAtFrom, createdAtTo, status, maxPerPage: maxPerPage || '50' }
+    if (nextToken) params.nextToken = nextToken
+
+    const result = await callCoupangAPI('GET', apiPath, params, keys.accessKey, keys.secretKey, null, keys.vendorCode)
+    res.json({ success: true, data: result })
+  } catch (error) {
+    console.error('[prod-server] return-requests 오류:', error.message)
+    res.status(500).json({ success: false, error: error.message })
+  }
+})
+
 // ── PUT /api/coupang/ordersheets-acknowledge — 주문확인 ──────────
 app.put('/api/coupang/ordersheets-acknowledge', async (req, res) => {
   try {

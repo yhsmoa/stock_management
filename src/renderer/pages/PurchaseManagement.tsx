@@ -508,6 +508,18 @@ const PurchaseManagement: React.FC = () => {
             반출
           </button>
 
+          {/* ── 구분자 ─────────────────────────────────────── */}
+          <span className="purchase-separator">|</span>
+
+          {/* ── 바코드 없는 행 필터 ───────────────────────── */}
+          <button
+            className={`purchase-filter-btn${activeFilter === 'no_barcode' ? ' active' : ''}`}
+            onClick={() => handleFilterToggle('no_barcode')}
+            title="바코드가 비어있는 행"
+          >
+            NO 바코드
+          </button>
+
           {activeFilter && (
             <span className="purchase-filter-count">
               {filteredCount.toLocaleString()}건

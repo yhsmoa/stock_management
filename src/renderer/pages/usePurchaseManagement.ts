@@ -154,8 +154,8 @@ export function usePurchaseManagement() {
   /* ── 창고 재고 (barcode → si_stocks.qty 합산) ──────────── */
   const [warehouseQtyMap, setWarehouseQtyMap] = useState<Map<string, number>>(new Map())
 
-  /* ── 필터 (판매량 / 반출비 / 주문(input) / 입고 / 반출 토글) ─ */
-  type FilterKey = 'sales' | 'storage' | 'input' | 'in_qty' | 'out_qty'
+  /* ── 필터 (판매량 / 반출비 / 주문(input) / 입고 / 반출 / NO 바코드) ─ */
+  type FilterKey = 'sales' | 'storage' | 'input' | 'in_qty' | 'out_qty' | 'no_barcode'
   const [activeFilter, setActiveFilter] = useState<FilterKey | null>(null)
 
   /* ── 주문 델타 (주문 - 취소 - 출고, barcode 기준) ──────── */
@@ -177,6 +177,10 @@ export function usePurchaseManagement() {
         const v = item[col]
         return v != null && v > 0
       })
+    }
+    // A-1b) NO 바코드 필터: barcode 가 비어있는(null/'') 행만
+    else if (activeFilter === 'no_barcode') {
+      result = result.filter((item) => !item.barcode || item.barcode.trim() === '')
     }
     // A-2) 외부 itemData(재고건강) 기반 필터 (판매량/반출비)
     else if (activeFilter && itemDataMap.size > 0) {

@@ -248,6 +248,48 @@ export function coupangProxyPlugin(): Plugin {
         }
       })
 
+      // ── GET /api/coupang/return-requests — 반품/취소 요청 목록 ───
+      // 출고중지요청(RU) / 반품접수(UC) 조회. 일단위 페이징 (nextToken).
+      server.middlewares.use('/api/coupang/return-requests', async (req: any, res: any) => {
+        try {
+          const keys = extractCoupangKeys(req)
+          if (!keys) {
+            sendJson(res, 401, { success: false, error: '쿠팡 API 키가 요청에 포함되지 않았습니다.' })
+            return
+          }
+
+          const url = new URL(req.url || '/', `http://${req.headers.host}`)
+          const createdAtFrom = url.searchParams.get('createdAtFrom')
+          const createdAtTo = url.searchParams.get('createdAtTo')
+          const status = url.searchParams.get('status')
+          const maxPerPage = url.searchParams.get('maxPerPage') || '50'
+          const nextToken = url.searchParams.get('nextToken')
+
+          if (!createdAtFrom || !createdAtTo || !status) {
+            sendJson(res, 400, { success: false, error: 'createdAtFrom, createdAtTo, status 파라미터 필수' })
+            return
+          }
+
+          const apiPath = `/v2/providers/openapi/apis/api/v6/vendors/${keys.vendorCode}/returnRequests`
+          const params: Record<string, string> = {
+            createdAtFrom,
+            createdAtTo,
+            status,
+            maxPerPage,
+          }
+          if (nextToken) {
+            params.nextToken = nextToken
+          }
+
+          const result = await callCoupangAPI('GET', apiPath, params, keys.accessKey, keys.secretKey, undefined, keys.vendorCode)
+
+          sendJson(res, 200, { success: true, data: result })
+        } catch (error: any) {
+          console.error('[coupang-proxy] return-requests 오류:', error.message)
+          sendJson(res, 500, { success: false, error: error.message })
+        }
+      })
+
       // ── PUT /api/coupang/ordersheets-acknowledge — 주문확인 ────
       // 결제완료 → 상품준비중 상태 변경 (shipmentBoxIds 배열)
       server.middlewares.use('/api/coupang/ordersheets-acknowledge', async (req: any, res: any) => {

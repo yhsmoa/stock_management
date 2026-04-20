@@ -97,6 +97,7 @@ export interface PersonalOrderRow {
   external_vendor_sku_code: string
   barcode: string
   note: string
+  release_stop: boolean  // 출고중지요청(RU) 또는 반품접수(UC) 대상 여부
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -264,20 +265,150 @@ export async function fetchAllOrdersheets(
 }
 
 // ══════════════════════════════════════════════════════════════════
+// 반품/취소 요청 조회 (출고중지요청 RU + 반품접수 UC)
+//   - API: /v2/providers/openapi/apis/api/v6/vendors/{vendorId}/returnRequests
+//   - 최대 31일 / 페이지당 50건 / nextToken 페이징
+//   - 60일 2분할 × 2 상태 = 4 태스크, 동시성 FETCH_CONCURRENCY 준수
+// ══════════════════════════════════════════════════════════════════
+
+const RETURN_STATUSES = ['RU', 'UC'] as const // RU=출고중지요청, UC=반품접수
+
+/** 단일 페이지 호출 (재시도 포함) — 빈 응답/500 에러 대응 */
+async function fetchReturnRequestsPage(
+  params: URLSearchParams,
+  headers: Record<string, string>,
+): Promise<any> {
+  let lastErr: Error | null = null
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      const res = await fetch(`/api/coupang/return-requests?${params.toString()}`, { headers })
+      const text = await res.text()
+      if (!text) {
+        throw new Error(`프록시 응답 비어있음 (status=${res.status})`)
+      }
+      const json = JSON.parse(text)
+      if (!json.success) {
+        throw new Error(json.error || `반품요청 조회 실패 (status=${res.status})`)
+      }
+      return json.data
+    } catch (err: any) {
+      lastErr = err
+      if (attempt < MAX_RETRIES) {
+        const delay = RETRY_BASE_DELAY_MS * Math.pow(2, attempt)
+        console.warn(
+          `[return-requests 재시도] ${attempt + 1}/${MAX_RETRIES} — ${err.message} (${delay}ms 대기)`,
+        )
+        await new Promise((r) => setTimeout(r, delay))
+      }
+    }
+  }
+  throw lastErr ?? new Error('반품요청 조회 실패 (알 수 없는 오류)')
+}
+
+/** 특정 상태 + 기간에 대한 반품/취소 요청 조회 (nextToken 페이징) */
+async function fetchReturnRequestsByStatus(
+  status: string,
+  fromDate: string,
+  toDate: string,
+): Promise<any[]> {
+  const headers = getCoupangHeaders()
+  let allData: any[] = []
+  let nextToken: string | null = null
+
+  do {
+    const params = new URLSearchParams({
+      createdAtFrom: toCoupangDate(fromDate),
+      createdAtTo: toCoupangDate(toDate),
+      status,
+      maxPerPage: String(ORDERSHEET_MAX_PER_PAGE),
+    })
+    if (nextToken) params.set('nextToken', nextToken)
+
+    const apiData = await fetchReturnRequestsPage(params, headers)
+
+    if (apiData?.data && Array.isArray(apiData.data)) {
+      allData = allData.concat(apiData.data)
+    }
+
+    nextToken = apiData?.nextToken || null
+  } while (nextToken)
+
+  return allData
+}
+
+/**
+ * 전체 반품/취소 요청 조회 — 출고중지 대상 shipment_box_id Set 반환
+ * - 60일 기간을 2분할 (31일 제한 대응)
+ * - RU(출고중지요청) + UC(반품접수) 양쪽 조회
+ */
+export async function fetchAllReturnRequests(
+  onProgress?: (msg: string) => void,
+): Promise<Set<string>> {
+  type Task = { status: string; fromDate: string; toDate: string; label: string }
+
+  const STATUS_LABEL: Record<string, string> = {
+    RU: '출고중지요청',
+    UC: '반품접수',
+  }
+
+  // 60일 2분할 × 2 상태 = 4 태스크
+  const tasks: Task[] = RETURN_STATUSES.flatMap((status) => [
+    { status, fromDate: daysAgo(60), toDate: daysAgo(30), label: `${STATUS_LABEL[status]} (1/2)` },
+    { status, fromDate: daysAgo(30), toDate: today(),    label: `${STATUS_LABEL[status]} (2/2)` },
+  ])
+
+  let completed = 0
+  const total = tasks.length
+
+  const fns = tasks.map((t) => async (): Promise<any[]> => {
+    const rows = await fetchReturnRequestsByStatus(t.status, t.fromDate, t.toDate)
+    completed++
+    onProgress?.(`반품요청 조회 중... ${completed}/${total} (${t.label})`)
+    return rows
+  })
+
+  const batched = await runWithConcurrency(fns, FETCH_CONCURRENCY)
+  const merged = batched.flat()
+
+  // ── shipment_box_id 추출 (returnItems 배열 순회) ───────────
+  const stopSet = new Set<string>()
+  for (const item of merged) {
+    const returnItems: any[] = item?.returnItems ?? []
+    for (const ri of returnItems) {
+      const sbid = ri?.shipmentBoxId
+      if (sbid !== undefined && sbid !== null) {
+        stopSet.add(String(sbid))
+      }
+    }
+  }
+  return stopSet
+}
+
+// ══════════════════════════════════════════════════════════════════
 // API 응답 → DB 행 변환
 // ══════════════════════════════════════════════════════════════════
 
-/** API 응답 data[] → PersonalOrderRow[] (orderItems 플랫화) */
-export function mapOrderToRows(apiData: any[], vendorId: string, userId: string): PersonalOrderRow[] {
+/**
+ * API 응답 data[] → PersonalOrderRow[] (orderItems 플랫화)
+ * @param releaseStopSet - 출고중지/반품접수 shipment_box_id 집합 (선택). true면 release_stop = true 로 설정.
+ */
+export function mapOrderToRows(
+  apiData: any[],
+  vendorId: string,
+  userId: string,
+  releaseStopSet?: Set<string>,
+): PersonalOrderRow[] {
   const rows: PersonalOrderRow[] = []
 
   for (const order of apiData) {
     const orderItems = order.orderItems || []
+    const shipmentBoxId = String(order.shipmentBoxId ?? '')
+    const releaseStop = releaseStopSet?.has(shipmentBoxId) ?? false
     for (const item of orderItems) {
       rows.push({
         user_id: userId,
         vendor_id: vendorId,
-        shipment_box_id: String(order.shipmentBoxId ?? ''),
+        shipment_box_id: shipmentBoxId,
         order_id: String(order.orderId ?? ''),
         status: order.status ?? '',
         seller_product_id: String(item.sellerProductId ?? ''),
@@ -311,6 +442,7 @@ export function mapOrderToRows(apiData: any[], vendorId: string, userId: string)
         external_vendor_sku_code: item.externalVendorSkuCode ?? '',
         barcode: '',
         note: '',
+        release_stop: releaseStop,
       })
     }
   }

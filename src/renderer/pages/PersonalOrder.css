@@ -336,6 +336,30 @@
 .po-status-dot.orange { background-color: #FB923C; }
 .po-status-dot.gray   { background-color: #D1D5DB; }
 
+/* ── 상태 점 필터 버튼 ─────────────────────────────────────────── */
+.po-status-filter-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid #D1D5DB;
+  border-radius: 9999px;
+  background: #FFFFFF;
+  cursor: pointer;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.po-status-filter-btn:hover {
+  border-color: #9CA3AF;
+}
+
+.po-status-filter-btn.active {
+  border-color: #4A8CF7;
+  box-shadow: 0 0 0 2px rgba(74, 140, 247, 0.25);
+}
+
 /* ── 클릭 가능 셀 ──────────────────────────────────────────────── */
 .po-clickable {
   cursor: pointer;

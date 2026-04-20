@@ -140,7 +140,77 @@ export async function splitAndUploadPages(
 }
 
 // ══════════════════════════════════════════════════════════════════
-// 송장 존재 여부 확인
+// 송장 파일 목록 일괄 조회 — Set<orderId> 반환
+// - 사용자의 Storage 폴더({userId}/)에 저장된 *.pdf 파일명에서 order_id 추출
+// - Supabase Storage list() 최대 1000건/회 → offset 페이지네이션 루프
+// ══════════════════════════════════════════════════════════════════
+
+export async function fetchInvoiceOrderIds(userId: string): Promise<Set<string>> {
+  const result = new Set<string>()
+  if (!userId) return result
+
+  const limit = 1000
+  let offset = 0
+
+  while (true) {
+    const { data, error } = await supabase.storage
+      .from(STORAGE_BUCKET)
+      .list(userId, { limit, offset })
+
+    if (error) {
+      console.error('[fetchInvoiceOrderIds] 조회 오류:', error)
+      break
+    }
+    if (!data || data.length === 0) break
+
+    for (const file of data) {
+      const m = file.name.match(/^(.+)\.pdf$/i)
+      if (m) result.add(m[1])
+    }
+
+    if (data.length < limit) break
+    offset += limit
+  }
+
+  console.log(`[fetchInvoiceOrderIds] ${result.size}건의 송장 파일 확인`)
+  return result
+}
+
+// ══════════════════════════════════════════════════════════════════
+// 송장 일괄 삭제 — order_id 배열 기반
+// - Supabase Storage remove() 은 paths 배열 한 번에 최대 1000건 권장
+// - 존재하지 않는 파일은 Supabase 가 무시 (error 아님)
+// ══════════════════════════════════════════════════════════════════
+
+const REMOVE_BATCH_SIZE = 1000
+
+export async function deleteInvoicesByOrderIds(
+  userId: string,
+  orderIds: string[],
+): Promise<{ deleted: number; errors: string[] }> {
+  if (!userId || orderIds.length === 0) return { deleted: 0, errors: [] }
+
+  const paths = orderIds.map((id) => `${userId}/${id}.pdf`)
+  let deleted = 0
+  const errors: string[] = []
+
+  for (let i = 0; i < paths.length; i += REMOVE_BATCH_SIZE) {
+    const batch = paths.slice(i, i + REMOVE_BATCH_SIZE)
+    const { data, error } = await supabase.storage.from(STORAGE_BUCKET).remove(batch)
+    if (error) {
+      console.error(`[deleteInvoicesByOrderIds] 삭제 오류 (batch ${i / REMOVE_BATCH_SIZE + 1}):`, error)
+      errors.push(error.message)
+      continue
+    }
+    deleted += data?.length ?? 0
+  }
+
+  console.log(`[deleteInvoicesByOrderIds] ${deleted}/${orderIds.length}건 삭제 완료`)
+  return { deleted, errors }
+}
+
+// ══════════════════════════════════════════════════════════════════
+// 송장 존재 여부 확인 (단일)
 // ══════════════════════════════════════════════════════════════════
 
 export async function checkInvoiceExists(
