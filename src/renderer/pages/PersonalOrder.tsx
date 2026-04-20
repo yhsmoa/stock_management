@@ -188,8 +188,8 @@ const PersonalOrder: React.FC = () => {
             📝송장필요
           </button>
 
-          {/* ── 상태 점 필터 (green/red/gray) ─────────────────── */}
-          {(['green', 'red', 'gray'] as const).map((st) => (
+          {/* ── 상태 점 필터 (green/red/gray/multi) ──────────── */}
+          {(['green', 'red', 'gray', 'multi'] as const).map((st) => (
             <button
               key={st}
               className={`po-status-filter-btn${selectedStatuses.has(st) ? ' active' : ''}`}
@@ -262,7 +262,7 @@ const PersonalOrder: React.FC = () => {
                 </tr>
               ) : (
                 pagedItems.map((row, idx) => {
-                  const agg = getAgg(row.order_id)
+                  const agg = getAgg(row)
                   const status = getRowStatus(row)
 
                   return (
@@ -396,7 +396,7 @@ const PersonalOrder: React.FC = () => {
 
       {/* ── Fulfillment 히스토리 드로어 ────────────────────── */}
       <FulfillmentDrawer
-        itemId={selectedDrawerItem?.id ?? null}
+        itemIds={selectedDrawerItem?.ids ?? []}
         itemName={selectedDrawerItem?.itemName ?? null}
         optionName={selectedDrawerItem?.optionName ?? null}
         orderNo={selectedDrawerItem?.orderNo ?? null}

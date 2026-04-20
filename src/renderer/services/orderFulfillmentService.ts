@@ -29,12 +29,19 @@ export const EMPTY_AGG: FulfillmentAgg = { arrival: 0, packed: 0, cancel: 0, shi
 export interface OrderItemDetail {
   id: string
   personal_order_no: string
+  vendor_option_id: string | null   // 쿠팡 option_id 매칭 키
   item_name: string | null
   option_name: string | null
   product_no: string | null
   item_no: string | null
   order_no: string | null
   '1688_order_id': string | null
+  created_at: string                // 재주문 판별용
+}
+
+/** 복합 키: `${order_id}|${option_id ?? ''}` */
+export function makeFulfillmentKey(orderId: string, optionId: string | null | undefined): string {
+  return `${orderId}|${optionId ?? ''}`
 }
 
 /** FulfillmentDrawer 이력 행 */
@@ -77,45 +84,62 @@ async function batchIn<T>(
 /**
  * 주문번호(order_id) 목록으로 fulfillment 집계 + orderItem 매핑 조회
  *
+ * 매칭 키: (personal_order_no, vendor_option_id) 복합 키
+ * - 같은 쿠팡 주문번호 내 여러 option 주문을 구분
+ * - 재주문(cancel 후 재발주)로 여러 ft_order_items 존재 시 개별 카운트
+ *
  * @param orderIds     - coupang_personal_orders.order_id 배열
  * @param orderUserId  - purchase_agent ft_users.id (si_users.order_user_id)
- * @returns aggMap (order_id → FulfillmentAgg), orderItemMap (order_id → OrderItemDetail)
+ * @returns
+ *   - aggMap        : 복합 키 → FulfillmentAgg (여러 ft_order_items 합산)
+ *   - itemCountMap  : 복합 키 → 매칭된 ft_order_items 건수 (2+ 이면 'multi')
+ *   - orderItemsMap : 복합 키 → OrderItemDetail[] (드로어에 전체 전달)
  */
 export async function fetchFulfillmentData(
   orderIds: string[],
   orderUserId: string,
 ): Promise<{
   aggMap: Map<string, FulfillmentAgg>
-  orderItemMap: Map<string, OrderItemDetail>
+  itemCountMap: Map<string, number>
+  orderItemsMap: Map<string, OrderItemDetail[]>
 }> {
   const aggMap = new Map<string, FulfillmentAgg>()
-  const orderItemMap = new Map<string, OrderItemDetail>()
+  const itemCountMap = new Map<string, number>()
+  const orderItemsMap = new Map<string, OrderItemDetail[]>()
 
   if (orderIds.length === 0 || !orderUserId) {
-    return { aggMap, orderItemMap }
+    return { aggMap, itemCountMap, orderItemsMap }
   }
 
   // ── 1) ft_order_items 조회 (personal_order_no = our order_id) ──
   const orderItems = await batchIn<OrderItemDetail>(
     'ft_order_items',
-    'id, personal_order_no, item_name, option_name, product_no, item_no, order_no, 1688_order_id',
+    'id, personal_order_no, vendor_option_id, item_name, option_name, product_no, item_no, order_no, 1688_order_id, created_at',
     'personal_order_no',
     orderIds,
   )
 
-  // order_id → OrderItemDetail 매핑
+  // 복합 키(order_id + option_id) 기반 매핑
+  const itemToKey = new Map<string, string>() // ft_order_items.id → key
   for (const oi of orderItems) {
-    orderItemMap.set(oi.personal_order_no, oi)
+    const key = makeFulfillmentKey(oi.personal_order_no, oi.vendor_option_id)
+    itemToKey.set(oi.id, key)
+
+    // 동일 키에 복수 ft_order_items 누적
+    const arr = orderItemsMap.get(key) ?? []
+    arr.push(oi)
+    orderItemsMap.set(key, arr)
+
+    itemCountMap.set(key, (itemCountMap.get(key) ?? 0) + 1)
   }
 
-  // order_item_id → order_id 역방향 매핑
-  const itemToOrderId = new Map<string, string>()
-  for (const oi of orderItems) {
-    itemToOrderId.set(oi.id, oi.personal_order_no)
+  // 각 키의 OrderItemDetail 배열을 created_at 오름차순 정렬
+  for (const arr of orderItemsMap.values()) {
+    arr.sort((a, b) => (a.created_at ?? '').localeCompare(b.created_at ?? ''))
   }
 
   const itemIds = orderItems.map((oi) => oi.id)
-  if (itemIds.length === 0) return { aggMap, orderItemMap }
+  if (itemIds.length === 0) return { aggMap, itemCountMap, orderItemsMap }
 
   // ── 2) inbound + outbound 병렬 조회 ────────────────────────────
   const [inbounds, outbounds] = await Promise.all([
@@ -137,18 +161,18 @@ export async function fetchFulfillmentData(
     ),
   ])
 
-  // ── 3) 집계: order_id → FulfillmentAgg ──────────────────────────
+  // ── 3) 집계: 복합 키 → FulfillmentAgg ──────────────────────────
   const allFulfillments = [
     ...inbounds.map((f) => ({ ...f, shipment_no: null as string | null })),
     ...outbounds,
   ]
 
   for (const f of allFulfillments) {
-    const orderId = itemToOrderId.get(f.order_item_id)
-    if (!orderId) continue
+    const key = itemToKey.get(f.order_item_id)
+    if (!key) continue
 
-    if (!aggMap.has(orderId)) aggMap.set(orderId, { ...EMPTY_AGG })
-    const entry = aggMap.get(orderId)!
+    if (!aggMap.has(key)) aggMap.set(key, { ...EMPTY_AGG })
+    const entry = aggMap.get(key)!
     const qty = f.quantity ?? 0
 
     if (f.type === 'ARRIVAL') entry.arrival += qty
@@ -157,7 +181,7 @@ export async function fetchFulfillmentData(
     if (f.shipment_no) entry.shipped += qty
   }
 
-  return { aggMap, orderItemMap }
+  return { aggMap, itemCountMap, orderItemsMap }
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -165,48 +189,96 @@ export async function fetchFulfillmentData(
 // ══════════════════════════════════════════════════════════════════
 
 /**
- * 단일 order_item의 fulfillment 이력 조회 (드로어 표시용)
+ * 여러 order_item의 fulfillment 이력 조회 (드로어 표시용)
+ * - itemIds 전체의 inbound/outbound/cancel 이벤트를 시간순으로 평탄화
  *
- * @param itemId       - ft_order_items.id
+ * @param itemIds      - ft_order_items.id 배열 (재주문 등 여러 건 가능)
  * @param orderUserId  - ft_users.id
  * @returns FulfillmentRow[] (created_at 오름차순)
  */
 export async function fetchFulfillmentHistory(
-  itemId: string,
+  itemIds: string[],
   orderUserId: string,
 ): Promise<FulfillmentRow[]> {
-  // ── inbound + outbound + cancel_details 병렬 조회 ──────────────
-  const [inboundRes, outboundRes, cancelRes] = await Promise.all([
-    (orderSupabase.from('ft_fulfillment_inbounds') as any)
-      .select('id, created_at, type, quantity, note')
-      .eq('order_item_id', itemId)
-      .eq('user_id', orderUserId)
-      .order('created_at', { ascending: true }),
-    (orderSupabase.from('ft_fulfillment_outbounds') as any)
-      .select('id, created_at, type, quantity, note, shipment_no')
-      .eq('order_item_id', itemId)
-      .eq('user_id', orderUserId)
-      .order('created_at', { ascending: true }),
-    (orderSupabase.from('ft_cancel_details') as any)
-      .select('cancel_reason')
-      .eq('order_items_id', itemId),
+  if (itemIds.length === 0 || !orderUserId) return []
+
+  // ── inbound + outbound + cancel_details 병렬 조회 (itemIds 전체) ─
+  const [inbounds, outbounds, cancels] = await Promise.all([
+    batchIn<{
+      id: string
+      created_at: string
+      type: string | null
+      quantity: number | null
+      note: string | null
+      order_item_id: string
+    }>(
+      'ft_fulfillment_inbounds',
+      'id, created_at, type, quantity, note, order_item_id',
+      'order_item_id',
+      itemIds,
+    ),
+    batchIn<{
+      id: string
+      created_at: string
+      type: string | null
+      quantity: number | null
+      note: string | null
+      shipment_no: string | null
+      order_item_id: string
+    }>(
+      'ft_fulfillment_outbounds',
+      'id, created_at, type, quantity, note, shipment_no, order_item_id',
+      'order_item_id',
+      itemIds,
+    ),
+    batchIn<{
+      order_items_id: string
+      cancel_reason: string | null
+    }>(
+      'ft_cancel_details',
+      'order_items_id, cancel_reason',
+      'order_items_id',
+      itemIds,
+    ),
   ])
 
-  // ── 취소사유 매핑 ──────────────────────────────────────────────
-  const cancelReasons: string[] = (cancelRes.data ?? [])
-    .map((c: { cancel_reason: string | null }) => c.cancel_reason)
-    .filter((r: string | null): r is string => !!r)
+  // ── 취소사유: order_item_id 별 FIFO 큐 ────────────────────────
+  const cancelReasonQueue = new Map<string, string[]>()
+  for (const c of cancels) {
+    if (!c.cancel_reason) continue
+    const arr = cancelReasonQueue.get(c.order_items_id) ?? []
+    arr.push(c.cancel_reason)
+    cancelReasonQueue.set(c.order_items_id, arr)
+  }
 
-  let cancelIdx = 0
-  const inbounds: FulfillmentRow[] = (inboundRes.data ?? []).map((r: any) => ({
-    ...r,
-    shipment_no: null,
-    cancel_reason: r.type === 'CANCEL' ? (cancelReasons[cancelIdx++] ?? null) : null,
+  const inboundRows: FulfillmentRow[] = inbounds.map((r) => {
+    let reason: string | null = null
+    if (r.type === 'CANCEL') {
+      const q = cancelReasonQueue.get(r.order_item_id)
+      reason = q?.shift() ?? null
+    }
+    return {
+      id: r.id,
+      created_at: r.created_at,
+      type: r.type,
+      quantity: r.quantity,
+      note: r.note,
+      shipment_no: null,
+      cancel_reason: reason,
+    }
+  })
+
+  const outboundRows: FulfillmentRow[] = outbounds.map((r) => ({
+    id: r.id,
+    created_at: r.created_at,
+    type: r.type,
+    quantity: r.quantity,
+    note: r.note,
+    shipment_no: r.shipment_no,
   }))
-  const outbounds: FulfillmentRow[] = outboundRes.data ?? []
 
-  // ── created_at 기준 오름차순 병합 ────────────────────────────────
-  return [...inbounds, ...outbounds].sort(
+  // ── created_at 기준 오름차순 병합 (여러 itemIds 평탄화) ─────────
+  return [...inboundRows, ...outboundRows].sort(
     (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime(),
   )
 }

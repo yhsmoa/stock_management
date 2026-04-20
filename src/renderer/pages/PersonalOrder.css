@@ -335,6 +335,7 @@
 .po-status-dot.red    { background-color: #EF4444; }
 .po-status-dot.orange { background-color: #FB923C; }
 .po-status-dot.gray   { background-color: #D1D5DB; }
+.po-status-dot.multi  { background-color: #A855F7; }
 
 /* ── 상태 점 필터 버튼 ─────────────────────────────────────────── */
 .po-status-filter-btn {

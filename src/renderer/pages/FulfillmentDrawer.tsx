@@ -14,7 +14,7 @@ import type { AuthUser } from '../types/auth'
 
 // ── Props ──────────────────────────────────────────────────────────
 interface Props {
-  itemId: string | null
+  itemIds: string[]          // ft_order_items.id 배열 (여러 재주문 이력 포함)
   itemName: string | null
   optionName: string | null
   orderNo: string | null
@@ -42,13 +42,13 @@ function formatDateTime(iso: string): string {
 
 // ── 컴포넌트 ──────────────────────────────────────────────────────
 const FulfillmentDrawer: React.FC<Props> = ({
-  itemId, itemName, optionName, orderNo, itemNo, productNo, onClose,
+  itemIds, itemName, optionName, orderNo, itemNo, productNo, onClose,
 }) => {
   const [rows, setRows] = useState<FulfillmentRow[]>([])
   const [isLoading, setIsLoading] = useState(false)
   const [hasInvoice, setHasInvoice] = useState(false)
 
-  const isOpen = itemId !== null
+  const isOpen = itemIds.length > 0
 
   // ── 사용자 정보 (order_user_id) ─────────────────────────────────
   const getOrderUserId = useCallback((): string => {
@@ -68,14 +68,14 @@ const FulfillmentDrawer: React.FC<Props> = ({
 
   // ── 이력 조회 + 송장 존재 확인 ────────────────────────────────
   const fetchData = useCallback(async () => {
-    if (!itemId) { setRows([]); setHasInvoice(false); return }
+    if (itemIds.length === 0) { setRows([]); setHasInvoice(false); return }
     const orderUserId = getOrderUserId()
     if (!orderUserId) { setRows([]); setHasInvoice(false); return }
 
     setIsLoading(true)
     setHasInvoice(false)
     try {
-      const data = await fetchFulfillmentHistory(itemId, orderUserId)
+      const data = await fetchFulfillmentHistory(itemIds, orderUserId)
       setRows(data)
 
       // 송장 PDF 존재 여부 확인
@@ -92,7 +92,7 @@ const FulfillmentDrawer: React.FC<Props> = ({
     } finally {
       setIsLoading(false)
     }
-  }, [itemId, orderNo, getOrderUserId, getUserId])
+  }, [itemIds, orderNo, getOrderUserId, getUserId])
 
   useEffect(() => { fetchData() }, [fetchData])
 

@@ -19,6 +19,7 @@ import {
 } from '../services/personalOrderService'
 import {
   fetchFulfillmentData,
+  makeFulfillmentKey,
   EMPTY_AGG,
   type FulfillmentAgg,
   type OrderItemDetail,
@@ -74,12 +75,13 @@ export const COLUMNS = [
 ] as const
 
 // ── 상태 점 설정 ──────────────────────────────────────────────────
-export type StatusType = 'green' | 'red' | 'gray' | 'none'
+export type StatusType = 'green' | 'red' | 'gray' | 'multi' | 'none'
 
 export const STATUS_DOT_LABELS: Record<StatusType, string> = {
   green: '포장완료',
   red: '전량취소',
   gray: '미발송',
+  multi: '이력 확인 필요',
   none: '미주문',
 }
 
@@ -119,7 +121,7 @@ export function getCellValue(row: PersonalOrderRow, key: string): string {
 
 // ── 드로어 선택 아이템 타입 ─────────────────────────────────────────
 export interface DrawerItemState {
-  id: string
+  ids: string[]                 // ft_order_items.id 배열 (재주문 등 복수)
   itemName: string | null
   optionName: string | null
   orderNo: string | null
@@ -152,9 +154,10 @@ export function usePersonalOrder() {
   // ── 송장 파일 매칭 Set (Storage 에서 일괄 로드) ───────────
   const [invoiceOrderIds, setInvoiceOrderIds] = useState<Set<string>>(new Set())
 
-  // ── fulfillment 상태 ──────────────────────────────────────────
+  // ── fulfillment 상태 (키: `${order_id}|${option_id}`) ─────────
   const [aggMap, setAggMap] = useState<Map<string, FulfillmentAgg>>(new Map())
-  const [orderItemMap, setOrderItemMap] = useState<Map<string, OrderItemDetail>>(new Map())
+  const [itemCountMap, setItemCountMap] = useState<Map<string, number>>(new Map())
+  const [orderItemsMap, setOrderItemsMap] = useState<Map<string, OrderItemDetail[]>>(new Map())
 
   // ── 드로어 선택 상태 ──────────────────────────────────────────
   const [selectedDrawerItem, setSelectedDrawerItem] = useState<DrawerItemState | null>(null)
@@ -202,28 +205,38 @@ export function usePersonalOrder() {
     }
   }, [])
 
-  // ── fulfillment 집계 헬퍼 ────────────────────────────────────
-  const getAgg = useCallback((orderId: string | null): FulfillmentAgg => {
-    if (!orderId) return EMPTY_AGG
-    return aggMap.get(orderId) ?? EMPTY_AGG
+  // ── fulfillment 집계 헬퍼 (복합 키: order_id|option_id) ──────
+  const getAgg = useCallback((row: PersonalOrderRow): FulfillmentAgg => {
+    if (!row.order_id) return EMPTY_AGG
+    const key = makeFulfillmentKey(row.order_id, row.vendor_item_id)
+    return aggMap.get(key) ?? EMPTY_AGG
   }, [aggMap])
 
   // ── 상태 점 판별 ──────────────────────────────────────────────
+  //   판정 규칙 (복합 키 기준):
+  //     count >= 2  → multi (이력 확인 필요)
+  //     count == 0  → none  (미주문)
+  //     count == 1  → 기존 red / green / gray 분기
   const getRowStatus = useCallback((row: PersonalOrderRow): StatusType => {
-    const agg = getAgg(row.order_id)
+    if (!row.order_id) return 'none'
+    const key = makeFulfillmentKey(row.order_id, row.vendor_item_id)
+    const count = itemCountMap.get(key) ?? 0
+    if (count >= 2) return 'multi'
+    if (count === 0) return 'none'
+    const agg = aggMap.get(key) ?? EMPTY_AGG
     const qty = row.shipping_count ?? 0
     if (qty > 0 && agg.cancel >= qty) return 'red'
     if (agg.packed > 0) return 'green'
-    if (row.order_id && orderItemMap.has(row.order_id)) return 'gray'
-    return 'none'
-  }, [getAgg, orderItemMap])
+    return 'gray'
+  }, [aggMap, itemCountMap])
 
   // ── fulfillment 데이터 로드 ─────────────────────────────────────
   const loadFulfillmentData = useCallback(async (orderRows: PersonalOrderRow[]) => {
     const { orderUserId } = getUserInfo()
     if (!orderUserId || orderRows.length === 0) {
       setAggMap(new Map())
-      setOrderItemMap(new Map())
+      setItemCountMap(new Map())
+      setOrderItemsMap(new Map())
       return
     }
 
@@ -231,7 +244,8 @@ export function usePersonalOrder() {
       const orderIds = Array.from(new Set(orderRows.map((r) => r.order_id).filter(Boolean)))
       const result = await fetchFulfillmentData(orderIds, orderUserId)
       setAggMap(result.aggMap)
-      setOrderItemMap(result.orderItemMap)
+      setItemCountMap(result.itemCountMap)
+      setOrderItemsMap(result.orderItemsMap)
     } catch (err) {
       console.error('[PersonalOrder] fulfillment 조회 실패:', err)
     }
@@ -459,16 +473,23 @@ export function usePersonalOrder() {
       })
     }
 
-    // 미주문 필터 (getRowStatus 참조 불가 → 인라인 판별)
+    // ── 상태 점 판정 인라인 (복합 키 기준, getRowStatus 와 동일 로직) ──
+    const computeStatus = (row: PersonalOrderRow): StatusType => {
+      if (!row.order_id) return 'none'
+      const key = makeFulfillmentKey(row.order_id, row.vendor_item_id)
+      const count = itemCountMap.get(key) ?? 0
+      if (count >= 2) return 'multi'
+      if (count === 0) return 'none'
+      const agg = aggMap.get(key) ?? EMPTY_AGG
+      const qty = row.shipping_count ?? 0
+      if (qty > 0 && agg.cancel >= qty) return 'red'
+      if (agg.packed > 0) return 'green'
+      return 'gray'
+    }
+
+    // 미주문 필터
     if (showUnorderedOnly) {
-      result = result.filter((row) => {
-        const agg = row.order_id ? (aggMap.get(row.order_id) ?? EMPTY_AGG) : EMPTY_AGG
-        const qty = row.shipping_count ?? 0
-        const isRed = qty > 0 && agg.cancel >= qty
-        const isGreen = agg.packed > 0
-        const isGray = !!(row.order_id && orderItemMap.has(row.order_id))
-        return !isRed && !isGreen && !isGray // none = 미주문
-      })
+      result = result.filter((row) => computeStatus(row) === 'none')
     }
 
     // 출고중지 필터
@@ -485,16 +506,7 @@ export function usePersonalOrder() {
 
     // 상태 점 필터 (멀티 선택 OR)
     if (selectedStatuses.size > 0) {
-      result = result.filter((row) => {
-        const agg = row.order_id ? (aggMap.get(row.order_id) ?? EMPTY_AGG) : EMPTY_AGG
-        const qty = row.shipping_count ?? 0
-        let st: StatusType
-        if (qty > 0 && agg.cancel >= qty) st = 'red'
-        else if (agg.packed > 0) st = 'green'
-        else if (row.order_id && orderItemMap.has(row.order_id)) st = 'gray'
-        else st = 'none'
-        return selectedStatuses.has(st)
-      })
+      result = result.filter((row) => selectedStatuses.has(computeStatus(row)))
     }
 
     return result.sort((a, b) => {
@@ -502,7 +514,7 @@ export function usePersonalOrder() {
       const dateB = b.ordered_at ? new Date(b.ordered_at).getTime() : 0
       return dateA - dateB
     })
-  }, [items, activeTab, appliedSearch, showUnorderedOnly, showReleaseStopOnly, showNoInvoiceOnly, selectedStatuses, invoiceOrderIds, aggMap, orderItemMap])
+  }, [items, activeTab, appliedSearch, showUnorderedOnly, showReleaseStopOnly, showNoInvoiceOnly, selectedStatuses, invoiceOrderIds, aggMap, itemCountMap])
 
   // ── [엑셀 다운] 핸들러 (쿠팡 DeliveryList 양식) ────────────────
   const handleExcelDownload = useCallback(() => {
@@ -596,20 +608,23 @@ export function usePersonalOrder() {
     alert(`${targetRows.length}건 클립보드에 복사되었습니다.`)
   }, [filteredItems, selectedIds])
 
-  // ── 행 클릭 → 드로어 열기 ────────────────────────────────────
+  // ── 행 클릭 → 드로어 열기 (복합 키: order_id|option_id) ──────
   const handleRowClick = useCallback((row: PersonalOrderRow) => {
     if (!row.order_id) return
-    const oi = orderItemMap.get(row.order_id)
-    if (!oi) return
+    const key = makeFulfillmentKey(row.order_id, row.vendor_item_id)
+    const items = orderItemsMap.get(key)
+    if (!items || items.length === 0) return
+    // 대표 상품정보는 첫 번째 (created_at 오름차순 정렬됨), 이력은 전체
+    const first = items[0]
     setSelectedDrawerItem({
-      id: oi.id,
-      itemName: oi.item_name,
-      optionName: oi.option_name,
-      orderNo: oi.order_no,
-      itemNo: oi.item_no,
-      productNo: oi.product_no,
+      ids: items.map((oi) => oi.id),
+      itemName: first.item_name,
+      optionName: first.option_name,
+      orderNo: first.order_no,
+      itemNo: first.item_no,
+      productNo: first.product_no,
     })
-  }, [orderItemMap])
+  }, [orderItemsMap])
 
   // ── [바코드 연결] 핸들러 ──────────────────────────────────────────
   const [barcodeLoading, setBarcodeLoading] = useState(false)
