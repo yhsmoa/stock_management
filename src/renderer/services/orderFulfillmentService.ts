@@ -30,6 +30,7 @@ export interface OrderItemDetail {
   id: string
   personal_order_no: string
   vendor_option_id: string | null   // 쿠팡 option_id 매칭 키
+  set_seq: number | null            // 세트 순번 (비세트도 1부터). 중복 시 multi 판정
   item_name: string | null
   option_name: string | null
   product_no: string | null
@@ -92,7 +93,7 @@ async function batchIn<T>(
  * @param orderUserId  - purchase_agent ft_users.id (si_users.order_user_id)
  * @returns
  *   - aggMap        : 복합 키 → FulfillmentAgg (여러 ft_order_items 합산)
- *   - itemCountMap  : 복합 키 → 매칭된 ft_order_items 건수 (2+ 이면 'multi')
+ *   - multiKeys     : set_seq 중복이 발견된 복합 키 집합 ('multi' 상태 판정용)
  *   - orderItemsMap : 복합 키 → OrderItemDetail[] (드로어에 전체 전달)
  */
 export async function fetchFulfillmentData(
@@ -100,21 +101,21 @@ export async function fetchFulfillmentData(
   orderUserId: string,
 ): Promise<{
   aggMap: Map<string, FulfillmentAgg>
-  itemCountMap: Map<string, number>
+  multiKeys: Set<string>
   orderItemsMap: Map<string, OrderItemDetail[]>
 }> {
   const aggMap = new Map<string, FulfillmentAgg>()
-  const itemCountMap = new Map<string, number>()
+  const multiKeys = new Set<string>()
   const orderItemsMap = new Map<string, OrderItemDetail[]>()
 
   if (orderIds.length === 0 || !orderUserId) {
-    return { aggMap, itemCountMap, orderItemsMap }
+    return { aggMap, multiKeys, orderItemsMap }
   }
 
   // ── 1) ft_order_items 조회 (personal_order_no = our order_id) ──
   const orderItems = await batchIn<OrderItemDetail>(
     'ft_order_items',
-    'id, personal_order_no, vendor_option_id, item_name, option_name, product_no, item_no, order_no, 1688_order_id, created_at',
+    'id, personal_order_no, vendor_option_id, set_seq, item_name, option_name, product_no, item_no, order_no, 1688_order_id, created_at',
     'personal_order_no',
     orderIds,
   )
@@ -129,8 +130,6 @@ export async function fetchFulfillmentData(
     const arr = orderItemsMap.get(key) ?? []
     arr.push(oi)
     orderItemsMap.set(key, arr)
-
-    itemCountMap.set(key, (itemCountMap.get(key) ?? 0) + 1)
   }
 
   // 각 키의 OrderItemDetail 배열을 created_at 오름차순 정렬
@@ -138,8 +137,21 @@ export async function fetchFulfillmentData(
     arr.sort((a, b) => (a.created_at ?? '').localeCompare(b.created_at ?? ''))
   }
 
+  // ── multi 판정: 같은 key 그룹 내 set_seq 중복 여부 ──────────────
+  // - 세트 상품(set_seq=1,2,...)은 정상 → 중복 없음
+  // - 재주문으로 동일 set_seq 재등장 시 multi
+  for (const [key, arr] of orderItemsMap) {
+    const seqCount = new Map<number | null, number>()
+    for (const oi of arr) {
+      seqCount.set(oi.set_seq, (seqCount.get(oi.set_seq) ?? 0) + 1)
+    }
+    for (const c of seqCount.values()) {
+      if (c >= 2) { multiKeys.add(key); break }
+    }
+  }
+
   const itemIds = orderItems.map((oi) => oi.id)
-  if (itemIds.length === 0) return { aggMap, itemCountMap, orderItemsMap }
+  if (itemIds.length === 0) return { aggMap, multiKeys, orderItemsMap }
 
   // ── 2) inbound + outbound 병렬 조회 ────────────────────────────
   const [inbounds, outbounds] = await Promise.all([
@@ -181,7 +193,7 @@ export async function fetchFulfillmentData(
     if (f.shipment_no) entry.shipped += qty
   }
 
-  return { aggMap, itemCountMap, orderItemsMap }
+  return { aggMap, multiKeys, orderItemsMap }
 }
 
 // ══════════════════════════════════════════════════════════════════

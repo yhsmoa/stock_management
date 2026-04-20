@@ -156,7 +156,7 @@ export function usePersonalOrder() {
 
   // ── fulfillment 상태 (키: `${order_id}|${option_id}`) ─────────
   const [aggMap, setAggMap] = useState<Map<string, FulfillmentAgg>>(new Map())
-  const [itemCountMap, setItemCountMap] = useState<Map<string, number>>(new Map())
+  const [multiKeys, setMultiKeys] = useState<Set<string>>(new Set())
   const [orderItemsMap, setOrderItemsMap] = useState<Map<string, OrderItemDetail[]>>(new Map())
 
   // ── 드로어 선택 상태 ──────────────────────────────────────────
@@ -214,28 +214,28 @@ export function usePersonalOrder() {
 
   // ── 상태 점 판별 ──────────────────────────────────────────────
   //   판정 규칙 (복합 키 기준):
-  //     count >= 2  → multi (이력 확인 필요)
-  //     count == 0  → none  (미주문)
-  //     count == 1  → 기존 red / green / gray 분기
+  //     multiKeys 포함 → multi (set_seq 중복 = 이력 확인 필요)
+  //     매칭 없음       → none  (미주문)
+  //     그 외           → 기존 red / green / gray 분기
   const getRowStatus = useCallback((row: PersonalOrderRow): StatusType => {
     if (!row.order_id) return 'none'
     const key = makeFulfillmentKey(row.order_id, row.vendor_item_id)
-    const count = itemCountMap.get(key) ?? 0
-    if (count >= 2) return 'multi'
-    if (count === 0) return 'none'
+    if (multiKeys.has(key)) return 'multi'
+    const itemsForKey = orderItemsMap.get(key)
+    if (!itemsForKey || itemsForKey.length === 0) return 'none'
     const agg = aggMap.get(key) ?? EMPTY_AGG
     const qty = row.shipping_count ?? 0
     if (qty > 0 && agg.cancel >= qty) return 'red'
     if (agg.packed > 0) return 'green'
     return 'gray'
-  }, [aggMap, itemCountMap])
+  }, [aggMap, multiKeys, orderItemsMap])
 
   // ── fulfillment 데이터 로드 ─────────────────────────────────────
   const loadFulfillmentData = useCallback(async (orderRows: PersonalOrderRow[]) => {
     const { orderUserId } = getUserInfo()
     if (!orderUserId || orderRows.length === 0) {
       setAggMap(new Map())
-      setItemCountMap(new Map())
+      setMultiKeys(new Set())
       setOrderItemsMap(new Map())
       return
     }
@@ -244,7 +244,7 @@ export function usePersonalOrder() {
       const orderIds = Array.from(new Set(orderRows.map((r) => r.order_id).filter(Boolean)))
       const result = await fetchFulfillmentData(orderIds, orderUserId)
       setAggMap(result.aggMap)
-      setItemCountMap(result.itemCountMap)
+      setMultiKeys(result.multiKeys)
       setOrderItemsMap(result.orderItemsMap)
     } catch (err) {
       console.error('[PersonalOrder] fulfillment 조회 실패:', err)
@@ -477,9 +477,9 @@ export function usePersonalOrder() {
     const computeStatus = (row: PersonalOrderRow): StatusType => {
       if (!row.order_id) return 'none'
       const key = makeFulfillmentKey(row.order_id, row.vendor_item_id)
-      const count = itemCountMap.get(key) ?? 0
-      if (count >= 2) return 'multi'
-      if (count === 0) return 'none'
+      if (multiKeys.has(key)) return 'multi'
+      const itemsForKey = orderItemsMap.get(key)
+      if (!itemsForKey || itemsForKey.length === 0) return 'none'
       const agg = aggMap.get(key) ?? EMPTY_AGG
       const qty = row.shipping_count ?? 0
       if (qty > 0 && agg.cancel >= qty) return 'red'
@@ -514,7 +514,7 @@ export function usePersonalOrder() {
       const dateB = b.ordered_at ? new Date(b.ordered_at).getTime() : 0
       return dateA - dateB
     })
-  }, [items, activeTab, appliedSearch, showUnorderedOnly, showReleaseStopOnly, showNoInvoiceOnly, selectedStatuses, invoiceOrderIds, aggMap, itemCountMap])
+  }, [items, activeTab, appliedSearch, showUnorderedOnly, showReleaseStopOnly, showNoInvoiceOnly, selectedStatuses, invoiceOrderIds, aggMap, multiKeys, orderItemsMap])
 
   // ── [엑셀 다운] 핸들러 (쿠팡 DeliveryList 양식) ────────────────
   const handleExcelDownload = useCallback(() => {
