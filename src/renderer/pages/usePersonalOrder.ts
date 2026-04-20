@@ -36,7 +36,6 @@ import type { AuthUser } from '../types/auth'
 
 // ── 상수 ──────────────────────────────────────────────────────────
 export const PAGE_SIZE = 100
-const TEST_MAX_PER_PAGE = 5 // 테스트용: 상태당 최대 5건
 
 /** 주문 상태 탭 */
 export const ORDER_STATUS_TABS = [
@@ -227,7 +226,7 @@ export function usePersonalOrder() {
     setUpdateMsg('쿠팡 API 호출 중...')
 
     try {
-      const apiData = await fetchAllOrdersheets(TEST_MAX_PER_PAGE, (msg) => {
+      const apiData = await fetchAllOrdersheets((msg) => {
         setUpdateMsg(msg)
       })
 

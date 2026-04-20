@@ -10,6 +10,35 @@ import type { AuthUser } from '../types/auth'
 
 // ── 상수 ──────────────────────────────────────────────────────────
 const SUPABASE_BATCH_SIZE = 500
+const ORDERSHEET_MAX_PER_PAGE = 50  // 쿠팡 API 최대값 (1회 요청당 행 수)
+const FETCH_CONCURRENCY = 3          // rate limit 보호용 동시 요청 제한
+
+// ══════════════════════════════════════════════════════════════════
+// 동시 실행 제한 러너 — Promise-returning 함수 배열을 limit 만큼만 동시 실행
+// - 세마포어/풀 패턴: cursor 기반 워커가 태스크를 하나씩 집어감
+// - 실패 전파: 한 건이라도 throw 하면 전체 reject
+// - 결과 순서는 입력 순서 유지
+// ══════════════════════════════════════════════════════════════════
+
+async function runWithConcurrency<T>(
+  tasks: Array<() => Promise<T>>,
+  limit: number,
+): Promise<T[]> {
+  const results: T[] = new Array(tasks.length)
+  let cursor = 0
+
+  async function worker() {
+    while (true) {
+      const idx = cursor++
+      if (idx >= tasks.length) return
+      results[idx] = await tasks[idx]()
+    }
+  }
+
+  const workerCount = Math.min(limit, tasks.length)
+  await Promise.all(Array.from({ length: workerCount }, worker))
+  return results
+}
 
 // ── 상태 코드 매핑 ────────────────────────────────────────────────
 /** 쿠팡 API 상태코드 → 한글 */
@@ -127,7 +156,6 @@ async function fetchOrdersheetsByStatus(
   status: string,
   fromDate: string,
   toDate: string,
-  maxPerPage = 50,
 ): Promise<any[]> {
   const headers = getCoupangHeaders()
   let allData: any[] = []
@@ -138,7 +166,7 @@ async function fetchOrdersheetsByStatus(
       createdAtFrom: toCoupangDate(fromDate),
       createdAtTo: toCoupangDate(toDate),
       status,
-      maxPerPage: String(maxPerPage),
+      maxPerPage: String(ORDERSHEET_MAX_PER_PAGE),
     })
     if (nextToken) params.set('nextToken', nextToken)
 
@@ -163,39 +191,45 @@ async function fetchOrdersheetsByStatus(
 }
 
 /**
- * 전체 상태 발주서 조회
+ * 전체 상태 발주서 조회 — 병렬 실행 (FETCH_CONCURRENCY 만큼 동시)
  * - ACCEPT/INSTRUCT/DEPARTURE/DELIVERING: 60일 (2분할)
  * - FINAL_DELIVERY/NONE_TRACKING: 30일 (1회)
- *
- * @param maxPerPage 페이지당 조회 건수 (테스트 시 5)
  */
 export async function fetchAllOrdersheets(
-  maxPerPage = 50,
   onProgress?: (msg: string) => void,
 ): Promise<any[]> {
-  const allData: any[] = []
+  // ── 태스크 빌드: (status, from, to, label) ─────────────────
+  type Task = { status: string; fromDate: string; toDate: string; label: string }
 
-  // ── 60일 조회 대상 (2분할: 60일전~30일전, 30일전~오늘) ──────
   const longStatuses = ['ACCEPT', 'INSTRUCT', 'DEPARTURE', 'DELIVERING']
-  for (const status of longStatuses) {
-    onProgress?.(`${STATUS_MAP[status]} 조회 중... (1/2)`)
-    const batch1 = await fetchOrdersheetsByStatus(status, daysAgo(60), daysAgo(30), maxPerPage)
-    allData.push(...batch1)
-
-    onProgress?.(`${STATUS_MAP[status]} 조회 중... (2/2)`)
-    const batch2 = await fetchOrdersheetsByStatus(status, daysAgo(30), today(), maxPerPage)
-    allData.push(...batch2)
-  }
-
-  // ── 30일 조회 대상 (1회) ────────────────────────────────────
   const shortStatuses = ['FINAL_DELIVERY', 'NONE_TRACKING']
-  for (const status of shortStatuses) {
-    onProgress?.(`${STATUS_MAP[status]} 조회 중...`)
-    const batch = await fetchOrdersheetsByStatus(status, daysAgo(30), today(), maxPerPage)
-    allData.push(...batch)
-  }
 
-  return allData
+  const tasks: Task[] = [
+    // 60일 상태 — 2분할 (API 31일 제한 대응)
+    ...longStatuses.flatMap((status) => [
+      { status, fromDate: daysAgo(60), toDate: daysAgo(30), label: `${STATUS_MAP[status]} (1/2)` },
+      { status, fromDate: daysAgo(30), toDate: today(),    label: `${STATUS_MAP[status]} (2/2)` },
+    ]),
+    // 30일 상태 — 1회
+    ...shortStatuses.map((status) => ({
+      status, fromDate: daysAgo(30), toDate: today(), label: STATUS_MAP[status],
+    })),
+  ]
+
+  // ── 진행률 카운터 (동시 실행 환경에서 단조 증가) ───────────
+  let completed = 0
+  const total = tasks.length
+
+  const fns = tasks.map((t) => async (): Promise<any[]> => {
+    const rows = await fetchOrdersheetsByStatus(t.status, t.fromDate, t.toDate)
+    completed++
+    onProgress?.(`발주서 조회 중... ${completed}/${total} (${t.label})`)
+    return rows
+  })
+
+  // ── 동시 실행 (rate limit 보호: FETCH_CONCURRENCY) ─────────
+  const batched = await runWithConcurrency(fns, FETCH_CONCURRENCY)
+  return batched.flat()
 }
 
 // ══════════════════════════════════════════════════════════════════

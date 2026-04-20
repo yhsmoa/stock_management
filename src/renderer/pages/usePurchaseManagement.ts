@@ -209,11 +209,6 @@ export function usePurchaseManagement() {
         (item) => item.vendor_item_id != null && matchedOptionIds.has(item.vendor_item_id),
       )
 
-      const getItemIdForSort = (item: RgItem): number => {
-        const data = item.vendor_item_id ? itemDataMap.get(item.vendor_item_id) : undefined
-        return data?.item_id ?? 0
-      }
-      result.sort((a, b) => getItemIdForSort(a) - getItemIdForSort(b))
     }
 
     // ── STEP B: 검색어 ──────────────────────────────────────
@@ -234,6 +229,17 @@ export function usePurchaseManagement() {
         )
       }
     }
+
+    // ── STEP C: 정렬 — seller_product_name → option_name (한글 오름차순) ──
+    // 원본 items 를 변이시키지 않도록 복사 후 정렬
+    result = [...result].sort((a, b) => {
+      const nameCmp = (a.seller_product_name ?? '').localeCompare(
+        b.seller_product_name ?? '',
+        'ko',
+      )
+      if (nameCmp !== 0) return nameCmp
+      return (a.option_name ?? '').localeCompare(b.option_name ?? '', 'ko')
+    })
 
     return result
   }, [activeFilter, items, itemDataMap, searchQuery])
