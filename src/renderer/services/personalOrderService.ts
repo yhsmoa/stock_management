@@ -233,8 +233,10 @@ export async function fetchAllOrdersheets(
   type Task = { status: string; fromDate: string; toDate: string; label: string }
 
   // 60일(2분할): 장기 체류 가능 상태 / 30일(1회): 배송 이후 상태 + 배송중(단기 체류)
+  // NOTE: 'NONE_TRACKING'(업체직송)은 쿠팡 API 응답이 매우 느려 임시 비활성화.
+  //        재활성화 시 shortStatuses 에 'NONE_TRACKING' 다시 추가.
   const longStatuses = ['ACCEPT', 'INSTRUCT', 'DEPARTURE']
-  const shortStatuses = ['DELIVERING', 'FINAL_DELIVERY', 'NONE_TRACKING']
+  const shortStatuses = ['DELIVERING', 'FINAL_DELIVERY']
 
   const tasks: Task[] = [
     // 60일 상태 — 2분할 (API 31일 제한 대응)
