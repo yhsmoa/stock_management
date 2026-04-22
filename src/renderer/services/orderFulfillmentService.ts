@@ -58,6 +58,8 @@ export interface FulfillmentRow {
 
 // ══════════════════════════════════════════════════════════════════
 // 유틸: 배치 조회 (.in() URL 길이 제한 대응, 100개 단위)
+// - BATCH_SIZE = 100 유지 (URL 안전)
+// - 여러 배치를 Promise.all 로 병렬 실행 → RTT 1회로 단축
 // ══════════════════════════════════════════════════════════════════
 
 async function batchIn<T>(
@@ -66,16 +68,26 @@ async function batchIn<T>(
   column: string,
   ids: string[],
 ): Promise<T[]> {
-  const all: T[] = []
+  if (ids.length === 0) return []
+
+  // 배치 분할
+  const chunks: string[][] = []
   for (let i = 0; i < ids.length; i += BATCH_SIZE) {
-    const batch = ids.slice(i, i + BATCH_SIZE)
-    const { data, error } = await (orderSupabase.from(table) as any)
-      .select(select)
-      .in(column, batch)
-    if (error) throw error
-    if (data) all.push(...(data as T[]))
+    chunks.push(ids.slice(i, i + BATCH_SIZE))
   }
-  return all
+
+  // 병렬 실행 (순차 await for-loop → Promise.all)
+  const results = await Promise.all(
+    chunks.map(async (chunk): Promise<T[]> => {
+      const { data, error } = await (orderSupabase.from(table) as any)
+        .select(select)
+        .in(column, chunk)
+      if (error) throw error
+      return (data ?? []) as T[]
+    }),
+  )
+
+  return results.flat()
 }
 
 // ══════════════════════════════════════════════════════════════════
