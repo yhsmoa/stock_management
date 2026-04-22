@@ -54,23 +54,19 @@ export async function parsePdfInvoices(file: File): Promise<ParsedInvoicePage[]>
       }))
       .sort((a, b) => b.y - a.y || a.x - b.x)
 
-    // ── 좌표 + 패턴 기반 추출 ──────────────────────────────────────
-    // y좌표 범위 + 패턴 매칭 조합 → 텍스트 줄바꿈/인덱스 변화에 영향받지 않음
-    // 좌표는 쿠팡 송장 PDF 기준으로 검증됨 (운송장 y=579, 주문번호 y=336)
+    // ── 패턴 기반 추출 ───────────────────────────────────────────
+    // 좌표 기반 방식은 PDF 양식 변경 시 실패 → 패턴만으로 판정 (충돌 없음)
+    //   운송장번호: "6972-9673-7162" 형태 (하이픈 포함 숫자)
+    //   주문번호:   "19100184293909" 12자리 이상 순수 숫자
+    //   두 패턴은 서로 매칭되지 않음 (하이픈 유무로 구분)
 
-    // 운송장번호: 상단 고정 영역(y ≥ 570) + 숫자/하이픈 패턴
-    //   - 예시: "6975-3574-7623"
     const trackingNo =
       items.find(
-        (it) => it.y >= 570 && /^[\d-]+$/.test(it.text) && /\d{4,}/.test(it.text),
+        (it) => /^[\d-]+$/.test(it.text) && /-/.test(it.text) && /\d{4,}/.test(it.text),
       )?.text ?? ''
 
-    // 주문번호: 고정 영역(y 330~340) + 12자리 이상 순수 숫자
-    //   - 예시: "19100184293909"
     const orderId =
-      items.find(
-        (it) => it.y >= 330 && it.y <= 340 && /^\d{12,}$/.test(it.text),
-      )?.text ?? ''
+      items.find((it) => /^\d{12,}$/.test(it.text))?.text ?? ''
 
     // 디버그 로그 — 추출 결과 + 전체 텍스트 아이템 (매칭 실패 시 확인용)
     console.log(`[invoiceService] 페이지 ${i}:`, {
@@ -247,30 +243,48 @@ async function downloadInvoicePdf(
 }
 
 // ══════════════════════════════════════════════════════════════════
-// 내부 헬퍼 — 단일 페이지 PDF를 콘텐츠 영역만 크롭해서 반환
+// 내부 헬퍼 — PDF 콘텐츠 영역을 100x150mm 라벨 페이지로 재구성
 // ══════════════════════════════════════════════════════════════════
 
+// mm → pt 변환 (1mm = 2.834645669pt)
+const MM_TO_PT = 2.834645669
+const LABEL_W_PT = 100 * MM_TO_PT  // 283.46pt
+const LABEL_H_PT = 150 * MM_TO_PT  // 425.20pt
+
 /**
- * 단일 페이지 PDF의 콘텐츠 영역을 자동 감지하여 CropBox/MediaBox 조정.
- * - 벡터 데이터는 그대로 유지 (래스터 변환 없음)
- * - 반환된 PDF는 pdf-lib PDFDocument에서 병합 가능하도록 PDFDocument 인스턴스 반환
+ * 입력 PDF의 콘텐츠 영역만 남도록 **원본 PDF에 회전-인지 CropBox 설정**하여 반환.
+ *
+ * 핵심:
+ *   - 벡터 원본 그대로 유지 (래스터 변환 없음 → 선명도 완벽 보존)
+ *   - /Rotate 메타데이터 그대로 보존 → 브라우저 PDF 뷰어가 알아서 회전 적용
+ *   - pdf.js 캔버스 픽셀 스캔은 표시 좌표계이므로 저장 좌표계로 역변환하여 CropBox 설정
+ *
+ * /Rotate → display 변환 공식:
+ *   0:   stored = display
+ *   90:  stored.x = W - display.y,    stored.y = display.x
+ *   180: stored.x = W - display.x,    stored.y = H - display.y
+ *   270: stored.x = display.y,        stored.y = H - display.x
+ *   (W = 저장 페이지 너비, H = 저장 페이지 높이)
+ *
+ * 출력 PDF 크기는 콘텐츠 크기 그대로. 프린터에서 "용지에 맞춤"으로 100x150mm 라벨에 꽉 차게 인쇄됨.
  */
 async function cropPdfToContent(arrayBuffer: ArrayBuffer): Promise<PDFDocument> {
   // ── 1) 콘텐츠 영역 감지 (저해상도 픽셀 스캔) ───────────────────
   const pdf = await pdfjsLib.getDocument({ data: arrayBuffer.slice(0) }).promise
   const page = await pdf.getPage(1)
+  const rotation = (page.rotate ?? 0) as 0 | 90 | 180 | 270
 
   const detectScale = 2
   const detectVp = page.getViewport({ scale: detectScale })
-  const canvas = document.createElement('canvas')
-  canvas.width = detectVp.width
-  canvas.height = detectVp.height
-  const ctx = canvas.getContext('2d')!
-  ctx.fillStyle = '#ffffff'
-  ctx.fillRect(0, 0, canvas.width, canvas.height)
-  await page.render({ canvasContext: ctx, viewport: detectVp }).promise
+  const detectCanvas = document.createElement('canvas')
+  detectCanvas.width = detectVp.width
+  detectCanvas.height = detectVp.height
+  const detectCtx = detectCanvas.getContext('2d')!
+  detectCtx.fillStyle = '#ffffff'
+  detectCtx.fillRect(0, 0, detectCanvas.width, detectCanvas.height)
+  await page.render({ canvasContext: detectCtx, viewport: detectVp }).promise
 
-  const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height)
+  const imageData = detectCtx.getImageData(0, 0, detectCanvas.width, detectCanvas.height)
   const { data, width, height } = imageData
   let minX = width, minY = height, maxX = 0, maxY = 0
 
@@ -293,19 +307,55 @@ async function cropPdfToContent(arrayBuffer: ArrayBuffer): Promise<PDFDocument> 
   maxX = Math.min(width - 1, maxX + pad)
   maxY = Math.min(height - 1, maxY + pad)
 
-  // ── 2) CropBox/MediaBox 변경 (벡터 품질 유지) ─────────────────
-  const origPageH_pt = detectVp.height / detectScale
-  const pdfLeft = minX / detectScale
-  const pdfRight = (maxX + 1) / detectScale
-  const pdfBottom = origPageH_pt - (maxY + 1) / detectScale
-  const pdfTop = origPageH_pt - minY / detectScale
+  // ── 2) 캔버스 좌표 → 표시(display) PDF 좌표 (Y up) ────────────
+  const dispH_pt = detectVp.height / detectScale
+  const dispLeft = minX / detectScale
+  const dispRight = (maxX + 1) / detectScale
+  const dispPdfTop = dispH_pt - minY / detectScale
+  const dispPdfBottom = dispH_pt - (maxY + 1) / detectScale
+  const cropW_disp = dispRight - dispLeft
+  const cropH_disp = dispPdfTop - dispPdfBottom
 
-  const pdfDoc = await PDFDocument.load(arrayBuffer)
-  const pdfPage = pdfDoc.getPage(0)
-  pdfPage.setCropBox(pdfLeft, pdfBottom, pdfRight - pdfLeft, pdfTop - pdfBottom)
-  pdfPage.setMediaBox(pdfLeft, pdfBottom, pdfRight - pdfLeft, pdfTop - pdfBottom)
+  // ── 3) 저장(stored) 좌표계로 역변환 (/Rotate 적용) ────────────
+  const srcDoc = await PDFDocument.load(arrayBuffer)
+  const srcPage = srcDoc.getPage(0)
+  const mb = srcPage.getMediaBox()
+  const storedPageW = mb.width
+  const storedPageH = mb.height
 
-  return pdfDoc
+  let storedX: number, storedY: number, storedW: number, storedH: number
+  switch (rotation) {
+    case 90:
+      storedX = storedPageW - dispPdfTop
+      storedY = dispLeft
+      storedW = cropH_disp
+      storedH = cropW_disp
+      break
+    case 180:
+      storedX = storedPageW - dispRight
+      storedY = storedPageH - dispPdfTop
+      storedW = cropW_disp
+      storedH = cropH_disp
+      break
+    case 270:
+      storedX = dispPdfBottom
+      storedY = storedPageH - dispRight
+      storedW = cropH_disp
+      storedH = cropW_disp
+      break
+    case 0:
+    default:
+      storedX = dispLeft
+      storedY = dispPdfBottom
+      storedW = cropW_disp
+      storedH = cropH_disp
+      break
+  }
+
+  // ── 4) CropBox + MediaBox 설정 (원본 /Rotate 그대로 보존) ─────
+  srcPage.setCropBox(storedX, storedY, storedW, storedH)
+  srcPage.setMediaBox(storedX, storedY, storedW, storedH)
+  return srcDoc
 }
 
 // ══════════════════════════════════════════════════════════════════
