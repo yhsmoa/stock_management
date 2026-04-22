@@ -345,6 +345,29 @@ const PersonalOrder: React.FC = () => {
                           )
                         }
 
+                        // ── 수취인 (split_shipping = 'Y' 시 🛍️ 접두) ──
+                        if (col.key === 'receiver_name') {
+                          const flagged = row.split_shipping === 'Y'
+                          const baseValue = getCellValue(row, col.key)
+                          return (
+                            <td
+                              key={col.key}
+                              title={(flagged ? '[분리배송] ' : '') + baseValue}
+                            >
+                              {flagged && (
+                                <span
+                                  style={{ marginRight: 2 }}
+                                  title="분리배송"
+                                  aria-label="분리배송"
+                                >
+                                  🛍️
+                                </span>
+                              )}
+                              {baseValue}
+                            </td>
+                          )
+                        }
+
                         // ── 기본 컬럼 ──
                         return (
                           <td key={col.key} title={getCellValue(row, col.key)}>
