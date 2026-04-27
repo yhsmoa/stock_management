@@ -188,8 +188,8 @@ const PersonalOrder: React.FC = () => {
             📝송장필요
           </button>
 
-          {/* ── 상태 점 필터 (green/red/gray/multi) ──────────── */}
-          {(['green', 'red', 'gray', 'multi'] as const).map((st) => (
+          {/* ── 상태 점 필터 (shipped/green/red/gray/multi) ───── */}
+          {(['shipped', 'green', 'red', 'gray', 'multi'] as const).map((st) => (
             <button
               key={st}
               className={`po-status-filter-btn${selectedStatuses.has(st) ? ' active' : ''}`}
@@ -197,7 +197,9 @@ const PersonalOrder: React.FC = () => {
               title={STATUS_DOT_LABELS[st]}
               aria-label={STATUS_DOT_LABELS[st]}
             >
-              <span className={`po-status-dot ${st}`} />
+              {st === 'shipped'
+                ? <span>🏁</span>
+                : <span className={`po-status-dot ${st}`} />}
             </button>
           ))}
         </div>
@@ -283,12 +285,19 @@ const PersonalOrder: React.FC = () => {
                         if (col.key === 'ff_status') {
                           return (
                             <td key={col.key}>
-                              {status !== 'none' && (
+                              {status === 'shipped' ? (
+                                <span
+                                  title={STATUS_DOT_LABELS.shipped}
+                                  aria-label={STATUS_DOT_LABELS.shipped}
+                                >
+                                  🏁
+                                </span>
+                              ) : status !== 'none' ? (
                                 <span
                                   className={`po-status-dot ${status}`}
                                   title={STATUS_DOT_LABELS[status]}
                                 />
-                              )}
+                              ) : null}
                             </td>
                           )
                         }

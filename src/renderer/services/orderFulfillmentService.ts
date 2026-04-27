@@ -201,7 +201,7 @@ export async function fetchFulfillmentData(
 
     if (f.type === 'ARRIVAL') entry.arrival += qty
     if (f.type === 'PACKED') entry.packed += qty
-    if (f.type === 'CANCEL') entry.cancel += qty
+    if (f.type === 'CANCEL' || f.type === 'RETURN') entry.cancel += qty
     if (f.shipment_no) entry.shipped += qty
   }
 
@@ -277,7 +277,7 @@ export async function fetchFulfillmentHistory(
 
   const inboundRows: FulfillmentRow[] = inbounds.map((r) => {
     let reason: string | null = null
-    if (r.type === 'CANCEL') {
+    if (r.type === 'CANCEL' || r.type === 'RETURN') {
       const q = cancelReasonQueue.get(r.order_item_id)
       reason = q?.shift() ?? null
     }
@@ -491,7 +491,7 @@ export async function fetchOrderDelta(
           const { data, error } = await (orderSupabase.from('ft_fulfillment_inbounds') as any)
             .select('order_item_id, quantity')
             .eq('user_id', orderUserId)
-            .eq('type', 'CANCEL')
+            .in('type', ['CANCEL', 'RETURN'])
             .in('order_item_id', chunk)
             .range(from, from + PAGE_SIZE - 1)
           if (error) {

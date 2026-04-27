@@ -75,9 +75,10 @@ export const COLUMNS = [
 ] as const
 
 // ── 상태 점 설정 ──────────────────────────────────────────────────
-export type StatusType = 'green' | 'red' | 'gray' | 'multi' | 'none'
+export type StatusType = 'shipped' | 'green' | 'red' | 'gray' | 'multi' | 'none'
 
 export const STATUS_DOT_LABELS: Record<StatusType, string> = {
+  shipped: '출고완료',
   green: '포장완료',
   red: '전량취소',
   gray: '미발송',
@@ -226,6 +227,7 @@ export function usePersonalOrder() {
     const agg = aggMap.get(key) ?? EMPTY_AGG
     const qty = row.shipping_count ?? 0
     if (qty > 0 && agg.cancel >= qty) return 'red'
+    if (qty > 0 && agg.shipped >= qty) return 'shipped'  // 전량 출고
     if (agg.packed > 0) return 'green'
     return 'gray'
   }, [aggMap, multiKeys, orderItemsMap])
@@ -483,6 +485,7 @@ export function usePersonalOrder() {
       const agg = aggMap.get(key) ?? EMPTY_AGG
       const qty = row.shipping_count ?? 0
       if (qty > 0 && agg.cancel >= qty) return 'red'
+      if (qty > 0 && agg.shipped >= qty) return 'shipped'  // 전량 출고
       if (agg.packed > 0) return 'green'
       return 'gray'
     }

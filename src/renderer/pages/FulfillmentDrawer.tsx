@@ -29,6 +29,7 @@ const TYPE_CONFIG: Record<string, { label: string; className: string }> = {
   PACKED:   { label: '패킹', className: 'po-badge-gray' },
   SHIPMENT: { label: '출고', className: 'po-badge-blue' },
   CANCEL:   { label: '취소', className: 'po-badge-red' },
+  RETURN:   { label: '취소', className: 'po-badge-red' },
   arrival:  { label: '입고', className: 'po-badge-gray' },
   cancel:   { label: '취소', className: 'po-badge-red' },
   ship:     { label: '출고', className: 'po-badge-blue' },
@@ -194,8 +195,8 @@ const FulfillmentDrawer: React.FC<Props> = ({
                     </tr>,
                   )
 
-                  // ── 취소사유 행 ──
-                  if (row.type === 'CANCEL' && row.cancel_reason) {
+                  // ── 취소사유 행 (CANCEL / RETURN 모두 포함) ──
+                  if ((row.type === 'CANCEL' || row.type === 'RETURN') && row.cancel_reason) {
                     nodes.push(
                       <tr key={`${row.id}-reason`} className="po-drawer-cancel-row">
                         <td colSpan={3}>취소사유: {row.cancel_reason}</td>
