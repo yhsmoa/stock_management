@@ -1157,7 +1157,7 @@ console.log('[조회수] 완료! 총 '+results.length+'건 CSV 저장됨');
   // ══════════════════════════════════════════════════════════════
 
   const loadOrderDelta = useCallback(
-    async (shipmentIds: string[], shipmentTypes: ShipmentType[]) => {
+    async (includeTypes: ShipmentType[], excludeShipmentIds: string[]) => {
       setIsOrderLoading(true)
       try {
         // ── order_user_id 조달 (ft_users.id) ──
@@ -1182,7 +1182,7 @@ console.log('[조회수] 완료! 총 '+results.length+'건 CSV 저장됨');
           return
         }
 
-        const map = await fetchOrderDelta(barcodeList, shipmentIds, shipmentTypes, orderUserId)
+        const map = await fetchOrderDelta(barcodeList, includeTypes, excludeShipmentIds, orderUserId)
         setOrderDeltaMap(map)
       } catch (e) {
         console.error('[loadOrderDelta]', e)

@@ -369,27 +369,12 @@ export async function fetchRecentShipments(
 //   공식:
 //     net = Σ ft_order_items.order_qty
 //               WHERE status='PROCESSING'
-//                 AND shipment_type ∈ (COUPANG|DIRECT)  (대소문자 무시)
-//         - Σ ft_fulfillment_inbounds.quantity (type=CANCEL)
-//         - Σ ft_fulfillment_outbounds.quantity
-//               WHERE type='PACKED'
-//                 AND shipment_id IS NOT NULL              ← base 차감 조건
-//               EXCLUDING (AND 결합, 모달 선택값):
-//                 shipment_id ∈ selectedShipmentIds
-//               AND
-//                 shipment_type ∈ selectedShipmentTypes (대소문자 무시)
-//
-//   1단계(base): PACKED + shipment_id NOT NULL 만 차감 대상에 포함
-//                (NULL 인 PACKED 는 애초에 차감하지 않음)
-//   2단계(exclude): 위 대상 중, 모달에서 선택된 (shipment_id, shipment_type)
-//                   에 AND 로 일치하는 건은 "아직 물리적으로 떠나지 않은 건"
-//                   으로 간주하여 차감에서 추가로 제외.
-//   - shipment_id 혹은 shipment_type 한쪽이라도 선택이 비어있으면
-//     2단계 제외 로직 비활성 → base 대상(PACKED+non-NULL) 전부 차감.
+//                 AND shipment_type ∈ includeTypes (모달 선택)
+//                 AND set_seq=1 OR set_seq IS NULL (세트 중복 방지)
+//         - Σ ft_fulfillment_inbounds.quantity (type=CANCEL|RETURN)
+//         - Σ ft_fulfillment_outbounds.quantity (type=PACKED)
+//               EXCLUDING: shipment_id ∈ excludeShipmentIds (모달 미체크 출고일)
 // ══════════════════════════════════════════════════════════════════
-
-/** base 대상 shipment_type — PERSONAL 제외, 대소문자 무시 OR 매칭 */
-const BASE_SHIPMENT_TYPES = ['COUPANG', 'DIRECT'] as const
 
 /**
  * barcode 기준으로 '주문 - 취소 - (일부)출고' 합계 조회
@@ -397,38 +382,37 @@ const BASE_SHIPMENT_TYPES = ['COUPANG', 'DIRECT'] as const
  * - 모든 쿼리는 `orderUserId` 로 격리 (ft_users.id = si_users.order_user_id)
  *
  * @param barcodes                - rg_items 에서 추출한 barcode 배열
- * @param selectedShipmentIds     - 모달에서 체크한 ft_shipments.id — '차감 제외' AND 조건의 한 축
- * @param selectedShipmentTypes   - 모달에서 체크한 shipment_type — '차감 제외' AND 조건의 나머지 축
+ * @param includeTypes            - 포함할 shipment_type (모달에서 체크된 항목)
+ * @param excludeShipmentIds      - 차감 제외할 출고 ID (모달에서 미체크된 출고일)
  * @param orderUserId             - ft_users.id — 필수
  * @returns Map<barcode, OrderDelta>
  */
 export async function fetchOrderDelta(
   barcodes: string[],
-  selectedShipmentIds: string[],
-  selectedShipmentTypes: ShipmentType[],
+  includeTypes: ShipmentType[],
+  excludeShipmentIds: string[],
   orderUserId: string,
 ): Promise<Map<string, OrderDelta>> {
   const result = new Map<string, OrderDelta>()
   if (!isOrderSupabaseConfigured || !orderUserId || barcodes.length === 0) return result
 
   // ════════════════════════════════════════════════════════════════
-  // (A) ft_order_items — PROCESSING + (COUPANG|DIRECT) base 조회
+  // (A) ft_order_items — PROCESSING + includeTypes 조회
   //     - user_id 격리
   //     - status = 'PROCESSING'
-  //     - shipment_type ∈ (COUPANG|DIRECT)  대소문자 무시
+  //     - shipment_type ∈ includeTypes (모달에서 선택한 유형)
   //     - barcode ∈ chunk  (si_rg_items.barcode ↔ ft_order_items.barcode)
-  //     - select 에 shipment_type 포함 (outbound 차감 제외 매핑용)
   // ════════════════════════════════════════════════════════════════
   type OrderItemRow = {
     id: string
     barcode: string | null
     order_qty: number | null
-    shipment_type: string | null
     set_seq: number | null
   }
   const orderItems: OrderItemRow[] = []
-  // PostgREST `or` 문법: 두 ilike 절을 OR 로 묶음 (대소문자 무시 정확 매칭)
-  const baseTypeOr = BASE_SHIPMENT_TYPES
+  // PostgREST `or` 문법: 선택된 타입을 OR 로 묶음 (대소문자 무시 정확 매칭)
+  if (includeTypes.length === 0) return result // 선택된 유형 없으면 결과 없음
+  const baseTypeOr = includeTypes
     .map((t) => `shipment_type.ilike.${t}`)
     .join(',')
 
@@ -437,7 +421,7 @@ export async function fetchOrderDelta(
     let from = 0
     while (true) {
       const { data, error } = await (orderSupabase.from('ft_order_items') as any)
-        .select('id, barcode, order_qty, shipment_type, set_seq')
+        .select('id, barcode, order_qty, set_seq')
         .eq('user_id', orderUserId)
         .eq('status', 'PROCESSING')
         .or(baseTypeOr)
@@ -453,19 +437,16 @@ export async function fetchOrderDelta(
     }
   }
 
-  // ── 집계 + 매핑 2종 ─────────────────────────────────────────────
-  //   orderMap        : barcode → 주문수량 합
-  //   itemToBarcode   : order_item_id → barcode (역매핑)
-  //   itemToTypeLower : order_item_id → shipment_type (소문자 정규화)
+  // ── 집계 + 매핑 ────────────────────────────────────────────────
+  //   orderMap      : barcode → 주문수량 합
+  //   itemToBarcode : order_item_id → barcode (역매핑)
   const orderMap = new Map<string, number>()
   const itemToBarcode = new Map<string, string>()
-  const itemToTypeLower = new Map<string, string>()
   for (const oi of orderItems) {
     if (!oi.barcode) continue
     // ── 세트상품 보정: set_seq=1만 카운트 (비세트=null 포함) ──
     if (oi.set_seq != null && oi.set_seq !== 1) continue
     itemToBarcode.set(oi.id, oi.barcode)
-    itemToTypeLower.set(oi.id, (oi.shipment_type ?? '').toLowerCase())
     orderMap.set(oi.barcode, (orderMap.get(oi.barcode) ?? 0) + (oi.order_qty ?? 0))
   }
 
@@ -509,10 +490,9 @@ export async function fetchOrderDelta(
       return rows
     })(),
 
-    // ── (C) 출고 — PACKED 전체 (shipment_id 무관) ──────────────────
-    //   * 조회 키: order_item_id (shipment_type 매핑 위해)
+    // ── (C) 출고 — PACKED 전체 조회 후 excludeShipmentIds 로 제외 ──
     //   * PACKED이면 전부 차감 대상
-    //   * 이후 클라이언트에서 모달 AND 조건으로 "차감 제외"(2단계) 적용
+    //   * 이후 excludeShipmentIds 에 해당하는 건만 제외
     (async () => {
       type OutboundRow = {
         order_item_id: string
@@ -554,25 +534,18 @@ export async function fetchOrderDelta(
   }
 
   // ════════════════════════════════════════════════════════════════
-  // 출고 집계 (2단계) — 모달 AND 제외 조건에 일치하는 건은 차감에서 추가 제외
-  //   outboundRows 는 이미 base(PACKED + shipment_id NOT NULL) 필터 통과분
-  //   excludeShipmentIds + excludeTypesLower 둘 다 비어있지 않을 때만 2단계 작동
+  // 출고 집계 — excludeShipmentIds 에 해당하는 출고건은 차감하지 않음
   // ════════════════════════════════════════════════════════════════
-  const excludeShipmentIds = new Set(selectedShipmentIds)
-  const excludeTypesLower = new Set(selectedShipmentTypes.map((t) => t.toLowerCase()))
-  const hasExcludeFilter = excludeShipmentIds.size > 0 && excludeTypesLower.size > 0
+  const excludeSet = new Set(excludeShipmentIds)
 
   const outboundMap = new Map<string, number>()
   for (const r of outboundRows) {
     const pid = itemToBarcode.get(r.order_item_id)
     if (!pid) continue
 
-    if (hasExcludeFilter && r.shipment_id != null) {
-      const itemTypeLower = itemToTypeLower.get(r.order_item_id) ?? ''
-      const isExcluded =
-        excludeShipmentIds.has(r.shipment_id) &&
-        excludeTypesLower.has(itemTypeLower)
-      if (isExcluded) continue // 차감에서 제외 (2단계)
+    // 모달에서 미체크(제외) 된 출고건은 차감하지 않음
+    if (excludeSet.size > 0 && r.shipment_id != null && excludeSet.has(r.shipment_id)) {
+      continue
     }
 
     outboundMap.set(pid, (outboundMap.get(pid) ?? 0) + (r.quantity ?? 0))
