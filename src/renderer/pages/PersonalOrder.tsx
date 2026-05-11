@@ -104,6 +104,21 @@ const PersonalOrder: React.FC = () => {
           >
             {barcodeLoading ? '매칭 중...' : '바코드 연결'}
           </button>
+          {/* ── 송장 xlsx (엑셀 운송장 번호 → si_personal_order_tracking 저장) ── */}
+          <input
+            ref={invoiceXlsxInputRef}
+            type="file"
+            accept=".xlsx,.xls"
+            style={{ display: 'none' }}
+            onChange={handleInvoiceXlsxUpload}
+          />
+          <button
+            className="po-btn"
+            onClick={() => invoiceXlsxInputRef.current?.click()}
+            disabled={invoiceXlsxUploading}
+          >
+            {invoiceXlsxUploading ? '업로드 중...' : '송장 xlsx'}
+          </button>
           {/* ── 송장 pdf (PDF 업로드 → 주문번호 매핑 → Storage 저장) ── */}
           <input
             ref={invoiceInputRef}
@@ -122,21 +137,6 @@ const PersonalOrder: React.FC = () => {
             disabled={invoiceLinking}
           >
             {invoiceLinking ? '연결 중...' : '송장 pdf'}
-          </button>
-          {/* ── 송장 xlsx (엑셀 운송장 번호 → si_personal_order_tracking 저장) ── */}
-          <input
-            ref={invoiceXlsxInputRef}
-            type="file"
-            accept=".xlsx,.xls"
-            style={{ display: 'none' }}
-            onChange={handleInvoiceXlsxUpload}
-          />
-          <button
-            className="po-btn"
-            onClick={() => invoiceXlsxInputRef.current?.click()}
-            disabled={invoiceXlsxUploading}
-          >
-            {invoiceXlsxUploading ? '업로드 중...' : '송장 xlsx'}
           </button>
           <button
             className="po-btn"

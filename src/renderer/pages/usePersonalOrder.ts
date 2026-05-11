@@ -775,8 +775,15 @@ export function usePersonalOrder() {
       // STEP 2: 매칭
       updateStep(1, 'active')
       const orderIdSet = new Set(items.map((r) => r.order_id))
-      const matched = pages.filter((p) => orderIdSet.has(p.orderId))
-      const unmatched = pages.filter((p) => !orderIdSet.has(p.orderId))
+      // xlsx 운송장 등록 또는 기존 PDF가 있는 주문만 업로드
+      const matched = pages.filter(
+        (p) => orderIdSet.has(p.orderId)
+          && (trackingMap.has(p.orderId) || invoiceOrderIds.has(p.orderId)),
+      )
+      const unmatched = pages.filter(
+        (p) => !orderIdSet.has(p.orderId)
+          || (!trackingMap.has(p.orderId) && !invoiceOrderIds.has(p.orderId)),
+      )
 
       if (matched.length === 0) {
         updateStep(1, 'error')
@@ -863,7 +870,7 @@ export function usePersonalOrder() {
     } finally {
       setInvoiceLinking(false)
     }
-  }, [items, invoiceOrderIds, getUserInfo, updateStep, closeProgress])
+  }, [items, invoiceOrderIds, trackingMap, getUserInfo, updateStep, closeProgress])
 
   // ── [송장 xlsx] 핸들러 — 엑셀 운송장 번호 업로드 ──────────────────
   const handleInvoiceXlsxUpload = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -900,8 +907,10 @@ export function usePersonalOrder() {
 
         const orderId = row[2] != null ? String(row[2]).trim() : ''
         const invoiceNum = row[4] != null ? String(row[4]).trim() : ''
+        const skipFlag = row[5] != null ? String(row[5]).trim().toUpperCase() : ''
 
         if (!orderId || !invoiceNum) continue
+        if (skipFlag === 'N') continue // F열 "N" → 저장 불필요
 
         if (orderIdSet.has(orderId)) {
           parsed.push({ user_id: userId, order_id: orderId, invoice_number: invoiceNum })
