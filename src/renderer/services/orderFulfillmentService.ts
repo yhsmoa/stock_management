@@ -424,6 +424,7 @@ export async function fetchOrderDelta(
     barcode: string | null
     order_qty: number | null
     shipment_type: string | null
+    set_seq: number | null
   }
   const orderItems: OrderItemRow[] = []
   // PostgREST `or` 문법: 두 ilike 절을 OR 로 묶음 (대소문자 무시 정확 매칭)
@@ -436,7 +437,7 @@ export async function fetchOrderDelta(
     let from = 0
     while (true) {
       const { data, error } = await (orderSupabase.from('ft_order_items') as any)
-        .select('id, barcode, order_qty, shipment_type')
+        .select('id, barcode, order_qty, shipment_type, set_seq')
         .eq('user_id', orderUserId)
         .eq('status', 'PROCESSING')
         .or(baseTypeOr)
@@ -461,6 +462,8 @@ export async function fetchOrderDelta(
   const itemToTypeLower = new Map<string, string>()
   for (const oi of orderItems) {
     if (!oi.barcode) continue
+    // ── 세트상품 보정: set_seq=1만 카운트 (비세트=null 포함) ──
+    if (oi.set_seq != null && oi.set_seq !== 1) continue
     itemToBarcode.set(oi.id, oi.barcode)
     itemToTypeLower.set(oi.id, (oi.shipment_type ?? '').toLowerCase())
     orderMap.set(oi.barcode, (orderMap.get(oi.barcode) ?? 0) + (oi.order_qty ?? 0))
@@ -506,15 +509,15 @@ export async function fetchOrderDelta(
       return rows
     })(),
 
-    // ── (C) 출고 — base: PACKED + shipment_id NOT NULL ────────────
+    // ── (C) 출고 — PACKED 전체 (shipment_id 무관) ──────────────────
     //   * 조회 키: order_item_id (shipment_type 매핑 위해)
-    //   * base 차감 대상만 조회 → shipment_id=NULL 인 PACKED 는 DB 단에서 제외
+    //   * PACKED이면 전부 차감 대상
     //   * 이후 클라이언트에서 모달 AND 조건으로 "차감 제외"(2단계) 적용
     (async () => {
       type OutboundRow = {
         order_item_id: string
         quantity: number | null
-        shipment_id: string  // NOT NULL 보장
+        shipment_id: string | null
       }
       const rows: OutboundRow[] = []
       for (let i = 0; i < itemIds.length; i += BATCH_SIZE) {
@@ -525,7 +528,6 @@ export async function fetchOrderDelta(
             .select('order_item_id, quantity, shipment_id')
             .eq('user_id', orderUserId)
             .eq('type', 'PACKED')
-            .not('shipment_id', 'is', null)
             .in('order_item_id', chunk)
             .range(from, from + PAGE_SIZE - 1)
           if (error) {
@@ -565,7 +567,7 @@ export async function fetchOrderDelta(
     const pid = itemToBarcode.get(r.order_item_id)
     if (!pid) continue
 
-    if (hasExcludeFilter) {
+    if (hasExcludeFilter && r.shipment_id != null) {
       const itemTypeLower = itemToTypeLower.get(r.order_item_id) ?? ''
       const isExcluded =
         excludeShipmentIds.has(r.shipment_id) &&

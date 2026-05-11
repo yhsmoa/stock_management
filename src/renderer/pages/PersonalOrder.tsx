@@ -50,6 +50,10 @@ const PersonalOrder: React.FC = () => {
     barcodeLoading,
     handleInvoiceLink,
     invoiceLinking,
+    handleInvoiceXlsxUpload,
+    invoiceXlsxUploading,
+    invoiceXlsxInputRef,
+    trackingMap,
     handleInvoicePrint,
     invoicePrinting,
     // 진행 모달
@@ -100,7 +104,7 @@ const PersonalOrder: React.FC = () => {
           >
             {barcodeLoading ? '매칭 중...' : '바코드 연결'}
           </button>
-          {/* ── 송장 연결 (PDF 업로드 → 주문번호 매핑 → Storage 저장) ── */}
+          {/* ── 송장 pdf (PDF 업로드 → 주문번호 매핑 → Storage 저장) ── */}
           <input
             ref={invoiceInputRef}
             type="file"
@@ -117,7 +121,22 @@ const PersonalOrder: React.FC = () => {
             onClick={() => invoiceInputRef.current?.click()}
             disabled={invoiceLinking}
           >
-            {invoiceLinking ? '연결 중...' : '송장 연결'}
+            {invoiceLinking ? '연결 중...' : '송장 pdf'}
+          </button>
+          {/* ── 송장 xlsx (엑셀 운송장 번호 → si_personal_order_tracking 저장) ── */}
+          <input
+            ref={invoiceXlsxInputRef}
+            type="file"
+            accept=".xlsx,.xls"
+            style={{ display: 'none' }}
+            onChange={handleInvoiceXlsxUpload}
+          />
+          <button
+            className="po-btn"
+            onClick={() => invoiceXlsxInputRef.current?.click()}
+            disabled={invoiceXlsxUploading}
+          >
+            {invoiceXlsxUploading ? '업로드 중...' : '송장 xlsx'}
           </button>
           <button
             className="po-btn"
@@ -317,7 +336,10 @@ const PersonalOrder: React.FC = () => {
                         // ── 상품정보 (클릭 → 드로어) ──
                         if (col.key === 'product_info') {
                           const needInvoice =
-                            !!row.order_id && !invoiceOrderIds.has(row.order_id)
+                            !!row.order_id
+                            && !invoiceOrderIds.has(row.order_id)
+                            && !trackingMap.has(row.order_id)
+                            && !row.invoice_number
                           const baseTitle = getCellValue(row, col.key)
                           const titleParts: string[] = []
                           if (row.release_stop) titleParts.push('[출고중지요청]')

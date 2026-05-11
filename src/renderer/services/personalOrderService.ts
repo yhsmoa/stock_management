@@ -597,3 +597,124 @@ export async function fetchPersonalOrders(
 
   return allData
 }
+
+// ══════════════════════════════════════════════════════════════════
+// 송장 xlsx 운송장 번호 (si_personal_order_tracking)
+// - 별도 테이블에 저장하여 [업데이트] 시 초기화 방지
+// - order_id 기준 upsert → 중복 시 덮어쓰기
+// ══════════════════════════════════════════════════════════════════
+
+/** 운송장 번호 upsert (order_id 기준, 배치 500건) */
+export async function upsertTrackingNumbers(
+  rows: { user_id: string; order_id: string; invoice_number: string }[],
+): Promise<{ success: number; errors: number }> {
+  let success = 0
+  let errors = 0
+
+  for (let i = 0; i < rows.length; i += SUPABASE_BATCH_SIZE) {
+    const batch = rows.slice(i, i + SUPABASE_BATCH_SIZE)
+    const { error } = await supabase
+      .from('si_personal_order_tracking')
+      .upsert(batch, { onConflict: 'user_id,order_id' })
+
+    if (error) {
+      console.error('[송장 tracking] upsert 오류:', error)
+      errors += batch.length
+    } else {
+      success += batch.length
+    }
+  }
+
+  return { success, errors }
+}
+
+/** 운송장 번호 전체 조회 (order_id → invoice_number Map) — 페이지네이션 루프 */
+export async function fetchTrackingNumbers(
+  userId: string,
+): Promise<Map<string, string>> {
+  const map = new Map<string, string>()
+  const batchSize = 1000
+  let from = 0
+
+  while (true) {
+    const { data, error } = await supabase
+      .from('si_personal_order_tracking')
+      .select('order_id, invoice_number')
+      .eq('user_id', userId)
+      .range(from, from + batchSize - 1)
+
+    if (error) {
+      console.error('[송장 tracking] 조회 오류:', error)
+      break
+    }
+    if (!data || data.length === 0) break
+
+    for (const row of data) {
+      if (row.order_id && row.invoice_number) {
+        map.set(row.order_id, row.invoice_number)
+      }
+    }
+
+    if (data.length < batchSize) break
+    from += batchSize
+  }
+
+  return map
+}
+
+/** 업데이트 후 정리: coupang_personal_orders에 없는 order_id 삭제 */
+export async function cleanupStaleTracking(
+  userId: string,
+  validOrderIds: Set<string>,
+): Promise<{ deleted: number }> {
+  // STEP 1: 현재 tracking 전체 order_id 조회
+  const allTrackingOrderIds: string[] = []
+  const batchSize = 1000
+  let from = 0
+
+  while (true) {
+    const { data, error } = await supabase
+      .from('si_personal_order_tracking')
+      .select('order_id')
+      .eq('user_id', userId)
+      .range(from, from + batchSize - 1)
+
+    if (error) {
+      console.error('[송장 tracking] 정리 조회 오류:', error)
+      break
+    }
+    if (!data || data.length === 0) break
+
+    for (const row of data) {
+      if (row.order_id) allTrackingOrderIds.push(row.order_id)
+    }
+
+    if (data.length < batchSize) break
+    from += batchSize
+  }
+
+  // STEP 2: validOrderIds에 없는 stale order_id 수집
+  const staleIds = allTrackingOrderIds.filter((id) => !validOrderIds.has(id))
+  if (staleIds.length === 0) return { deleted: 0 }
+
+  // STEP 3: 배치 삭제 (Supabase .in() 최대 약 300건 권장)
+  let deleted = 0
+  const deleteBatch = 300
+
+  for (let i = 0; i < staleIds.length; i += deleteBatch) {
+    const batch = staleIds.slice(i, i + deleteBatch)
+    const { error } = await supabase
+      .from('si_personal_order_tracking')
+      .delete()
+      .eq('user_id', userId)
+      .in('order_id', batch)
+
+    if (error) {
+      console.error('[송장 tracking] 정리 삭제 오류:', error)
+    } else {
+      deleted += batch.length
+    }
+  }
+
+  return { deleted }
+}

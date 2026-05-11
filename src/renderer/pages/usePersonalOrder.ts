@@ -3,7 +3,7 @@
    - 상태 관리, 데이터 로드, 핸들러, 필터/페이지네이션 로직
    ================================================================ */
 
-import { useState, useMemo, useCallback, useEffect } from 'react'
+import { useState, useRef, useMemo, useCallback, useEffect } from 'react'
 import * as XLSX from 'xlsx'
 import {
   fetchAllOrdersheets,
@@ -13,6 +13,9 @@ import {
   fetchPersonalOrders,
   acknowledgeOrders,
   updateOrderStatusToInstruct,
+  upsertTrackingNumbers,
+  fetchTrackingNumbers,
+  cleanupStaleTracking,
   STATUS_MAP,
   STATUS_REVERSE_MAP,
   type PersonalOrderRow,
@@ -155,6 +158,11 @@ export function usePersonalOrder() {
   // ── 송장 파일 매칭 Set (Storage 에서 일괄 로드) ───────────
   const [invoiceOrderIds, setInvoiceOrderIds] = useState<Set<string>>(new Set())
 
+  // ── 송장 xlsx 운송장 번호 (si_personal_order_tracking) ────
+  const invoiceXlsxInputRef = useRef<HTMLInputElement>(null)
+  const [invoiceXlsxUploading, setInvoiceXlsxUploading] = useState(false)
+  const [trackingMap, setTrackingMap] = useState<Map<string, string>>(new Map())
+
   // ── fulfillment 상태 (키: `${order_id}|${option_id}`) ─────────
   const [aggMap, setAggMap] = useState<Map<string, FulfillmentAgg>>(new Map())
   const [multiKeys, setMultiKeys] = useState<Set<string>>(new Set())
@@ -260,13 +268,15 @@ export function usePersonalOrder() {
       if (!userId) return
       setLoading(true)
       try {
-        // DB 주문 조회 + Storage 송장 파일 목록 조회 (병렬)
-        const [data, invIds] = await Promise.all([
+        // DB 주문 조회 + Storage 송장 파일 목록 + xlsx 운송장 번호 (병렬)
+        const [data, invIds, trkMap] = await Promise.all([
           fetchPersonalOrders(userId),
           fetchInvoiceOrderIds(userId),
+          fetchTrackingNumbers(userId),
         ])
         setItems(data)
         setInvoiceOrderIds(invIds)
+        setTrackingMap(trkMap)
         await loadFulfillmentData(data)
       } catch (err) {
         console.error('데이터 로드 실패:', err)
@@ -337,6 +347,20 @@ export function usePersonalOrder() {
       setCurrentPage(1)
       setSelectedIds(new Set())
       updateStep(4, 'done', `${freshData.length}건`)
+
+      // STEP 5.5: xlsx 운송장 번호 stale 정리 (진행 단계 표시 없이 백그라운드)
+      const validOrderIds = new Set(freshData.map((r) => r.order_id).filter(Boolean))
+      const { deleted: trackingDeleted } = await cleanupStaleTracking(userId, validOrderIds)
+      if (trackingDeleted > 0) {
+        console.log(`[송장 tracking] stale ${trackingDeleted}건 정리`)
+        setTrackingMap((prev) => {
+          const next = new Map(prev)
+          for (const key of next.keys()) {
+            if (!validOrderIds.has(key)) next.delete(key)
+          }
+          return next
+        })
+      }
 
       // STEP 6: fulfillment
       updateStep(5, 'active')
@@ -500,10 +524,14 @@ export function usePersonalOrder() {
       result = result.filter((row) => row.release_stop)
     }
 
-    // 송장 미연결 필터
+    // 송장 미연결 필터 (PDF 송장, xlsx 운송장, API 운송장 모두 없는 행)
     if (showNoInvoiceOnly) {
       result = result.filter(
-        (row) => !!row.order_id && !invoiceOrderIds.has(row.order_id),
+        (row) =>
+          !!row.order_id
+          && !invoiceOrderIds.has(row.order_id)
+          && !trackingMap.has(row.order_id)
+          && !row.invoice_number,
       )
     }
 
@@ -517,7 +545,7 @@ export function usePersonalOrder() {
       const dateB = b.ordered_at ? new Date(b.ordered_at).getTime() : 0
       return dateA - dateB
     })
-  }, [items, activeTab, appliedSearch, showUnorderedOnly, showReleaseStopOnly, showNoInvoiceOnly, selectedStatuses, invoiceOrderIds, aggMap, multiKeys, orderItemsMap])
+  }, [items, activeTab, appliedSearch, showUnorderedOnly, showReleaseStopOnly, showNoInvoiceOnly, selectedStatuses, invoiceOrderIds, trackingMap, aggMap, multiKeys, orderItemsMap])
 
   // ── [엑셀 다운] 핸들러 (쿠팡 DeliveryList 양식) ────────────────
   const handleExcelDownload = useCallback(() => {
@@ -837,6 +865,82 @@ export function usePersonalOrder() {
     }
   }, [items, invoiceOrderIds, getUserInfo, updateStep, closeProgress])
 
+  // ── [송장 xlsx] 핸들러 — 엑셀 운송장 번호 업로드 ──────────────────
+  const handleInvoiceXlsxUpload = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+
+    const { userId } = getUserInfo()
+    if (!userId) {
+      alert('로그인 정보를 확인해 주세요.')
+      return
+    }
+
+    setInvoiceXlsxUploading(true)
+    try {
+      // STEP 1: 파일 읽기
+      const binaryStr = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader()
+        reader.onload = (ev) => resolve(ev.target?.result as string)
+        reader.onerror = () => reject(new Error('파일 읽기 실패'))
+        reader.readAsBinaryString(file)
+      })
+      const workbook = XLSX.read(binaryStr, { type: 'binary' })
+      const worksheet = workbook.Sheets[workbook.SheetNames[0]]
+      const rows = XLSX.utils.sheet_to_json(worksheet, { header: 1 }) as any[][]
+
+      // STEP 2: 파싱 — C열(index 2) = 주문번호, E열(index 4) = 운송장번호
+      const orderIdSet = new Set(items.map((r) => r.order_id).filter(Boolean))
+      const parsed: { user_id: string; order_id: string; invoice_number: string }[] = []
+      let unmatchedCount = 0
+
+      for (let i = 0; i < rows.length; i++) {
+        const row = rows[i]
+        if (!row) continue
+
+        const orderId = row[2] != null ? String(row[2]).trim() : ''
+        const invoiceNum = row[4] != null ? String(row[4]).trim() : ''
+
+        if (!orderId || !invoiceNum) continue
+
+        if (orderIdSet.has(orderId)) {
+          parsed.push({ user_id: userId, order_id: orderId, invoice_number: invoiceNum })
+        } else {
+          unmatchedCount++
+        }
+      }
+
+      if (parsed.length === 0) {
+        alert(`매칭 가능한 데이터가 없습니다.${unmatchedCount > 0 ? `\n(미매칭: ${unmatchedCount}건)` : ''}`)
+        return
+      }
+
+      // STEP 3: DB 저장
+      const { success, errors } = await upsertTrackingNumbers(parsed)
+
+      // STEP 4: 로컬 상태 갱신
+      setTrackingMap((prev) => {
+        const next = new Map(prev)
+        for (const r of parsed) {
+          next.set(r.order_id, r.invoice_number)
+        }
+        return next
+      })
+
+      alert(
+        `송장 xlsx 업로드 완료!\n` +
+        `매칭 저장: ${success}건${errors > 0 ? `, 실패: ${errors}건` : ''}` +
+        `${unmatchedCount > 0 ? `\n미매칭(주문번호 없음): ${unmatchedCount}건` : ''}`,
+      )
+    } catch (err: any) {
+      console.error('[송장 xlsx] 실패:', err)
+      alert(`송장 xlsx 업로드 중 오류가 발생했습니다.\n${err.message || ''}`)
+    } finally {
+      setInvoiceXlsxUploading(false)
+      if (invoiceXlsxInputRef.current) invoiceXlsxInputRef.current.value = ''
+    }
+  }, [items, getUserInfo])
+
   // ── [송장 인쇄] 핸들러 (체크된 주문 일괄 인쇄) ───────────────────
   const [invoicePrinting, setInvoicePrinting] = useState(false)
 
@@ -991,6 +1095,10 @@ export function usePersonalOrder() {
     barcodeLoading,
     handleInvoiceLink,
     invoiceLinking,
+    handleInvoiceXlsxUpload,
+    invoiceXlsxUploading,
+    invoiceXlsxInputRef,
+    trackingMap,
     handleInvoicePrint,
     invoicePrinting,
     handleSelectAll,
