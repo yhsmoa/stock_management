@@ -152,6 +152,7 @@ export function usePersonalOrder() {
   const [showUnorderedOnly, setShowUnorderedOnly] = useState(false)
   const [showReleaseStopOnly, setShowReleaseStopOnly] = useState(false)
   const [showNoInvoiceOnly, setShowNoInvoiceOnly] = useState(false)
+  const [showReorderOnly, setShowReorderOnly] = useState(false)
   // 상태 점(green/red/gray) 필터 — 멀티 선택(OR). 빈 Set = 필터 없음
   const [selectedStatuses, setSelectedStatuses] = useState<Set<StatusType>>(new Set())
 
@@ -167,6 +168,7 @@ export function usePersonalOrder() {
   const [aggMap, setAggMap] = useState<Map<string, FulfillmentAgg>>(new Map())
   const [multiKeys, setMultiKeys] = useState<Set<string>>(new Set())
   const [orderItemsMap, setOrderItemsMap] = useState<Map<string, OrderItemDetail[]>>(new Map())
+  const [reorderCountMap, setReorderCountMap] = useState<Map<string, number>>(new Map())
 
   // ── 드로어 선택 상태 ──────────────────────────────────────────
   const [selectedDrawerItem, setSelectedDrawerItem] = useState<DrawerItemState | null>(null)
@@ -247,6 +249,7 @@ export function usePersonalOrder() {
       setAggMap(new Map())
       setMultiKeys(new Set())
       setOrderItemsMap(new Map())
+      setReorderCountMap(new Map())
       return
     }
 
@@ -256,6 +259,7 @@ export function usePersonalOrder() {
       setAggMap(result.aggMap)
       setMultiKeys(result.multiKeys)
       setOrderItemsMap(result.orderItemsMap)
+      setReorderCountMap(result.reorderCountMap)
     } catch (err) {
       console.error('[PersonalOrder] fulfillment 조회 실패:', err)
     }
@@ -441,6 +445,7 @@ export function usePersonalOrder() {
     setShowUnorderedOnly(false)
     setShowReleaseStopOnly(false)
     setShowNoInvoiceOnly(false)
+    setShowReorderOnly(false)
     setSelectedStatuses(new Set())
   }, [])
 
@@ -459,6 +464,12 @@ export function usePersonalOrder() {
   // ── 송장 미연결 필터 토글 ────────────────────────────────────
   const toggleNoInvoiceOnly = useCallback(() => {
     setShowNoInvoiceOnly((prev) => !prev)
+    setCurrentPage(1)
+  }, [])
+
+  // ── 재주문 필터 토글 (2차 이상) ──────────────────────────────
+  const toggleReorderOnly = useCallback(() => {
+    setShowReorderOnly((prev) => !prev)
     setCurrentPage(1)
   }, [])
 
@@ -540,12 +551,21 @@ export function usePersonalOrder() {
       result = result.filter((row) => selectedStatuses.has(computeStatus(row)))
     }
 
+    // 재주문 필터 (2차 이상)
+    if (showReorderOnly) {
+      result = result.filter((row) => {
+        if (!row.order_id) return false
+        const key = makeFulfillmentKey(row.order_id, row.vendor_item_id)
+        return (reorderCountMap.get(key) ?? 1) >= 2
+      })
+    }
+
     return result.sort((a, b) => {
       const dateA = a.ordered_at ? new Date(a.ordered_at).getTime() : 0
       const dateB = b.ordered_at ? new Date(b.ordered_at).getTime() : 0
       return dateA - dateB
     })
-  }, [items, activeTab, appliedSearch, showUnorderedOnly, showReleaseStopOnly, showNoInvoiceOnly, selectedStatuses, invoiceOrderIds, trackingMap, aggMap, multiKeys, orderItemsMap])
+  }, [items, activeTab, appliedSearch, showUnorderedOnly, showReleaseStopOnly, showNoInvoiceOnly, showReorderOnly, selectedStatuses, invoiceOrderIds, trackingMap, aggMap, multiKeys, orderItemsMap, reorderCountMap])
 
   // ── [엑셀 다운] 핸들러 (쿠팡 DeliveryList 양식) ────────────────
   const handleExcelDownload = useCallback(() => {
@@ -1074,6 +1094,7 @@ export function usePersonalOrder() {
     showUnorderedOnly,
     showReleaseStopOnly,
     showNoInvoiceOnly,
+    showReorderOnly,
     selectedStatuses,
     invoiceOrderIds,
     selectedDrawerItem,
@@ -1115,10 +1136,12 @@ export function usePersonalOrder() {
     toggleUnorderedOnly,
     toggleReleaseStopOnly,
     toggleNoInvoiceOnly,
+    toggleReorderOnly,
     toggleStatusFilter,
 
     // fulfillment 헬퍼
     getAgg,
     getRowStatus,
+    reorderCountMap,
   }
 }

@@ -14,6 +14,7 @@ import {
   STATUS_DOT_LABELS,
   getCellValue,
 } from './usePersonalOrder'
+import { makeFulfillmentKey } from '../services/orderFulfillmentService'
 
 const PersonalOrder: React.FC = () => {
   const {
@@ -30,6 +31,7 @@ const PersonalOrder: React.FC = () => {
     showUnorderedOnly,
     showReleaseStopOnly,
     showNoInvoiceOnly,
+    showReorderOnly,
     selectedStatuses,
     invoiceOrderIds,
     selectedDrawerItem,
@@ -66,9 +68,11 @@ const PersonalOrder: React.FC = () => {
     toggleUnorderedOnly,
     toggleReleaseStopOnly,
     toggleNoInvoiceOnly,
+    toggleReorderOnly,
     toggleStatusFilter,
     getAgg,
     getRowStatus,
+    reorderCountMap,
   } = usePersonalOrder()
 
   // ── 송장 연결 파일 input ref ────────────────────────────────────
@@ -182,18 +186,12 @@ const PersonalOrder: React.FC = () => {
         />
       </div>
 
-      {/* ── 필터 카운트 + 미주문 버튼 + 주문확인 버튼 ─────────── */}
+      {/* ── 필터 카운트 + 필터 버튼 + 주문확인 버튼 ─────────── */}
       <div className="po-table-toolbar">
         <div className="po-toolbar-left">
           <span className="po-filter-count">
             {activeTab} {filteredCount}건
           </span>
-          <button
-            className={`po-tab-btn${showUnorderedOnly ? ' active' : ''}`}
-            onClick={toggleUnorderedOnly}
-          >
-            미주문
-          </button>
           <button
             className={`po-tab-btn${showReleaseStopOnly ? ' active' : ''}`}
             onClick={toggleReleaseStopOnly}
@@ -221,6 +219,18 @@ const PersonalOrder: React.FC = () => {
                 : <span className={`po-status-dot ${st}`} />}
             </button>
           ))}
+          <button
+            className={`po-tab-btn${showUnorderedOnly ? ' active' : ''}`}
+            onClick={toggleUnorderedOnly}
+          >
+            미주문
+          </button>
+          <button
+            className={`po-tab-btn${showReorderOnly ? ' active' : ''}`}
+            onClick={toggleReorderOnly}
+          >
+            재주문
+          </button>
         </div>
         {activeTab === '결제완료' && (
           <button
@@ -335,6 +345,10 @@ const PersonalOrder: React.FC = () => {
 
                         // ── 상품정보 (클릭 → 드로어) ──
                         if (col.key === 'product_info') {
+                          const ffKey = row.order_id
+                            ? makeFulfillmentKey(row.order_id, row.vendor_item_id)
+                            : ''
+                          const reorderCount = ffKey ? (reorderCountMap.get(ffKey) ?? 1) : 1
                           const needInvoice =
                             !!row.order_id
                             && !invoiceOrderIds.has(row.order_id)
@@ -343,6 +357,7 @@ const PersonalOrder: React.FC = () => {
                           const baseTitle = getCellValue(row, col.key)
                           const titleParts: string[] = []
                           if (row.release_stop) titleParts.push('[출고중지요청]')
+                          if (reorderCount >= 2) titleParts.push(`[${reorderCount}차]`)
                           if (needInvoice) titleParts.push('[송장 미연결]')
                           titleParts.push(baseTitle)
 
@@ -363,6 +378,22 @@ const PersonalOrder: React.FC = () => {
                                 </span>
                               )}
                               {baseTitle}
+                              {reorderCount >= 2 && (
+                                <span
+                                  style={{
+                                    marginLeft: 4,
+                                    padding: '1px 5px',
+                                    borderRadius: 4,
+                                    fontSize: 11,
+                                    fontWeight: 600,
+                                    background: '#F97316',
+                                    color: '#fff',
+                                  }}
+                                  title={`${reorderCount}차 주문`}
+                                >
+                                  {reorderCount}차
+                                </span>
+                              )}
                               {needInvoice && (
                                 <span
                                   style={{ marginLeft: 4 }}

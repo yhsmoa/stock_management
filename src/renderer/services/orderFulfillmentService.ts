@@ -115,13 +115,15 @@ export async function fetchFulfillmentData(
   aggMap: Map<string, FulfillmentAgg>
   multiKeys: Set<string>
   orderItemsMap: Map<string, OrderItemDetail[]>
+  reorderCountMap: Map<string, number>
 }> {
   const aggMap = new Map<string, FulfillmentAgg>()
   const multiKeys = new Set<string>()
   const orderItemsMap = new Map<string, OrderItemDetail[]>()
+  const reorderCountMap = new Map<string, number>()
 
   if (orderIds.length === 0 || !orderUserId) {
-    return { aggMap, multiKeys, orderItemsMap }
+    return { aggMap, multiKeys, orderItemsMap, reorderCountMap }
   }
 
   // ── 1) ft_order_items 조회 (personal_order_no = our order_id) ──
@@ -149,9 +151,10 @@ export async function fetchFulfillmentData(
     arr.sort((a, b) => (a.created_at ?? '').localeCompare(b.created_at ?? ''))
   }
 
-  // ── multi 판정: 같은 key 그룹 내 set_seq 중복 여부 ──────────────
+  // ── multi 판정 + 재주문 차수 계산 ──────────────────────────────
   // - 세트 상품(set_seq=1,2,...)은 정상 → 중복 없음
   // - 재주문으로 동일 set_seq 재등장 시 multi
+  // - set_seq=1 이 N번 나오면 N차 재주문 → reorderCountMap 에 기록
   for (const [key, arr] of orderItemsMap) {
     const seqCount = new Map<number | null, number>()
     for (const oi of arr) {
@@ -160,10 +163,12 @@ export async function fetchFulfillmentData(
     for (const c of seqCount.values()) {
       if (c >= 2) { multiKeys.add(key); break }
     }
+    const seq1Count = seqCount.get(1) ?? 0
+    if (seq1Count >= 2) reorderCountMap.set(key, seq1Count)
   }
 
   const itemIds = orderItems.map((oi) => oi.id)
-  if (itemIds.length === 0) return { aggMap, multiKeys, orderItemsMap }
+  if (itemIds.length === 0) return { aggMap, multiKeys, orderItemsMap, reorderCountMap }
 
   // ── 2) inbound + outbound 병렬 조회 ────────────────────────────
   const [inbounds, outbounds] = await Promise.all([
@@ -205,7 +210,7 @@ export async function fetchFulfillmentData(
     if (f.shipment_no) entry.shipped += qty
   }
 
-  return { aggMap, multiKeys, orderItemsMap }
+  return { aggMap, multiKeys, orderItemsMap, reorderCountMap }
 }
 
 // ══════════════════════════════════════════════════════════════════
