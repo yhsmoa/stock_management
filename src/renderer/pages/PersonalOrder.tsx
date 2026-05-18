@@ -46,6 +46,8 @@ const PersonalOrder: React.FC = () => {
     handleAcknowledge,
     handleExcelDownload,
     handleOrderCopy,
+    handleOrderSend,
+    orderSending,
     handleRowClick,
     handleSearchSubmit,
     handleBarcodeLink,
@@ -157,7 +159,14 @@ const PersonalOrder: React.FC = () => {
             엑셀 다운
           </button>
           <button className="po-btn" onClick={handleOrderCopy}>
-            주문
+            복사
+          </button>
+          <button
+            className="po-btn"
+            onClick={handleOrderSend}
+            disabled={orderSending}
+          >
+            {orderSending ? '전송 중...' : '주문 전송'}
           </button>
         </div>
       </div>

@@ -39,6 +39,7 @@ import {
   fetchInvoiceOrderIds,
   deleteInvoicesByOrderIds,
 } from '../services/invoiceService'
+import { sendPersonalOrdersPre } from '../services/orderSendService'
 import type { ProgressStep } from '../components/common/ProgressModal'
 import type { AuthUser } from '../types/auth'
 
@@ -659,6 +660,38 @@ export function usePersonalOrder() {
     alert(`${targetRows.length}건 클립보드에 복사되었습니다.`)
   }, [filteredItems, selectedIds])
 
+  // ── [주문 전송] 핸들러 — ft_order_items_pre 일괄 insert ─────────
+  const [orderSending, setOrderSending] = useState(false)
+
+  const handleOrderSend = useCallback(async () => {
+    if (selectedIds.size === 0) {
+      alert('전송할 주문을 선택해 주세요.')
+      return
+    }
+    const { orderUserId } = getUserInfo()
+    if (!orderUserId) {
+      alert('주문 계정 정보가 없습니다. 관리자에게 문의하세요.')
+      return
+    }
+    const targetRows = filteredItems.filter((r) => selectedIds.has(r.shipment_box_id))
+    if (targetRows.length === 0) {
+      alert('전송할 주문이 없습니다.')
+      return
+    }
+
+    setOrderSending(true)
+    try {
+      const { count, cartName } = await sendPersonalOrdersPre(targetRows, orderUserId)
+      setSelectedIds(new Set())
+      alert(`${count}건 전송 완료 (${cartName})`)
+    } catch (err: any) {
+      console.error('[주문 전송] 실패:', err)
+      alert(`주문 전송 실패: ${err.message}`)
+    } finally {
+      setOrderSending(false)
+    }
+  }, [selectedIds, filteredItems, getUserInfo])
+
   // ── 행 클릭 → 드로어 열기 (복합 키: order_id|option_id) ──────
   const handleRowClick = useCallback((row: PersonalOrderRow) => {
     if (!row.order_id) return
@@ -1120,6 +1153,8 @@ export function usePersonalOrder() {
     handleAcknowledge,
     handleExcelDownload,
     handleOrderCopy,
+    handleOrderSend,
+    orderSending,
     handleRowClick,
     handleBarcodeLink,
     barcodeLoading,
