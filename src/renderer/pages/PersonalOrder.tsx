@@ -3,7 +3,7 @@
    - 로직은 usePersonalOrder 훅에서 관리
    ================================================================ */
 
-import React, { useRef } from 'react'
+import React, { useRef, useState, useEffect } from 'react'
 import './PersonalOrder.css'
 import FulfillmentDrawer from './FulfillmentDrawer'
 import ProgressModal from '../components/common/ProgressModal'
@@ -79,6 +79,56 @@ const PersonalOrder: React.FC = () => {
 
   // ── 송장 연결 파일 input ref ────────────────────────────────────
   const invoiceInputRef = useRef<HTMLInputElement>(null)
+
+  // ── 셀 선택(엑셀 UX): 1클릭 → 셀 활성, Ctrl+C → 텍스트 복사 ─────
+  const [focusedCell, setFocusedCell] = useState<{ rowKey: string; colKey: string } | null>(null)
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!focusedCell) return
+
+      // Escape → 선택 해제
+      if (e.key === 'Escape') {
+        setFocusedCell(null)
+        return
+      }
+
+      // Ctrl/Cmd + C → 활성 셀 텍스트 복사
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'c') {
+        const ae = document.activeElement
+        // 입력 요소 포커스 시 native 복사 우선
+        if (ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA')) return
+        // 드래그 선택된 텍스트가 있으면 native 복사 우선
+        const sel = window.getSelection()
+        if (sel && sel.toString().length > 0) return
+
+        const cellEl = document.querySelector<HTMLElement>(
+          `td[data-row-key="${focusedCell.rowKey}"][data-col-key="${focusedCell.colKey}"]`,
+        )
+        const text = (cellEl?.textContent ?? '').trim()
+        if (!text) return
+
+        // navigator.clipboard 우선, 미지원(insecure context) 시 execCommand fallback
+        const writeFallback = () => {
+          const ta = document.createElement('textarea')
+          ta.value = text
+          ta.style.cssText = 'position:fixed;top:-9999px;left:-9999px;opacity:0'
+          document.body.appendChild(ta)
+          ta.select()
+          document.execCommand('copy')
+          document.body.removeChild(ta)
+        }
+        if (navigator.clipboard?.writeText) {
+          navigator.clipboard.writeText(text).catch(writeFallback)
+        } else {
+          writeFallback()
+        }
+        e.preventDefault()
+      }
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [focusedCell])
 
   return (
     <div className="po-container">
@@ -319,10 +369,27 @@ const PersonalOrder: React.FC = () => {
                       </td>
 
                       {COLUMNS.map((col) => {
+                        // ── 셀 선택(엑셀 UX) 공통 props ──
+                        const isFocused =
+                          focusedCell?.rowKey === row.shipment_box_id
+                          && focusedCell?.colKey === col.key
+                        const focusedClass = isFocused ? ' po-cell-focused' : ''
+                        const onCellClick = () =>
+                          setFocusedCell({ rowKey: row.shipment_box_id, colKey: col.key })
+                        const cellDataAttrs = {
+                          'data-row-key': row.shipment_box_id,
+                          'data-col-key': col.key,
+                        }
+
                         // ── fulfillment 컬럼 ──
                         if (col.key === 'ff_status') {
                           return (
-                            <td key={col.key}>
+                            <td
+                              key={col.key}
+                              {...cellDataAttrs}
+                              className={focusedClass.trim() || undefined}
+                              onClick={onCellClick}
+                            >
                               {status === 'shipped' ? (
                                 <span
                                   title={STATUS_DOT_LABELS.shipped}
@@ -340,16 +407,52 @@ const PersonalOrder: React.FC = () => {
                           )
                         }
                         if (col.key === 'ff_arrival') {
-                          return <td key={col.key}>{agg.arrival || '-'}</td>
+                          return (
+                            <td
+                              key={col.key}
+                              {...cellDataAttrs}
+                              className={focusedClass.trim() || undefined}
+                              onClick={onCellClick}
+                            >
+                              {agg.arrival || '-'}
+                            </td>
+                          )
                         }
                         if (col.key === 'ff_packed') {
-                          return <td key={col.key}>{agg.packed || '-'}</td>
+                          return (
+                            <td
+                              key={col.key}
+                              {...cellDataAttrs}
+                              className={focusedClass.trim() || undefined}
+                              onClick={onCellClick}
+                            >
+                              {agg.packed || '-'}
+                            </td>
+                          )
                         }
                         if (col.key === 'ff_cancel') {
-                          return <td key={col.key}>{agg.cancel || '-'}</td>
+                          return (
+                            <td
+                              key={col.key}
+                              {...cellDataAttrs}
+                              className={focusedClass.trim() || undefined}
+                              onClick={onCellClick}
+                            >
+                              {agg.cancel || '-'}
+                            </td>
+                          )
                         }
                         if (col.key === 'ff_shipped') {
-                          return <td key={col.key}>{agg.shipped || '-'}</td>
+                          return (
+                            <td
+                              key={col.key}
+                              {...cellDataAttrs}
+                              className={focusedClass.trim() || undefined}
+                              onClick={onCellClick}
+                            >
+                              {agg.shipped || '-'}
+                            </td>
+                          )
                         }
 
                         // ── 상품정보 (클릭 → 드로어) ──
@@ -373,9 +476,13 @@ const PersonalOrder: React.FC = () => {
                           return (
                             <td
                               key={col.key}
-                              className="col-product po-clickable"
+                              {...cellDataAttrs}
+                              className={`col-product po-clickable${focusedClass}`}
                               title={titleParts.join(' ')}
-                              onClick={() => handleRowClick(row)}
+                              onClick={() => {
+                                onCellClick()
+                                handleRowClick(row)
+                              }}
                             >
                               {row.release_stop && (
                                 <span
@@ -423,7 +530,10 @@ const PersonalOrder: React.FC = () => {
                           return (
                             <td
                               key={col.key}
+                              {...cellDataAttrs}
+                              className={focusedClass.trim() || undefined}
                               title={(flagged ? '[분리배송] ' : '') + baseValue}
+                              onClick={onCellClick}
                             >
                               {flagged && (
                                 <span
@@ -441,7 +551,13 @@ const PersonalOrder: React.FC = () => {
 
                         // ── 기본 컬럼 ──
                         return (
-                          <td key={col.key} title={getCellValue(row, col.key)}>
+                          <td
+                            key={col.key}
+                            {...cellDataAttrs}
+                            className={focusedClass.trim() || undefined}
+                            title={getCellValue(row, col.key)}
+                            onClick={onCellClick}
+                          >
                             {getCellValue(row, col.key)}
                           </td>
                         )
