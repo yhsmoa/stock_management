@@ -35,6 +35,9 @@ const INSERT_CHUNK = 1000
  *   user_id          ← orderUserId (ft_users.id)
  *   cart_id          ← create_cart 반환값
  *   cart_name        ← create_cart 반환값
+ *   shipment_type    ← 'PERSONAL' (고정)
+ *   personal_order_no← r.order_id (쿠팡 주문번호)
+ *   cart_seq         ← 1부터 시작하는 카트 내 순번
  *
  * @param rows         - 체크된 개인주문 행
  * @param orderUserId  - ft_users.id (= si_users.order_user_id)
@@ -69,7 +72,9 @@ export async function sendPersonalOrdersPre(
   }
 
   // ── (2) payload 매핑 ──────────────────────────────────────────
-  const payload = rows.map((r) => ({
+  //   cart_seq 는 rows 전체 길이 기준 1-based 순번
+  //   (1000건 청크 분할은 이 payload 이후라 청크 경계 영향 없음)
+  const payload = rows.map((r, idx) => ({
     item_name: r.item_name,
     option_name: r.option_name,
     order_qty: r.shipping_count,
@@ -78,6 +83,9 @@ export async function sendPersonalOrdersPre(
     user_id: orderUserId,
     cart_id: cartId,
     cart_name: cartName,
+    shipment_type: 'PERSONAL' as const,
+    personal_order_no: r.order_id,
+    cart_seq: idx + 1,
   }))
 
   // ── (3) ft_cart_items 1000건 청크 insert ──────────────────────
