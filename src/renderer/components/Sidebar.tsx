@@ -26,6 +26,7 @@ const subLinkBase: React.CSSProperties = {
 
 const Sidebar: React.FC<SidebarProps> = ({ isOpen }) => {
   const [isCoupangOpen, setIsCoupangOpen] = useState(false)
+  const [isItemOpen, setIsItemOpen] = useState(false)
   const [isShipmentOpen, setIsShipmentOpen] = useState(false)
 
   const hoverIn = (e: React.MouseEvent) => { (e.currentTarget as HTMLElement).style.backgroundColor = theme.colors.sidebarHover }
@@ -99,6 +100,29 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen }) => {
               사입관리
             </Link>
           </>
+        )}
+
+        {/* ── 아이템관리 (접이식 하위 메뉴) ────────────────────── */}
+        <div
+          onClick={() => setIsItemOpen(!isItemOpen)}
+          style={{
+            ...linkBase,
+            cursor: 'pointer',
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            userSelect: 'none',
+          }}
+          onMouseEnter={hoverIn}
+          onMouseLeave={hoverOut}
+        >
+          아이템관리
+          <span style={{ fontSize: '12px' }}>{isItemOpen ? '▾' : '▸'}</span>
+        </div>
+        {isItemOpen && (
+          <Link to="/item-info" style={subLinkBase} onMouseEnter={subHoverIn} onMouseLeave={subHoverOut}>
+            상품정보
+          </Link>
         )}
 
         <Link to="/inventory" style={linkBase} onMouseEnter={hoverIn} onMouseLeave={hoverOut}>
