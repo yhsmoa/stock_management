@@ -578,3 +578,66 @@ export async function fetchOrderDelta(
 
   return result
 }
+
+// ══════════════════════════════════════════════════════════════════
+// 취소 메타 (취소사유 + site_url) — 전량취소 복사용
+//   - itemIds 가 [복사] 대상 red 행의 ft_order_items.id 집합
+//   - ft_order_items.site_url + ft_cancel_details.cancel_reason 병렬 조회
+//   - itemId 별로 합쳐 Map 반환
+// ══════════════════════════════════════════════════════════════════
+
+/** 행별 취소사유(여러 건 가능) + site_url */
+export interface CancelMeta {
+  siteUrl: string | null
+  cancelReasons: string[]
+}
+
+/**
+ * 전량취소 상태 복사 시 Q열에 들어갈 메타 조회
+ *
+ * @param itemIds      - ft_order_items.id 목록 (red 행의 모든 item 평탄화)
+ * @param orderUserId  - ft_users.id — 필수 (격리)
+ * @returns Map<itemId, CancelMeta>
+ */
+export async function fetchCancelMetaForItems(
+  itemIds: string[],
+  orderUserId: string,
+): Promise<Map<string, CancelMeta>> {
+  const result = new Map<string, CancelMeta>()
+  if (itemIds.length === 0 || !orderUserId) return result
+
+  // ── 1) ft_order_items.site_url + 2) ft_cancel_details.cancel_reason 병렬 ──
+  const [items, cancels] = await Promise.all([
+    batchIn<{ id: string; site_url: string | null }>(
+      'ft_order_items',
+      'id, site_url',
+      'id',
+      itemIds,
+    ),
+    batchIn<{ order_items_id: string; cancel_reason: string | null }>(
+      'ft_cancel_details',
+      'order_items_id, cancel_reason',
+      'order_items_id',
+      itemIds,
+    ),
+  ])
+
+  // ── itemId → entry 초기화 ──
+  for (const id of itemIds) {
+    result.set(id, { siteUrl: null, cancelReasons: [] })
+  }
+
+  // ── site_url 매핑 ──
+  for (const it of items) {
+    const entry = result.get(it.id)
+    if (entry) entry.siteUrl = it.site_url
+  }
+
+  // ── 취소사유 매핑 (같은 item 에 여러 건이면 모두 보존) ──
+  for (const c of cancels) {
+    const entry = result.get(c.order_items_id)
+    if (entry && c.cancel_reason) entry.cancelReasons.push(c.cancel_reason)
+  }
+
+  return result
+}

@@ -22,6 +22,7 @@ import {
 } from '../services/personalOrderService'
 import {
   fetchFulfillmentData,
+  fetchCancelMetaForItems,
   makeFulfillmentKey,
   EMPTY_AGG,
   type FulfillmentAgg,
@@ -618,8 +619,11 @@ export function usePersonalOrder() {
     XLSX.writeFile(wb, `DeliveryList(${today}).xlsx`)
   }, [filteredItems, selectedIds])
 
-  // ── [주문] 구글 시트 클립보드 복사 ──────────────────────────
-  const handleOrderCopy = useCallback(() => {
+  // ── [복사] 구글 시트 클립보드 복사 ──────────────────────────
+  //   기본: A~V 22열 TSV (Q열 빈 값)
+  //   '전량취소' 상태 필터(red) 활성 시: red 행 한정 Q열에
+  //     "취소사유1 / 취소사유2\nsite_url" (TSV 큰따옴표 감쌈)
+  const handleOrderCopy = useCallback(async () => {
     const targetRows =
       selectedIds.size > 0
         ? filteredItems.filter((r) => selectedIds.has(r.shipment_box_id))
@@ -630,9 +634,51 @@ export function usePersonalOrder() {
       return
     }
 
+    // ── 전량취소(red) 필터 활성 시 Q열용 메타 사전 fetch ─────
+    //   rowKey(=shipment_box_id) → Q열 셀(이미 TSV 인코딩된 문자열)
+    let qByRowKey: Map<string, string> | null = null
+    if (selectedStatuses.has('red')) {
+      const { orderUserId } = getUserInfo()
+      const redItemIds: string[] = []
+      const redRowMeta: { rowKey: string; itemIds: string[] }[] = []
+      for (const r of targetRows) {
+        if (getRowStatus(r) !== 'red' || !r.order_id) continue
+        const key = makeFulfillmentKey(r.order_id, r.vendor_item_id)
+        const ids = (orderItemsMap.get(key) ?? []).map((oi) => oi.id)
+        if (ids.length === 0) continue
+        redItemIds.push(...ids)
+        redRowMeta.push({ rowKey: r.shipment_box_id, itemIds: ids })
+      }
+      if (redItemIds.length > 0 && orderUserId) {
+        try {
+          const meta = await fetchCancelMetaForItems(redItemIds, orderUserId)
+          qByRowKey = new Map()
+          for (const { rowKey, itemIds } of redRowMeta) {
+            const reasons: string[] = []
+            let siteUrl: string | null = null
+            for (const id of itemIds) {
+              const m = meta.get(id)
+              if (!m) continue
+              reasons.push(...m.cancelReasons)
+              if (!siteUrl && m.siteUrl) siteUrl = m.siteUrl
+            }
+            // TSV 셀 안 줄바꿈 보존: 큰따옴표 wrap + 내부 " → "" 이스케이프
+            const body = `${reasons.join(' / ')}\n${siteUrl ?? ''}`
+            qByRowKey.set(rowKey, `"${body.replace(/"/g, '""')}"`)
+          }
+        } catch (err) {
+          console.error('[handleOrderCopy] 취소 메타 조회 실패:', err)
+          // 메타 조회 실패해도 기본 복사는 진행
+        }
+      }
+    }
+
     // ── TSV 행 생성 (A~V = 22열) ──
-    const GAP = new Array(14).fill('')  // G~T 빈 열
+    //   GAP 14열: G~T (인덱스 0~13). Q = GAP[10] (G=7번째 컬럼 → 17-7=10)
     const lines = targetRows.map((r) => {
+      const gap = new Array(14).fill('')
+      const q = qByRowKey?.get(r.shipment_box_id)
+      if (q) gap[10] = q                            // Q열에만 채움
       const cols = [
         '',                                         // A
         '',                                         // B
@@ -640,7 +686,7 @@ export function usePersonalOrder() {
         r.option_name,                              // D
         r.shipping_count,                           // E
         r.barcode,                                  // F
-        ...GAP,                                     // G~T
+        ...gap,                                     // G~T
         r.vendor_item_id,                           // U
         `P-${r.order_id} ${r.receiver_name}`,       // V
       ]
@@ -658,7 +704,7 @@ export function usePersonalOrder() {
     document.body.removeChild(el)
 
     alert(`${targetRows.length}건 클립보드에 복사되었습니다.`)
-  }, [filteredItems, selectedIds])
+  }, [filteredItems, selectedIds, selectedStatuses, getRowStatus, orderItemsMap, getUserInfo])
 
   // ── [주문 전송] 핸들러 — ft_order_items_pre 일괄 insert ─────────
   const [orderSending, setOrderSending] = useState(false)
