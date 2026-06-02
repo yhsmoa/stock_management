@@ -54,8 +54,8 @@ export default function OrderModal({ isOpen, onClose, onApply }: OrderModalProps
         const list = await fetchRecentShipments(orderUserId, RECENT_SHIPMENT_LIMIT)
         if (cancelled) return
         setShipments(list)
-        // 기본: 전체 출고일 미체크 (= 전부 차감)
-        setCheckedShipmentIds(new Set())
+        // 기본: 최근 출고일 전체 체크 (= 전부 차감). 사용자가 미체크하면 그 출고건만 차감 제외.
+        setCheckedShipmentIds(new Set(list.map((s) => s.id)))
       } catch (e) {
         if (cancelled) return
         console.error('[OrderModal] fetchRecentShipments', e)
