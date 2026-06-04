@@ -36,7 +36,8 @@ import {
 import type { RgItem, RgItemData } from '../types/purchase'
 
 // ── 상수 ──────────────────────────────────────────────────────
-const PAGE_SIZE = 100
+const DEFAULT_PAGE_SIZE = 100
+export const PAGE_SIZE_OPTIONS = [100, 500] as const
 
 // ── 편집 가능 필드 타입 ──────────────────────────────────────────
 export type EditableField = 'input' | 'in_qty' | 'out_qty'
@@ -101,6 +102,13 @@ export function usePurchaseManagement() {
   const [items, setItems] = useState<RgItem[]>([])
   const [loading, setLoading] = useState(false)
   const [currentPage, setCurrentPage] = useState(1)
+  const [pageSize, setPageSizeRaw] = useState<number>(DEFAULT_PAGE_SIZE)
+
+  /** pageSize 변경 시 항상 1페이지로 리셋 (out-of-range 방지) */
+  const setPageSize = useCallback((n: number) => {
+    setPageSizeRaw(n)
+    setCurrentPage(1)
+  }, [])
 
   /* ── 재고건강 SKU 데이터 (option_id → RgItemData) ────────── */
   const [itemDataMap, setItemDataMap] = useState<Map<string, RgItemData>>(new Map())
@@ -254,9 +262,9 @@ export function usePurchaseManagement() {
   }
 
   const filteredCount = filteredItems.length
-  const totalPages = Math.max(1, Math.ceil(filteredCount / PAGE_SIZE))
-  const startIdx = (currentPage - 1) * PAGE_SIZE
-  const pageItems = filteredItems.slice(startIdx, startIdx + PAGE_SIZE)
+  const totalPages = Math.max(1, Math.ceil(filteredCount / pageSize))
+  const startIdx = (currentPage - 1) * pageSize
+  const pageItems = filteredItems.slice(startIdx, startIdx + pageSize)
 
   // ══════════════════════════════════════════════════════════════
   // 데이터 로드
@@ -1220,6 +1228,8 @@ console.log('[조회수] 완료! 총 '+results.length+'건 CSV 저장됨');
     loading,
     currentPage,
     setCurrentPage,
+    pageSize,
+    setPageSize,
     filteredItems,
     filteredCount,
     totalPages,

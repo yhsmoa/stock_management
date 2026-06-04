@@ -5,7 +5,7 @@
 
 import React, { useState } from 'react'
 import './PurchaseManagement.css'
-import { usePurchaseManagement, COLUMNS, type EditableField } from './usePurchaseManagement'
+import { usePurchaseManagement, COLUMNS, PAGE_SIZE_OPTIONS, type EditableField } from './usePurchaseManagement'
 import type { RgItem } from '../types/purchase'
 import ProductDetailPanel from '../components/purchase/ProductDetailPanel'
 import OrderModal from '../components/purchase/OrderModal'
@@ -173,6 +173,8 @@ const PurchaseManagement: React.FC = () => {
     warehouseQtyMap,
     copying,
     handleCopy,
+    pageSize,
+    setPageSize,
   } = usePurchaseManagement()
 
   // ── 주문 모달 open 상태 ─────────────────────────────────────
@@ -469,6 +471,22 @@ const PurchaseManagement: React.FC = () => {
       {/* ── 필터 툴바 (좌: 필터, 우: 저장) ──────────────────── */}
       <div className="purchase-table-toolbar">
         <div className="purchase-toolbar-left">
+          {/* ── 페이지 크기 선택 (드롭다운) ─────────────────── */}
+          <div className="purchase-dropdown">
+            <button className="purchase-filter-btn">{pageSize}개씩</button>
+            <div className="purchase-dropdown-menu">
+              {PAGE_SIZE_OPTIONS.map((n) => (
+                <button
+                  key={n}
+                  className="purchase-dropdown-item"
+                  onClick={() => setPageSize(n)}
+                >
+                  {n}개
+                </button>
+              ))}
+            </div>
+          </div>
+
           <button
             className={`purchase-filter-btn${activeFilter === 'sales' ? ' active' : ''}`}
             onClick={() => handleFilterToggle('sales')}
