@@ -377,8 +377,9 @@ export async function fetchRecentShipments(
 //                 AND shipment_type ∈ includeTypes (모달 선택)
 //                 AND set_seq=1 OR set_seq IS NULL (세트 중복 방지)
 //         - Σ ft_fulfillment_inbounds.quantity (type=CANCEL|RETURN)
-//         - Σ ft_fulfillment_outbounds.quantity (type=PACKED)
+//         - Σ ft_fulfillment_outbounds.quantity (type=PACKED AND shipment_id IS NOT NULL)
 //               EXCLUDING: shipment_id ∈ excludeShipmentIds (모달 미체크 출고일)
+//           ※ shipment_id=NULL 인 PACKED 는 출고 batch 미배정 → '출고' 로 인정 안 함
 // ══════════════════════════════════════════════════════════════════
 
 /**
@@ -495,9 +496,10 @@ export async function fetchOrderDelta(
       return rows
     })(),
 
-    // ── (C) 출고 — PACKED 전체 조회 후 excludeShipmentIds 로 제외 ──
-    //   * PACKED이면 전부 차감 대상
-    //   * 이후 excludeShipmentIds 에 해당하는 건만 제외
+    // ── (C) 출고 — PACKED + shipment_id NOT NULL 조회 후 excludeShipmentIds 로 제외 ──
+    //   * shipment_id 있는 PACKED 만 차감 대상 (= 출고 batch 배정된 것만 '출고' 로 인정)
+    //   * shipment_id NULL 인 PACKED 는 아직 출고 미배정으로 보고 차감하지 않음
+    //   * 이후 excludeShipmentIds 에 해당하는 건만 추가 제외
     (async () => {
       type OutboundRow = {
         order_item_id: string
@@ -513,6 +515,7 @@ export async function fetchOrderDelta(
             .select('order_item_id, quantity, shipment_id')
             .eq('user_id', orderUserId)
             .eq('type', 'PACKED')
+            .not('shipment_id', 'is', null)   // ← '출고' 정의: shipment_id 배정된 것만
             .in('order_item_id', chunk)
             .range(from, from + PAGE_SIZE - 1)
           if (error) {
