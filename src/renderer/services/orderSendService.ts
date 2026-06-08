@@ -71,6 +71,16 @@ export async function sendPersonalOrdersPre(
     throw new Error('카트 생성에 실패했습니다. (RPC 응답 비정상)')
   }
 
+  // ── (1-1) ft_carts.status = 'NEW' 업데이트 ───────────────────
+  const { error: cartUpdateError } = await (orderSupabase
+    .from('ft_carts') as any)
+    .update({ status: 'NEW' })
+    .eq('id', cartId)
+  if (cartUpdateError) {
+    console.error('[sendPersonalOrdersPre:ft_carts update]', cartUpdateError)
+    throw cartUpdateError
+  }
+
   // ── (2) payload 매핑 ──────────────────────────────────────────
   //   cart_seq 는 rows 전체 길이 기준 1-based 순번
   //   (1000건 청크 분할은 이 payload 이후라 청크 경계 영향 없음)
