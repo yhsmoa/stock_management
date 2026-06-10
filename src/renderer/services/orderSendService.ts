@@ -2,10 +2,10 @@
    주문 전송 서비스
    - 개인주문 행(체크된 행)을 purchase_agent.ft_cart_items 로
      일괄 insert
-   - cart_id / cart_name 은 Postgres RPC(create_cart)가 발급
-     · cart_id   : DB 가 gen_random_uuid() 로 생성
-     · cart_name : user_id 범위 내 비어있는 가장 작은 'cart-N'
-                   (UNIQUE 위반 예외 캐치 → 다음 N 재시도)
+   - cart_name 은 호출 측(사용자 입력) 으로부터 받음
+     · cart_id   : ft_carts INSERT 시 gen_random_uuid() default
+     · cart_name : 호출 인자
+                   (UNIQUE 위반 23505 시 사용자 친화 메시지로 변환)
    ================================================================ */
 
 import { orderSupabase, isOrderSupabaseConfigured } from './orderSupabase'
@@ -13,18 +13,19 @@ import type { PersonalOrderRow } from './personalOrderService'
 
 // ── 상수 ──────────────────────────────────────────────────────────
 const INSERT_CHUNK = 1000
+const UNIQUE_VIOLATION = '23505'
 
 // ══════════════════════════════════════════════════════════════════
-// 메인: 개인주문 일괄 전송 (ft_cart_items insert)
+// 메인: 개인주문 일괄 전송 (ft_carts insert + ft_cart_items insert)
 // ══════════════════════════════════════════════════════════════════
 
 /**
  * 체크된 PersonalOrderRow[] 를 ft_cart_items 에 일괄 insert
  *
  * 흐름:
- *   1) RPC `create_cart(p_user_id)` 호출 → cart_id / cart_name 발급
+ *   1) ft_carts INSERT — cart_name 은 호출 인자, cart_id 는 DB 발급
  *   2) rows.map → payload 생성 (cart_id / cart_name 전체 batch 공유)
- *   3) 1000건 청크 insert
+ *   3) 1000건 청크 insert (ft_cart_items)
  *
  * 매핑:
  *   item_name        ← r.item_name
@@ -33,19 +34,21 @@ const INSERT_CHUNK = 1000
  *   barcode          ← r.barcode
  *   vendor_option_id ← r.vendor_item_id (옵션 ID)
  *   user_id          ← orderUserId (ft_users.id)
- *   cart_id          ← create_cart 반환값
- *   cart_name        ← create_cart 반환값
+ *   cart_id          ← ft_carts INSERT 반환 id
+ *   cart_name        ← 호출 인자 (사용자 입력)
  *   shipment_type    ← 'PERSONAL' (고정)
  *   personal_order_no← r.order_id (쿠팡 주문번호)
  *   cart_seq         ← 1부터 시작하는 카트 내 순번
  *
  * @param rows         - 체크된 개인주문 행
  * @param orderUserId  - ft_users.id (= si_users.order_user_id)
+ * @param cartName     - 사용자가 입력한 카트 이름 (trim 후 non-empty)
  * @returns 처리 결과 (count / cartId / cartName)
  */
 export async function sendPersonalOrdersPre(
   rows: PersonalOrderRow[],
   orderUserId: string,
+  cartName: string,
 ): Promise<{ count: number; cartId: string; cartName: string }> {
   // ── 가드 ──────────────────────────────────────────────────────
   if (!isOrderSupabaseConfigured) {
@@ -53,22 +56,24 @@ export async function sendPersonalOrdersPre(
   }
   if (!orderUserId) throw new Error('주문 계정(orderUserId)이 없습니다.')
   if (rows.length === 0) throw new Error('전송할 행이 없습니다.')
+  const trimmedName = cartName.trim()
+  if (!trimmedName) throw new Error('카트 이름이 비어 있습니다.')
 
-  // ── (1) RPC: 카트 생성 ────────────────────────────────────────
-  const { data, error: rpcError } = await (orderSupabase as any).rpc('create_cart', {
-    p_user_id: orderUserId,
-  })
-  if (rpcError) {
-    console.error('[sendPersonalOrdersPre:create_cart]', rpcError)
-    throw rpcError
+  // ── (1) ft_carts INSERT — UNIQUE(user_id, cart_name) 충돌 처리 ─
+  const { data: cartRow, error: cartError } = await (orderSupabase.from('ft_carts') as any)
+    .insert({ user_id: orderUserId, cart_name: trimmedName })
+    .select('id')
+    .single()
+  if (cartError) {
+    console.error('[sendPersonalOrdersPre:ft_carts]', cartError)
+    if ((cartError as any).code === UNIQUE_VIOLATION) {
+      throw new Error(`이미 "${trimmedName}" 카트가 존재합니다. 다른 이름을 사용해 주세요.`)
+    }
+    throw cartError
   }
-  const row = (Array.isArray(data) ? data[0] : data) as
-    | { cart_id: string; cart_name: string }
-    | undefined
-  const cartId = row?.cart_id
-  const cartName = row?.cart_name
-  if (!cartId || !cartName) {
-    throw new Error('카트 생성에 실패했습니다. (RPC 응답 비정상)')
+  const cartId = (cartRow as { id?: string })?.id
+  if (!cartId) {
+    throw new Error('카트 생성에 실패했습니다. (id 반환 없음)')
   }
 
   // ── (1-1) ft_carts.status = 'NEW' 업데이트 ───────────────────
@@ -92,7 +97,7 @@ export async function sendPersonalOrdersPre(
     vendor_option_id: r.vendor_item_id,
     user_id: orderUserId,
     cart_id: cartId,
-    cart_name: cartName,
+    cart_name: trimmedName,
     shipment_type: 'PERSONAL' as const,
     personal_order_no: r.order_id,
     cart_seq: idx + 1,
@@ -108,5 +113,5 @@ export async function sendPersonalOrdersPre(
     }
   }
 
-  return { count: rows.length, cartId, cartName }
+  return { count: rows.length, cartId, cartName: trimmedName }
 }

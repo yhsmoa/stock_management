@@ -15,6 +15,7 @@ import {
   getCellValue,
 } from './usePersonalOrder'
 import { makeFulfillmentKey } from '../services/orderFulfillmentService'
+import CartNameInputModal from '../components/personal-order/CartNameInputModal'
 
 const PersonalOrder: React.FC = () => {
   const {
@@ -48,6 +49,9 @@ const PersonalOrder: React.FC = () => {
     handleOrderCopy,
     handleOrderSend,
     orderSending,
+    orderSendModalOpen,
+    setOrderSendModalOpen,
+    handleConfirmOrderSend,
     handleRowClick,
     handleSearchSubmit,
     handleBarcodeLink,
@@ -621,6 +625,14 @@ const PersonalOrder: React.FC = () => {
         title={progressTitle}
         steps={progressSteps}
         status={progressStatus}
+      />
+
+      {/* ── 주문 전송 — 카트 이름 입력 모달 ───────────────────── */}
+      <CartNameInputModal
+        isOpen={orderSendModalOpen}
+        onClose={() => setOrderSendModalOpen(false)}
+        onSubmit={handleConfirmOrderSend}
+        loading={orderSending}
       />
     </div>
   )

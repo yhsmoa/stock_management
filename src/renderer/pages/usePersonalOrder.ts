@@ -706,10 +706,14 @@ export function usePersonalOrder() {
     alert(`${targetRows.length}건 클립보드에 복사되었습니다.`)
   }, [filteredItems, selectedIds, selectedStatuses, getRowStatus, orderItemsMap, getUserInfo])
 
-  // ── [주문 전송] 핸들러 — ft_order_items_pre 일괄 insert ─────────
+  // ── [주문 전송] 핸들러 — ft_carts + ft_cart_items 일괄 insert ───
+  //   기본 흐름: [주문 전송] 클릭 → 사전 검증 → CartNameInputModal 오픈
+  //               → 사용자가 cart_name 입력 후 [저장] → 실제 전송
   const [orderSending, setOrderSending] = useState(false)
+  const [orderSendModalOpen, setOrderSendModalOpen] = useState(false)
 
-  const handleOrderSend = useCallback(async () => {
+  /** [주문 전송] 버튼 onClick — 검증 통과 시 모달만 오픈 */
+  const handleOrderSend = useCallback(() => {
     if (selectedIds.size === 0) {
       alert('전송할 주문을 선택해 주세요.')
       return
@@ -724,15 +728,32 @@ export function usePersonalOrder() {
       alert('전송할 주문이 없습니다.')
       return
     }
+    setOrderSendModalOpen(true)
+  }, [selectedIds, filteredItems, getUserInfo])
+
+  /** 모달에서 [저장] 클릭 시 — 실제 전송 + 사용자 알림 */
+  const handleConfirmOrderSend = useCallback(async (cartName: string) => {
+    const { orderUserId } = getUserInfo()
+    if (!orderUserId) {
+      alert('주문 계정 정보가 없습니다. 관리자에게 문의하세요.')
+      return
+    }
+    const targetRows = filteredItems.filter((r) => selectedIds.has(r.shipment_box_id))
+    if (targetRows.length === 0) {
+      alert('전송할 주문이 없습니다.')
+      return
+    }
 
     setOrderSending(true)
     try {
-      const { count, cartName } = await sendPersonalOrdersPre(targetRows, orderUserId)
+      const { count } = await sendPersonalOrdersPre(targetRows, orderUserId, cartName)
       setSelectedIds(new Set())
+      setOrderSendModalOpen(false)
       alert(`${count}건 전송 완료 (${cartName})`)
     } catch (err: any) {
       console.error('[주문 전송] 실패:', err)
       alert(`주문 전송 실패: ${err.message}`)
+      // 모달은 그대로 → 사용자가 이름 바꿔 재시도 가능
     } finally {
       setOrderSending(false)
     }
@@ -1201,6 +1222,9 @@ export function usePersonalOrder() {
     handleOrderCopy,
     handleOrderSend,
     orderSending,
+    orderSendModalOpen,
+    setOrderSendModalOpen,
+    handleConfirmOrderSend,
     handleRowClick,
     handleBarcodeLink,
     barcodeLoading,
