@@ -11,6 +11,7 @@ import ProductDetailPanel from '../components/purchase/ProductDetailPanel'
 import OrderModal from '../components/purchase/OrderModal'
 import UploadProgressModal from '../components/UploadProgressModal'
 import PasswordConfirmModal from '../components/common/PasswordConfirmModal'
+import CartNameInputModal from '../components/personal-order/CartNameInputModal'
 
 // ── 상수: 조회수 변동 색상 ────────────────────────────────────
 const VIEW_DIFF_THRESHOLD = 10
@@ -175,6 +176,11 @@ const PurchaseManagement: React.FC = () => {
     handleCopy,
     pageSize,
     setPageSize,
+    orderSending,
+    orderSendModalOpen,
+    setOrderSendModalOpen,
+    handleOrderSend,
+    handleConfirmOrderSend,
   } = usePurchaseManagement()
 
   // ── 주문 모달 open 상태 ─────────────────────────────────────
@@ -444,6 +450,16 @@ const PurchaseManagement: React.FC = () => {
             title="입력 수량이 있는 행을 구글 시트용 TSV로 클립보드 복사"
           >
             {copying ? '복사 중...' : '복사'}
+          </button>
+
+          {/* ── 주문 전송 (ft_carts + ft_cart_items: input > 0 행만) ── */}
+          <button
+            className="purchase-btn"
+            onClick={handleOrderSend}
+            disabled={orderSending}
+            title="입력 값이 있는 행을 ft_cart_items 로 전송"
+          >
+            {orderSending ? '전송 중...' : '주문 전송'}
           </button>
         </div>
       </div>
@@ -736,6 +752,14 @@ const PurchaseManagement: React.FC = () => {
         description="사입관리 데이터를 리셋합니다. 계속하려면 비밀번호를 입력해주세요."
         confirmLabel="리셋"
         confirmVariant="danger"
+      />
+
+      {/* ── 주문 전송 — 카트 이름 입력 모달 ───────────────────── */}
+      <CartNameInputModal
+        isOpen={orderSendModalOpen}
+        onClose={() => setOrderSendModalOpen(false)}
+        onSubmit={handleConfirmOrderSend}
+        loading={orderSending}
       />
 
       {/* ── 조회수 날짜 입력 모달 ──────────────────────────── */}

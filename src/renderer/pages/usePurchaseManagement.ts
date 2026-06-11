@@ -33,6 +33,7 @@ import {
   type OrderDelta,
   type ShipmentType,
 } from '../services/orderFulfillmentService'
+import { sendPurchaseOrdersPre } from '../services/orderSendService'
 import type { RgItem, RgItemData } from '../types/purchase'
 
 // ── 상수 ──────────────────────────────────────────────────────
@@ -1091,6 +1092,60 @@ console.log('[조회수] 완료! 총 '+results.length+'건 CSV 저장됨');
   }
 
   // ══════════════════════════════════════════════════════════════
+  // [주문 전송] — ft_carts + ft_cart_items 일괄 생성
+  //   대상: [복사] 와 동일하게 filteredItems 중 input>0 인 행
+  //   흐름: 1) 사전 검증 + 미저장 가드 → CartNameInputModal 오픈
+  //         2) 모달 [저장] → 실제 전송 (sendPurchaseOrdersPre)
+  // ══════════════════════════════════════════════════════════════
+
+  const [orderSending, setOrderSending] = useState(false)
+  const [orderSendModalOpen, setOrderSendModalOpen] = useState(false)
+
+  /** [주문 전송] 버튼 onClick — 검증 통과 시 모달만 오픈 */
+  const handleOrderSend = useCallback(() => {
+    const targets = filteredItems.filter(
+      (item) => item.input != null && item.input > 0,
+    )
+    if (targets.length === 0) {
+      alert('입력 값이 있는 행이 없습니다.')
+      return
+    }
+    if (pendingEdits.size > 0) {
+      if (!confirm('저장하지 않은 변경이 있습니다. 그대로 전송하시겠어요?')) return
+    }
+    setOrderSendModalOpen(true)
+  }, [filteredItems, pendingEdits])
+
+  /** 모달 [저장] — 실제 전송 + 사용자 알림 */
+  const handleConfirmOrderSend = useCallback(async (cartName: string) => {
+    const targets = filteredItems.filter(
+      (item) => item.input != null && item.input > 0,
+    )
+    if (targets.length === 0) {
+      alert('전송할 행이 없습니다.')
+      return
+    }
+    const orderUserId = await getOrderUserId()
+    if (!orderUserId) {
+      alert('로그인 사용자의 order_user_id 가 없습니다. 관리자에게 문의하세요.')
+      return
+    }
+
+    setOrderSending(true)
+    try {
+      const { count } = await sendPurchaseOrdersPre(targets, orderUserId, cartName)
+      setOrderSendModalOpen(false)
+      alert(`${count}건 전송 완료 (${cartName})`)
+    } catch (err: any) {
+      console.error('[주문 전송] 실패:', err)
+      alert(`주문 전송 실패: ${err.message}`)
+      // 모달 유지 → 사용자가 이름 바꿔 재시도
+    } finally {
+      setOrderSending(false)
+    }
+  }, [filteredItems])
+
+  // ══════════════════════════════════════════════════════════════
   // 상품 상세 패널
   // ══════════════════════════════════════════════════════════════
 
@@ -1303,6 +1358,13 @@ console.log('[조회수] 완료! 총 '+results.length+'건 CSV 저장됨');
     // 클립보드 복사 (구글 시트 TSV)
     copying,
     handleCopy,
+
+    // 주문 전송
+    orderSending,
+    orderSendModalOpen,
+    setOrderSendModalOpen,
+    handleOrderSend,
+    handleConfirmOrderSend,
 
     // 상품 상세
     detailPanelOpen,
