@@ -125,6 +125,13 @@ export function getCellValue(row: PersonalOrderRow, key: string): string {
   }
 }
 
+// ── 행 유일 키 헬퍼 ───────────────────────────────────────────────
+//   selectedIds / focusedCell.rowKey 의 통일된 키.
+//   row.id (uuid) 우선, 없으면 (shipment_box_id|vendor_item_id) fallback.
+export function getRowKey(r: PersonalOrderRow): string {
+  return r.id ?? `${r.shipment_box_id}|${r.vendor_item_id ?? ''}`
+}
+
 // ── 드로어 선택 아이템 타입 ─────────────────────────────────────────
 export interface DrawerItemState {
   ids: string[]                 // ft_order_items.id 배열 (재주문 등 복수)
@@ -401,7 +408,9 @@ export function usePersonalOrder() {
       return
     }
 
-    const shipmentBoxIds = [...selectedIds]
+    // selectedIds = row.id 집합 → 선택된 행에서 shipment_box_id 만 추출 (dedup)
+    const selectedRows = items.filter((r) => selectedIds.has(getRowKey(r)))
+    const shipmentBoxIds = Array.from(new Set(selectedRows.map((r) => r.shipment_box_id)))
 
     if (!confirm(`${shipmentBoxIds.length}건을 상품준비중으로 변경하시겠습니까?`)) {
       return
@@ -413,9 +422,10 @@ export function usePersonalOrder() {
 
       if (result.success > 0) {
         await updateOrderStatusToInstruct(shipmentBoxIds, userId)
+        const boxSet = new Set(shipmentBoxIds)
         setItems((prev) =>
           prev.map((row) =>
-            shipmentBoxIds.includes(row.shipment_box_id)
+            boxSet.has(row.shipment_box_id)
               ? { ...row, status: 'INSTRUCT' }
               : row,
           ),
@@ -437,7 +447,7 @@ export function usePersonalOrder() {
     } finally {
       setAcknowledging(false)
     }
-  }, [selectedIds, getUserInfo])
+  }, [selectedIds, items, getUserInfo])
 
   // ── 탭 전환 ───────────────────────────────────────────────────
   const handleTabChange = useCallback((tab: OrderStatusTab) => {
@@ -573,7 +583,7 @@ export function usePersonalOrder() {
   const handleExcelDownload = useCallback(() => {
     const targetRows =
       selectedIds.size > 0
-        ? filteredItems.filter((r) => selectedIds.has(r.shipment_box_id))
+        ? filteredItems.filter((r) => selectedIds.has(getRowKey(r)))
         : filteredItems
 
     if (targetRows.length === 0) {
@@ -626,7 +636,7 @@ export function usePersonalOrder() {
   const handleOrderCopy = useCallback(async () => {
     const targetRows =
       selectedIds.size > 0
-        ? filteredItems.filter((r) => selectedIds.has(r.shipment_box_id))
+        ? filteredItems.filter((r) => selectedIds.has(getRowKey(r)))
         : filteredItems
 
     if (targetRows.length === 0) {
@@ -635,7 +645,7 @@ export function usePersonalOrder() {
     }
 
     // ── 전량취소(red) 필터 활성 시 Q열용 메타 사전 fetch ─────
-    //   rowKey(=shipment_box_id) → Q열 셀(이미 TSV 인코딩된 문자열)
+    //   rowKey(=row.id, getRowKey) → Q열 셀(이미 TSV 인코딩된 문자열)
     let qByRowKey: Map<string, string> | null = null
     if (selectedStatuses.has('red')) {
       const { orderUserId } = getUserInfo()
@@ -647,7 +657,7 @@ export function usePersonalOrder() {
         const ids = (orderItemsMap.get(key) ?? []).map((oi) => oi.id)
         if (ids.length === 0) continue
         redItemIds.push(...ids)
-        redRowMeta.push({ rowKey: r.shipment_box_id, itemIds: ids })
+        redRowMeta.push({ rowKey: getRowKey(r), itemIds: ids })
       }
       if (redItemIds.length > 0 && orderUserId) {
         try {
@@ -677,7 +687,7 @@ export function usePersonalOrder() {
     //   GAP 14열: G~T (인덱스 0~13). Q = GAP[10] (G=7번째 컬럼 → 17-7=10)
     const lines = targetRows.map((r) => {
       const gap = new Array(14).fill('')
-      const q = qByRowKey?.get(r.shipment_box_id)
+      const q = qByRowKey?.get(getRowKey(r))
       if (q) gap[10] = q                            // Q열에만 채움
       const cols = [
         '',                                         // A
@@ -723,7 +733,7 @@ export function usePersonalOrder() {
       alert('주문 계정 정보가 없습니다. 관리자에게 문의하세요.')
       return
     }
-    const targetRows = filteredItems.filter((r) => selectedIds.has(r.shipment_box_id))
+    const targetRows = filteredItems.filter((r) => selectedIds.has(getRowKey(r)))
     if (targetRows.length === 0) {
       alert('전송할 주문이 없습니다.')
       return
@@ -738,7 +748,7 @@ export function usePersonalOrder() {
       alert('주문 계정 정보가 없습니다. 관리자에게 문의하세요.')
       return
     }
-    const targetRows = filteredItems.filter((r) => selectedIds.has(r.shipment_box_id))
+    const targetRows = filteredItems.filter((r) => selectedIds.has(getRowKey(r)))
     if (targetRows.length === 0) {
       alert('전송할 주문이 없습니다.')
       return
@@ -1085,11 +1095,11 @@ export function usePersonalOrder() {
       return
     }
 
-    // 선택된 shipment_box_id → order_id 매핑 (중복 제거)
+    // 선택된 행(row.id) → order_id 매핑 (중복 제거)
     const orderIds = Array.from(
       new Set(
         items
-          .filter((r) => selectedIds.has(r.shipment_box_id))
+          .filter((r) => selectedIds.has(getRowKey(r)))
           .map((r) => r.order_id)
           .filter(Boolean),
       ),
@@ -1134,10 +1144,14 @@ export function usePersonalOrder() {
   )
 
   // ── 체크박스 핸들러 ───────────────────────────────────────────
+  //   selectedIds 키 = row.id (uuid). 한 송장박스(shipment_box_id)에 여러
+  //   아이템이 들어있는 케이스에서 행 하나만 선택 가능하도록 행별 유일 키 사용.
+  //   id 가 없는 행은 (shipment_box_id|vendor_item_id) fallback.
+
   const handleSelectAll = useCallback(
     (checked: boolean) => {
       if (checked) {
-        const ids = new Set(pagedItems.map((r) => r.shipment_box_id))
+        const ids = new Set(pagedItems.map(getRowKey))
         setSelectedIds(ids)
       } else {
         setSelectedIds(new Set())
@@ -1147,11 +1161,11 @@ export function usePersonalOrder() {
   )
 
   const handleSelectRow = useCallback(
-    (shipmentBoxId: string, checked: boolean) => {
+    (rowKey: string, checked: boolean) => {
       setSelectedIds((prev) => {
         const next = new Set(prev)
-        if (checked) next.add(shipmentBoxId)
-        else next.delete(shipmentBoxId)
+        if (checked) next.add(rowKey)
+        else next.delete(rowKey)
         return next
       })
     },
@@ -1159,7 +1173,7 @@ export function usePersonalOrder() {
   )
 
   const isAllSelected =
-    pagedItems.length > 0 && pagedItems.every((r) => selectedIds.has(r.shipment_box_id))
+    pagedItems.length > 0 && pagedItems.every((r) => selectedIds.has(getRowKey(r)))
 
   // ── 페이지네이션 헬퍼 ──────────────────────────────────────────
   const getPageNumbers = useCallback(() => {
