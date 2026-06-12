@@ -269,6 +269,72 @@
   overflow: auto;
 }
 
+/* ── 미니멀 아이콘 버튼 — 이모지 자체가 버튼 ────────────────
+   보더·배경 없음. 평소 약하게(opacity:0.55), 호버 시 또렷.
+   .purchase-btn 옆에 와도 시각적으로 가볍게 통합.                */
+.purchase-icon-btn {
+  background: transparent;
+  border: none;
+  padding: 4px 8px;
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  opacity: 0.55;
+  transition: opacity 0.15s ease, background-color 0.15s ease;
+}
+.purchase-icon-btn:hover {
+  opacity: 1;
+  background-color: rgba(0, 0, 0, 0.04);
+}
+.purchase-icon-btn:focus-visible {
+  outline: 2px solid #93C5FD;
+  outline-offset: 2px;
+}
+
+/* ── 테이블 풀스크린 모드 (🔍 토글) ────────────────────────────
+   헤더(z-index:1000) 보다 위, 다른 모달(2000+) 보다 아래에 위치.
+   기존 테이블 wrapper 는 flex 로 남은 공간을 채워 스크롤 담당.        */
+.purchase-table-section.fullscreen {
+  position: fixed;
+  inset: 0;
+  z-index: 1500;
+  margin: 0;
+  border-radius: 0;
+  border: none;
+  padding: 16px 16px 8px;
+}
+.purchase-table-section.fullscreen .purchase-table-wrapper {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: none;
+}
+
+/* ── 풀스크린 닫기 버튼 (이모지 자체가 버튼) ──────────────── */
+.purchase-fullscreen-close {
+  position: absolute;
+  top: 12px;
+  right: 16px;
+  z-index: 1501;
+  background: transparent;
+  border: none;
+  padding: 4px 8px;
+  cursor: pointer;
+  font-size: 18px;
+  line-height: 1;
+  color: #6B7280;
+  border-radius: 6px;
+  opacity: 0.7;
+  transition: opacity 0.15s ease, background-color 0.15s ease;
+}
+.purchase-fullscreen-close:hover {
+  opacity: 1;
+  background-color: rgba(0, 0, 0, 0.04);
+}
+
 .purchase-table {
   width: 100%;
   border-collapse: collapse;

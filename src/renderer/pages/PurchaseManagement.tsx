@@ -3,7 +3,7 @@
    - 로직은 usePurchaseManagement 훅에서 관리
    ================================================================ */
 
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import './PurchaseManagement.css'
 import { usePurchaseManagement, COLUMNS, PAGE_SIZE_OPTIONS, type EditableField } from './usePurchaseManagement'
 import type { RgItem } from '../types/purchase'
@@ -188,6 +188,19 @@ const PurchaseManagement: React.FC = () => {
 
   // ── 리셋 확인 모달 (비밀번호 재확인) ────────────────────────
   const [resetModalOpen, setResetModalOpen] = useState(false)
+
+  // ── 테이블 풀스크린 토글 (🔍 버튼) ──────────────────────────
+  //   활성 시 .purchase-table-section.fullscreen 으로 viewport 전체 덮음
+  //   Esc 키 종료 — 활성 상태일 때만 리스너 등록
+  const [isTableFullscreen, setIsTableFullscreen] = useState(false)
+  useEffect(() => {
+    if (!isTableFullscreen) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setIsTableFullscreen(false)
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [isTableFullscreen])
 
   // ── 편집 가능 셀 공통 렌더러 (input / in_qty / out_qty) ─────
   const renderEditableCell = (item: RgItem, field: EditableField, value: number | null) => {
@@ -561,6 +574,15 @@ const PurchaseManagement: React.FC = () => {
           )}
         </div>
         <div className="purchase-toolbar-right">
+          {/* ── 테이블 풀스크린 토글 (이모지 자체가 버튼) ────── */}
+          <button
+            className="purchase-icon-btn"
+            onClick={() => setIsTableFullscreen((v) => !v)}
+            title={isTableFullscreen ? '풀스크린 종료 (Esc)' : '테이블 풀스크린'}
+            aria-label="테이블 풀스크린 토글"
+          >
+            {isTableFullscreen ? '🗗' : '🔍'}
+          </button>
           <button
             className="purchase-btn"
             onClick={handleResetInputs}
@@ -578,8 +600,18 @@ const PurchaseManagement: React.FC = () => {
         </div>
       </div>
 
-      {/* ── 테이블 섹션 ─────────────────────────────────────── */}
-      <div className="purchase-table-section">
+      {/* ── 테이블 섹션 (풀스크린 토글 시 viewport 전체 덮음) ── */}
+      <div className={`purchase-table-section${isTableFullscreen ? ' fullscreen' : ''}`}>
+        {isTableFullscreen && (
+          <button
+            className="purchase-fullscreen-close"
+            onClick={() => setIsTableFullscreen(false)}
+            title="풀스크린 종료 (Esc)"
+            aria-label="풀스크린 종료"
+          >
+            ✕
+          </button>
+        )}
         {loading ? (
           <div className="purchase-loading">데이터를 불러오는 중...</div>
         ) : (
