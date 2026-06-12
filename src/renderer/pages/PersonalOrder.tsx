@@ -13,6 +13,7 @@ import {
   COLUMNS,
   STATUS_DOT_LABELS,
   getCellValue,
+  getRowKey,
 } from './usePersonalOrder'
 import { makeFulfillmentKey } from '../services/orderFulfillmentService'
 import CartNameInputModal from '../components/personal-order/CartNameInputModal'
@@ -277,9 +278,7 @@ const PersonalOrder: React.FC = () => {
               title={STATUS_DOT_LABELS[st]}
               aria-label={STATUS_DOT_LABELS[st]}
             >
-              {st === 'shipped'
-                ? <span>🏁</span>
-                : <span className={`po-status-dot ${st}`} />}
+              <span className={`po-status-dot ${st}`} />
             </button>
           ))}
           <button
@@ -358,16 +357,18 @@ const PersonalOrder: React.FC = () => {
                 pagedItems.map((row, idx) => {
                   const agg = getAgg(row)
                   const status = getRowStatus(row)
+                  // 행 유일 키 — 한 송장박스에 여러 아이템이 들어가는 경우 shipment_box_id 는 중복되므로 row.id(uuid) 사용
+                  const rowKey = getRowKey(row)
 
                   return (
-                    <tr key={row.id ?? idx}>
+                    <tr key={rowKey}>
                       <td>
                         <input
                           type="checkbox"
                           className="po-checkbox"
-                          checked={selectedIds.has(row.shipment_box_id)}
+                          checked={selectedIds.has(rowKey)}
                           onChange={(e) =>
-                            handleSelectRow(row.shipment_box_id, e.target.checked)
+                            handleSelectRow(rowKey, e.target.checked)
                           }
                         />
                       </td>
@@ -375,13 +376,13 @@ const PersonalOrder: React.FC = () => {
                       {COLUMNS.map((col) => {
                         // ── 셀 선택(엑셀 UX) 공통 props ──
                         const isFocused =
-                          focusedCell?.rowKey === row.shipment_box_id
+                          focusedCell?.rowKey === rowKey
                           && focusedCell?.colKey === col.key
                         const focusedClass = isFocused ? ' po-cell-focused' : ''
                         const onCellClick = () =>
-                          setFocusedCell({ rowKey: row.shipment_box_id, colKey: col.key })
+                          setFocusedCell({ rowKey, colKey: col.key })
                         const cellDataAttrs = {
-                          'data-row-key': row.shipment_box_id,
+                          'data-row-key': rowKey,
                           'data-col-key': col.key,
                         }
 
@@ -394,14 +395,7 @@ const PersonalOrder: React.FC = () => {
                               className={focusedClass.trim() || undefined}
                               onClick={onCellClick}
                             >
-                              {status === 'shipped' ? (
-                                <span
-                                  title={STATUS_DOT_LABELS.shipped}
-                                  aria-label={STATUS_DOT_LABELS.shipped}
-                                >
-                                  🏁
-                                </span>
-                              ) : status !== 'none' ? (
+                              {status !== 'none' ? (
                                 <span
                                   className={`po-status-dot ${status}`}
                                   title={STATUS_DOT_LABELS[status]}

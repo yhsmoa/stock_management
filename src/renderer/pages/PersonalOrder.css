@@ -331,11 +331,12 @@
   border-radius: 50%;
 }
 
-.po-status-dot.green  { background-color: #22C55E; }
-.po-status-dot.red    { background-color: #EF4444; }
-.po-status-dot.orange { background-color: #FB923C; }
-.po-status-dot.gray   { background-color: #D1D5DB; }
-.po-status-dot.multi  { background-color: #A855F7; }
+.po-status-dot.green   { background-color: #FB923C; }  /* 포장완료 — 주황 (orange-400). 클래스명은 호환을 위해 'green' 유지 */
+.po-status-dot.shipped { background-color: #22C55E; }  /* 출고완료 — 초록 (green-500) */
+.po-status-dot.red     { background-color: #EF4444; }
+.po-status-dot.orange  { background-color: #FB923C; }
+.po-status-dot.gray    { background-color: #D1D5DB; }
+.po-status-dot.multi   { background-color: #A855F7; }
 
 /* ── 상태 점 필터 버튼 ─────────────────────────────────────────── */
 .po-status-filter-btn {
