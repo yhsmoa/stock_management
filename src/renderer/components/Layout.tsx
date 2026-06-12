@@ -1,15 +1,13 @@
-import React, { useState } from 'react'
+import React from 'react'
 import { Outlet, useNavigate } from 'react-router-dom'
 import Sidebar from './Sidebar'
 import { theme } from '../styles/theme'
 
-const Layout: React.FC = () => {
-  const [isSidebarOpen, setIsSidebarOpen] = useState(false)
-  const navigate = useNavigate()
+// ── 상수 ──────────────────────────────────────────────────────────
+const RAIL_WIDTH = 44     // Sidebar 의 RAIL_WIDTH 와 동일하게 유지
 
-  const toggleSidebar = () => {
-    setIsSidebarOpen(!isSidebarOpen)
-  }
+const Layout: React.FC = () => {
+  const navigate = useNavigate()
 
   const handleLogout = () => {
     localStorage.removeItem('user')
@@ -32,29 +30,10 @@ const Layout: React.FC = () => {
         zIndex: 1000,
         position: 'relative'
       }}>
-        {/* 왼쪽: 메뉴 버튼 + 타이틀 */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
-          <button
-            onClick={toggleSidebar}
-            style={{
-              width: '24px',
-              height: '24px',
-              border: `1.5px solid ${theme.colors.textSecondary}`,
-              background: 'white',
-              cursor: 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              fontSize: '14px',
-              borderRadius: theme.radius.sm,
-            }}
-          >
-            ☰
-          </button>
-          <h1 style={{ margin: 0, fontSize: '20px', fontWeight: 'bold', color: theme.colors.textPrimary }}>
-            Stock Management
-          </h1>
-        </div>
+        {/* 왼쪽: 타이틀 */}
+        <h1 style={{ margin: 0, fontSize: '20px', fontWeight: 'bold', color: theme.colors.textPrimary }}>
+          Stock Management
+        </h1>
 
         {/* 오른쪽: 로그아웃 버튼 */}
         <button
@@ -74,17 +53,16 @@ const Layout: React.FC = () => {
         </button>
       </header>
 
-      {/* 메인 컨텐츠 영역 */}
+      {/* 메인 컨텐츠 영역 — Sidebar 는 항상 보이는 rail (overlay 동작) */}
       <div style={{ display: 'flex', flex: 1, overflow: 'hidden', position: 'relative' }}>
-        <Sidebar isOpen={isSidebarOpen} onClose={() => setIsSidebarOpen(false)} />
+        <Sidebar />
 
-        {/* 페이지 콘텐츠 */}
+        {/* 페이지 콘텐츠 — rail 폭만큼 좌측 여백 고정 (확장돼도 push 없음) */}
         <main style={{
           flex: 1,
           overflow: 'auto',
           padding: '24px',
-          marginLeft: isSidebarOpen ? '270px' : '0',
-          transition: 'margin-left 0.3s ease',
+          marginLeft: `${RAIL_WIDTH}px`,
         }}>
           <Outlet />
         </main>
