@@ -13,7 +13,7 @@ import { theme } from '../styles/theme'
 
 // ── 상수 ──────────────────────────────────────────────────────────
 const RAIL_WIDTH = 44
-const EXPANDED_WIDTH = 240
+const EXPANDED_WIDTH = 230
 const HEADER_HEIGHT = 60
 
 // ── 메뉴 데이터 ───────────────────────────────────────────────────
@@ -193,7 +193,7 @@ const Sidebar: React.FC = () => {
         overflowX: 'hidden',
       }}
     >
-      <nav style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '2px' }}>
+      <nav style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '4px' }}>
         {MENU_ITEMS.map(renderItem)}
       </nav>
     </div>
@@ -210,7 +210,7 @@ const iconStyle: React.CSSProperties = {
 }
 
 const labelStyle: React.CSSProperties = {
-  fontSize: '14px',
+  fontSize: '13px',
   whiteSpace: 'nowrap',
   overflow: 'hidden',
 }
@@ -239,7 +239,7 @@ function getSubLinkStyle(isActive: boolean): React.CSSProperties {
     textDecoration: 'none',
     borderRadius: theme.radius.sm,
     transition: 'background 0.2s, color 0.2s',
-    fontSize: '13px',
+    fontSize: '12px',
     whiteSpace: 'nowrap',
     backgroundColor: isActive ? 'rgba(255, 255, 255, 0.1)' : 'transparent',
     fontWeight: isActive ? 600 : 400,

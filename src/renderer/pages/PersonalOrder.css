@@ -27,6 +27,23 @@
   gap: 6px;
 }
 
+/* ── 배송 상태 선택 메뉴 트리거 ───────────────────────────────
+   액션 버튼(흰색)과 달리 '현재 보고 있는 화면'을 의미하므로
+   활성 탭과 같은 파란 알약(pill) 스타일로 구분한다.
+   .po-top-actions 로 스코프하여 공용 .dropdown-trigger 보다 우선. */
+.po-top-actions .po-ship-trigger {
+  border-radius: 9999px;
+  background-color: #4A8CF7;
+  border-color: #4A8CF7;
+  color: #fff;
+  font-weight: 600;
+}
+
+.po-top-actions .po-ship-trigger:hover:not(:disabled) {
+  background-color: #3B7DE6;
+  border-color: #3B7DE6;
+}
+
 /* ── 헤더 (타이틀 가운데) ────────────────────────────────────── */
 .po-header {
   display: flex;

@@ -12,6 +12,7 @@ import OrderModal from '../components/purchase/OrderModal'
 import UploadProgressModal from '../components/UploadProgressModal'
 import PasswordConfirmModal from '../components/common/PasswordConfirmModal'
 import CartNameInputModal from '../components/personal-order/CartNameInputModal'
+import DropdownMenu, { DropdownItem } from '../components/common/DropdownMenu'
 
 // ── 상수: 조회수 변동 색상 ────────────────────────────────────
 const VIEW_DIFF_THRESHOLD = 10
@@ -415,29 +416,22 @@ const PurchaseManagement: React.FC = () => {
             />
           </label>
 
-          {/* ── 바코드 연결 (드롭다운: api / xlsx) ───────────── */}
-          <div className="purchase-dropdown">
-            <button className="purchase-btn">바코드 연결</button>
-            <div className="purchase-dropdown-menu">
-              <button
-                className="purchase-dropdown-item"
-                onClick={handleBarcodeSync}
-                disabled={barcodesyncing}
-              >
-                {barcodesyncing ? (barcodeSyncProgress || '연동 중...') : 'api'}
-              </button>
-              <label className="purchase-dropdown-item" style={{ cursor: 'pointer' }}>
-                xlsx
-                <input
-                  ref={barcodeExcelInputRef}
-                  type="file"
-                  accept=".xlsx,.xls"
-                  style={{ display: 'none' }}
-                  onChange={handleBarcodeExcel}
-                />
-              </label>
-            </div>
-          </div>
+          {/* ── 바코드 연결 (공용 DropdownMenu: api / xlsx) ──── */}
+          <DropdownMenu label="바코드 연결">
+            <DropdownItem onClick={handleBarcodeSync} disabled={barcodesyncing}>
+              {barcodesyncing ? (barcodeSyncProgress || '연동 중...') : 'api'}
+            </DropdownItem>
+            <label className="dropdown-item" style={{ cursor: 'pointer' }}>
+              xlsx
+              <input
+                ref={barcodeExcelInputRef}
+                type="file"
+                accept=".xlsx,.xls"
+                style={{ display: 'none' }}
+                onChange={handleBarcodeExcel}
+              />
+            </label>
+          </DropdownMenu>
 
           {/* ── 조회수 (드롭다운: 콘솔 / csv 업로드) ──────────── */}
           <div className="purchase-dropdown">
@@ -487,11 +481,25 @@ const PurchaseManagement: React.FC = () => {
         <input
           className="purchase-search-input"
           type="text"
-          placeholder="상품명, 바코드 또는 ID로 검색"
+          placeholder="상품명, 바코드 또는 ID로 검색 (콤마·여러 줄 붙여넣기로 다중 검색)"
           value={searchValue}
           onChange={(e) => {
             setSearchValue(e.target.value)
             if (e.target.value === '') handleSearchClear()
+          }}
+          onPaste={(e) => {
+            // 구글 시트 세로 복사 = 개행 구분. 단일 라인 input 은 개행을 버리므로
+            // 붙여넣기 시점에 개행/탭을 콤마로 변환해 다중 검색어로 보존한다.
+            const text = e.clipboardData.getData('text')
+            if (/[\n\r\t]/.test(text)) {
+              e.preventDefault()
+              const joined = text
+                .split(/[\n\r\t]+/)
+                .map((s) => s.trim())
+                .filter(Boolean)
+                .join(', ')
+              setSearchValue(joined)
+            }
           }}
           onKeyDown={(e) => { if (e.key === 'Enter') handleSearch() }}
         />

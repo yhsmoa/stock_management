@@ -62,7 +62,7 @@ export const COLUMNS: Column[] = [
   { key: 'c_in',     label: 'C.in',     width: '46px' },
   { key: 'c_stock',  label: 'C.재고',   width: '48px' },
   { key: 'warehouse',label: '창고',     width: '44px' },
-  { key: 'personal', label: '개인',     width: '44px', borderLeft: true },
+  { key: 'personal', label: '기간',     width: '44px', borderLeft: true },
   { key: 'd7',       label: '7d',       width: '40px' },
   { key: 'd30',      label: '30d',      width: '42px' },
   { key: 'recommend',label: '추천',     width: '44px', borderLeft: true },
@@ -224,22 +224,34 @@ export function usePurchaseManagement() {
 
     }
 
-    // ── STEP B: 검색어 ──────────────────────────────────────
+    // ── STEP B: 검색어 (다중 검색 지원) ─────────────────────────
+    //   콤마/개행/탭으로 구분된 여러 검색어를 OR 매칭한다.
+    //   (구글 시트에서 세로로 드래그·복사한 값 붙여넣기 = 개행 구분)
+    //   각 토큰의 매칭 규칙은 단일 검색과 동일: 숫자면 ID 정확 일치,
+    //   그 외에는 상품명/옵션명/바코드 부분 일치.
     if (searchQuery) {
-      const isNumeric = /^\d+$/.test(searchQuery)
-      if (isNumeric) {
-        result = result.filter((item) =>
-          item.seller_product_id === searchQuery ||
-          item.seller_product_item_id === searchQuery ||
-          item.vendor_item_id === searchQuery,
-        )
-      } else {
-        const q = searchQuery.toLowerCase()
-        result = result.filter((item) =>
-          (item.option_name && item.option_name.toLowerCase().includes(q)) ||
-          (item.seller_product_name && item.seller_product_name.toLowerCase().includes(q)) ||
-          (item.barcode && item.barcode.toLowerCase().includes(q)),
-        )
+      const tokens = searchQuery
+        .split(/[\n\r,\t]+/)
+        .map((t) => t.trim())
+        .filter(Boolean)
+
+      if (tokens.length > 0) {
+        const matchToken = (item: RgItem, token: string): boolean => {
+          if (/^\d+$/.test(token)) {
+            return (
+              item.seller_product_id === token ||
+              item.seller_product_item_id === token ||
+              item.vendor_item_id === token
+            )
+          }
+          const q = token.toLowerCase()
+          return (
+            (!!item.option_name && item.option_name.toLowerCase().includes(q)) ||
+            (!!item.seller_product_name && item.seller_product_name.toLowerCase().includes(q)) ||
+            (!!item.barcode && item.barcode.toLowerCase().includes(q))
+          )
+        }
+        result = result.filter((item) => tokens.some((token) => matchToken(item, token)))
       }
     }
 

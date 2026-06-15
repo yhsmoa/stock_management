@@ -17,6 +17,7 @@ import {
 } from './usePersonalOrder'
 import { makeFulfillmentKey } from '../services/orderFulfillmentService'
 import CartNameInputModal from '../components/personal-order/CartNameInputModal'
+import DropdownMenu, { DropdownItem } from '../components/common/DropdownMenu'
 
 const PersonalOrder: React.FC = () => {
   const {
@@ -138,19 +139,47 @@ const PersonalOrder: React.FC = () => {
   return (
     <div className="po-container">
 
-      {/* ── 상단: 좌측 탭 + 업데이트/바코드 | 우측 엑셀 다운 ──── */}
+      {/* ── 숨김 파일 input (송장 xlsx / pdf) — 드롭다운 항목에서 트리거 ── */}
+      <input
+        ref={invoiceXlsxInputRef}
+        type="file"
+        accept=".xlsx,.xls"
+        style={{ display: 'none' }}
+        onChange={handleInvoiceXlsxUpload}
+      />
+      <input
+        ref={invoiceInputRef}
+        type="file"
+        accept=".pdf"
+        style={{ display: 'none' }}
+        onChange={(e) => {
+          const file = e.target.files?.[0]
+          if (file) handleInvoiceLink(file)
+          e.target.value = ''
+        }}
+      />
+
+      {/* ── 상단: 좌측 배송 메뉴 + 업데이트/바코드 | 우측 송장·엑셀·주문 ── */}
       <div className="po-top-actions">
         <div className="po-toolbar-left">
-          {ORDER_STATUS_TABS.map((tab) => (
-            <button
-              key={tab}
-              className={`po-tab-btn${activeTab === tab ? ' active' : ''}`}
-              onClick={() => handleTabChange(tab)}
-            >
-              {tab}
-            </button>
-          ))}
-          <span className="po-separator">|</span>
+          {/* ── 배송: 주문 상태 선택 ──
+             다른 버튼과 달리 '액션'이 아니라 현재 보고 있는 화면(어떤 상품 목록인지)을
+             나타내므로 강조 스타일(po-ship-trigger)로 구분한다. */}
+          <DropdownMenu
+            label={`배송 · ${activeTab}`}
+            triggerClassName="po-ship-trigger"
+          >
+            {ORDER_STATUS_TABS.map((tab) => (
+              <DropdownItem
+                key={tab}
+                className={activeTab === tab ? 'active' : ''}
+                onClick={() => handleTabChange(tab)}
+              >
+                {tab}
+              </DropdownItem>
+            ))}
+          </DropdownMenu>
+
           <button
             className="po-btn"
             onClick={handleUpdate}
@@ -165,64 +194,50 @@ const PersonalOrder: React.FC = () => {
           >
             {barcodeLoading ? '매칭 중...' : '바코드 연결'}
           </button>
-          {/* ── 송장 xlsx (엑셀 운송장 번호 → si_personal_order_tracking 저장) ── */}
-          <input
-            ref={invoiceXlsxInputRef}
-            type="file"
-            accept=".xlsx,.xls"
-            style={{ display: 'none' }}
-            onChange={handleInvoiceXlsxUpload}
-          />
-          <button
-            className="po-btn"
-            onClick={() => invoiceXlsxInputRef.current?.click()}
-            disabled={invoiceXlsxUploading}
-          >
-            {invoiceXlsxUploading ? '업로드 중...' : '송장 xlsx'}
-          </button>
-          {/* ── 송장 pdf (PDF 업로드 → 주문번호 매핑 → Storage 저장) ── */}
-          <input
-            ref={invoiceInputRef}
-            type="file"
-            accept=".pdf"
-            style={{ display: 'none' }}
-            onChange={(e) => {
-              const file = e.target.files?.[0]
-              if (file) handleInvoiceLink(file)
-              e.target.value = ''
-            }}
-          />
-          <button
-            className="po-btn"
-            onClick={() => invoiceInputRef.current?.click()}
-            disabled={invoiceLinking}
-          >
-            {invoiceLinking ? '연결 중...' : '송장 pdf'}
-          </button>
-          <button
-            className="po-btn"
-            onClick={handleInvoicePrint}
-            disabled={invoicePrinting || selectedIds.size === 0}
-          >
-            {invoicePrinting
-              ? '인쇄 준비 중...'
-              : `송장 인쇄${selectedIds.size > 0 ? ` (${selectedIds.size})` : ''}`}
-          </button>
         </div>
+
         <div className="po-toolbar-right">
+          {/* ── [송장]: xlsx 업로드 / pdf 업로드 / 출력 ── */}
+          <DropdownMenu label="송장" align="right">
+            <DropdownItem
+              onClick={() => invoiceXlsxInputRef.current?.click()}
+              disabled={invoiceXlsxUploading}
+            >
+              {invoiceXlsxUploading ? '업로드 중...' : '송장 xlsx 업로드'}
+            </DropdownItem>
+            <DropdownItem
+              onClick={() => invoiceInputRef.current?.click()}
+              disabled={invoiceLinking}
+            >
+              {invoiceLinking ? '연결 중...' : '송장 pdf 업로드'}
+            </DropdownItem>
+            <DropdownItem
+              onClick={handleInvoicePrint}
+              disabled={invoicePrinting || selectedIds.size === 0}
+            >
+              {invoicePrinting
+                ? '인쇄 준비 중...'
+                : `송장 출력${selectedIds.size > 0 ? ` (${selectedIds.size})` : ''}`}
+            </DropdownItem>
+          </DropdownMenu>
+
+          {/* ── [엑셀]: 엑셀 다운로드 ── */}
           <button className="po-btn" onClick={handleExcelDownload}>
-            엑셀 다운
+            엑셀
           </button>
-          <button className="po-btn" onClick={handleOrderCopy}>
-            복사
-          </button>
-          <button
-            className="po-btn"
-            onClick={handleOrderSend}
-            disabled={orderSending}
-          >
-            {orderSending ? '전송 중...' : '주문 전송'}
-          </button>
+
+          {/* ── [주문]: 전송 / 복사 ── */}
+          <DropdownMenu label="주문" align="right">
+            <DropdownItem
+              onClick={handleOrderSend}
+              disabled={orderSending}
+            >
+              {orderSending ? '전송 중...' : '전송'}
+            </DropdownItem>
+            <DropdownItem onClick={handleOrderCopy}>
+              복사
+            </DropdownItem>
+          </DropdownMenu>
         </div>
       </div>
 

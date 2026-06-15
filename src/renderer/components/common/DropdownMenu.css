@@ -1,0 +1,91 @@
+/* ================================================================
+   DropdownMenu 공용 스타일
+   - 사입관리 .purchase-dropdown 패턴을 페이지 비종속으로 일반화.
+   - hover 로 펼침. 항목은 .dropdown-item.
+   ================================================================ */
+
+.dropdown {
+  position: relative;
+}
+
+/* ── 트리거 버튼 (기본: 흰 배경 액션 버튼과 동일 룩) ───────────── */
+.dropdown-trigger {
+  padding: 4px 14px;
+  border: 1px solid #D1D5DB;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+  color: #374151;
+  background-color: #fff;
+  line-height: 1.4;
+}
+
+.dropdown-trigger:hover:not(:disabled) {
+  background-color: #F3F4F6;
+  border-color: #9CA3AF;
+}
+
+.dropdown-trigger:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ── 펼침 메뉴 ───────────────────────────────────────────────── */
+.dropdown-menu {
+  display: none;
+  position: absolute;
+  top: 100%;
+  margin-top: 2px;
+  min-width: 100%;
+  background: #fff;
+  border: 1px solid #D1D5DB;
+  border-radius: 6px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  z-index: 50;
+  overflow: hidden;
+}
+
+.dropdown-menu-left {
+  left: 0;
+}
+
+.dropdown-menu-right {
+  right: 0;
+}
+
+.dropdown:hover .dropdown-menu {
+  display: block;
+}
+
+/* ── 메뉴 항목 ───────────────────────────────────────────────── */
+.dropdown-item {
+  display: block;
+  width: 100%;
+  padding: 6px 14px;
+  border: none;
+  background: none;
+  font-size: 12px;
+  font-weight: 500;
+  color: #374151;
+  cursor: pointer;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.dropdown-item:hover:not(:disabled) {
+  background-color: #F3F4F6;
+}
+
+.dropdown-item:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* 현재 선택된 항목 강조 (예: 배송 상태 메뉴) */
+.dropdown-item.active {
+  background-color: #EFF6FF;
+  color: #2563EB;
+  font-weight: 600;
+}
