@@ -67,17 +67,17 @@ export const COLUMNS = [
   { key: 'seller_product_id', label: '등록id', width: '70px'  },
   { key: 'vendor_item_id', label: '옵션id',    width: '70px'  },
   { key: 'barcode',        label: '바코드',    width: '70px'  },
-  { key: 'product_info',   label: '상품정보',  width: '280px' },
+  { key: 'product_info',   label: '상품정보',  width: '268px' },
   { key: 'receiver_name',  label: '수취인',    width: '80px'  },
   { key: 'shipping_count', label: '수량',      width: '50px'  },
   { key: 'status_label',   label: '주문상태',  width: '70px'  },
   { key: 'estimated_shipping_date', label: '출고예정', width: '60px' },
   { key: 'ordered_at_label', label: '주문일시', width: '60px' },
-  { key: 'ff_status',      label: '상태',      width: '20px'  },
-  { key: 'ff_arrival',     label: '입고',      width: '20px'  },
-  { key: 'ff_packed',      label: '포장',      width: '20px'  },
-  { key: 'ff_cancel',      label: '취소',      width: '20px'  },
-  { key: 'ff_shipped',     label: '출고',      width: '20px'  },
+  { key: 'ff_status',      label: '상태',      width: '36px'  },
+  { key: 'ff_arrival',     label: '입고',      width: '36px'  },
+  { key: 'ff_packed',      label: '포장',      width: '36px'  },
+  { key: 'ff_cancel',      label: '취소',      width: '36px'  },
+  { key: 'ff_shipped',     label: '출고',      width: '36px'  },
 ] as const
 
 // ── 상태 점 설정 ──────────────────────────────────────────────────
