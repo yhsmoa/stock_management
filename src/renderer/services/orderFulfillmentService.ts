@@ -214,6 +214,83 @@ export async function fetchFulfillmentData(
 }
 
 // ══════════════════════════════════════════════════════════════════
+// 카트(ORDER) 매칭 키 조회
+//   - ft_carts.status = 'ORDER' 인 카트의 ft_cart_items 를
+//     fulfillment 와 동일한 복합 키(personal_order_no|vendor_option_id)로 매핑.
+//   - 개인주문 행이 '미주문(none)' 이면서 이 키에 해당하면 '카트(🛒)' 로 표시.
+//   - 매칭 근거: sendPersonalOrdersPre 가 personal_order_no ← order_id,
+//     vendor_option_id ← vendor_item_id 로 저장 (orderSendService.ts).
+// ══════════════════════════════════════════════════════════════════
+
+/**
+ * status='ORDER' 카트에 담긴 개인주문 행의 복합 키 집합 조회
+ *
+ * @param orderIds     - coupang_personal_orders.order_id 배열 (현재 로드된 주문)
+ * @param orderUserId  - purchase_agent ft_users.id (= si_users.order_user_id)
+ * @returns Set<`${personal_order_no}|${vendor_option_id ?? ''}`>
+ */
+export async function fetchOrderCartKeys(
+  orderIds: string[],
+  orderUserId: string,
+): Promise<Set<string>> {
+  const keys = new Set<string>()
+  if (!isOrderSupabaseConfigured || !orderUserId || orderIds.length === 0) return keys
+
+  // ── 1) status='ORDER' 카트 id 조회 (전 구간 페이지네이션 루프) ──
+  const cartIds: string[] = []
+  let from = 0
+  while (true) {
+    const { data, error } = await (orderSupabase.from('ft_carts') as any)
+      .select('id')
+      .eq('user_id', orderUserId)
+      .eq('status', 'ORDER')
+      .range(from, from + PAGE_SIZE - 1)
+    if (error) {
+      console.error('[fetchOrderCartKeys:ft_carts]', error)
+      throw error
+    }
+    if (data) cartIds.push(...(data as { id: string }[]).map((r) => r.id))
+    if (!data || data.length < PAGE_SIZE) break
+    from += PAGE_SIZE
+  }
+  if (cartIds.length === 0) return keys
+
+  // ── 2) 해당 카트의 cart_items 조회 ──
+  //   - cart_id 인덱스 활용 위해 BATCH_SIZE(100) 단위 .in() 분할
+  //   - 각 배치마다 PAGE_SIZE 페이지네이션 루프 (대량 대응, CLAUDE.md 룰 5)
+  //   - 현재 로드된 주문(orderIdSet) 에 해당하는 행만 키로 채택
+  const orderIdSet = new Set(orderIds)
+  for (let i = 0; i < cartIds.length; i += BATCH_SIZE) {
+    const chunk = cartIds.slice(i, i + BATCH_SIZE)
+    let pageFrom = 0
+    while (true) {
+      const { data, error } = await (orderSupabase.from('ft_cart_items') as any)
+        .select('personal_order_no, vendor_option_id')
+        .eq('user_id', orderUserId)
+        .in('cart_id', chunk)
+        .range(pageFrom, pageFrom + PAGE_SIZE - 1)
+      if (error) {
+        console.error('[fetchOrderCartKeys:ft_cart_items]', error)
+        throw error
+      }
+      const rows = (data ?? []) as {
+        personal_order_no: string | null
+        vendor_option_id: string | null
+      }[]
+      for (const ci of rows) {
+        if (!ci.personal_order_no) continue
+        if (!orderIdSet.has(ci.personal_order_no)) continue
+        keys.add(makeFulfillmentKey(ci.personal_order_no, ci.vendor_option_id))
+      }
+      if (rows.length < PAGE_SIZE) break
+      pageFrom += PAGE_SIZE
+    }
+  }
+
+  return keys
+}
+
+// ══════════════════════════════════════════════════════════════════
 // 드로어: Fulfillment 이력 조회
 // ══════════════════════════════════════════════════════════════════
 

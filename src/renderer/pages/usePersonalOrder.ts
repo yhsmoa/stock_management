@@ -22,6 +22,7 @@ import {
 } from '../services/personalOrderService'
 import {
   fetchFulfillmentData,
+  fetchOrderCartKeys,
   fetchCancelMetaForItems,
   makeFulfillmentKey,
   EMPTY_AGG,
@@ -80,7 +81,7 @@ export const COLUMNS = [
 ] as const
 
 // ── 상태 점 설정 ──────────────────────────────────────────────────
-export type StatusType = 'shipped' | 'green' | 'red' | 'gray' | 'multi' | 'none'
+export type StatusType = 'shipped' | 'green' | 'red' | 'gray' | 'multi' | 'cart' | 'none'
 
 export const STATUS_DOT_LABELS: Record<StatusType, string> = {
   shipped: '출고완료',
@@ -88,6 +89,7 @@ export const STATUS_DOT_LABELS: Record<StatusType, string> = {
   red: '전량취소',
   gray: '미발송',
   multi: '이력 확인 필요',
+  cart: '카트',
   none: '미주문',
 }
 
@@ -162,6 +164,8 @@ export function usePersonalOrder() {
   const [showReleaseStopOnly, setShowReleaseStopOnly] = useState(false)
   const [showNoInvoiceOnly, setShowNoInvoiceOnly] = useState(false)
   const [showReorderOnly, setShowReorderOnly] = useState(false)
+  // 🛒 카트 필터: status='ORDER' 카트에 담긴(미주문) 행만 보기
+  const [showCartOnly, setShowCartOnly] = useState(false)
   // 상태 점(green/red/gray) 필터 — 멀티 선택(OR). 빈 Set = 필터 없음
   const [selectedStatuses, setSelectedStatuses] = useState<Set<StatusType>>(new Set())
 
@@ -178,6 +182,8 @@ export function usePersonalOrder() {
   const [multiKeys, setMultiKeys] = useState<Set<string>>(new Set())
   const [orderItemsMap, setOrderItemsMap] = useState<Map<string, OrderItemDetail[]>>(new Map())
   const [reorderCountMap, setReorderCountMap] = useState<Map<string, number>>(new Map())
+  // ORDER 카트 매칭 키 집합 (복합 키: order_id|vendor_item_id) — '카트(🛒)' 판정용
+  const [cartKeySet, setCartKeySet] = useState<Set<string>>(new Set())
 
   // ── 드로어 선택 상태 ──────────────────────────────────────────
   const [selectedDrawerItem, setSelectedDrawerItem] = useState<DrawerItemState | null>(null)
@@ -242,14 +248,17 @@ export function usePersonalOrder() {
     const key = makeFulfillmentKey(row.order_id, row.vendor_item_id)
     if (multiKeys.has(key)) return 'multi'
     const itemsForKey = orderItemsMap.get(key)
-    if (!itemsForKey || itemsForKey.length === 0) return 'none'
+    // ft_order_items 매칭 없음 → ORDER 카트에 있으면 '카트(🛒)', 아니면 '미주문'
+    if (!itemsForKey || itemsForKey.length === 0) {
+      return cartKeySet.has(key) ? 'cart' : 'none'
+    }
     const agg = aggMap.get(key) ?? EMPTY_AGG
     const qty = row.shipping_count ?? 0
     if (qty > 0 && agg.cancel >= qty) return 'red'
     if (qty > 0 && agg.shipped >= qty) return 'shipped'  // 전량 출고
     if (agg.packed > 0) return 'green'
     return 'gray'
-  }, [aggMap, multiKeys, orderItemsMap])
+  }, [aggMap, multiKeys, orderItemsMap, cartKeySet])
 
   // ── fulfillment 데이터 로드 ─────────────────────────────────────
   const loadFulfillmentData = useCallback(async (orderRows: PersonalOrderRow[]) => {
@@ -259,16 +268,22 @@ export function usePersonalOrder() {
       setMultiKeys(new Set())
       setOrderItemsMap(new Map())
       setReorderCountMap(new Map())
+      setCartKeySet(new Set())
       return
     }
 
     try {
       const orderIds = Array.from(new Set(orderRows.map((r) => r.order_id).filter(Boolean)))
-      const result = await fetchFulfillmentData(orderIds, orderUserId)
+      // fulfillment 집계 + ORDER 카트 매칭 키 병렬 조회
+      const [result, cartKeys] = await Promise.all([
+        fetchFulfillmentData(orderIds, orderUserId),
+        fetchOrderCartKeys(orderIds, orderUserId),
+      ])
       setAggMap(result.aggMap)
       setMultiKeys(result.multiKeys)
       setOrderItemsMap(result.orderItemsMap)
       setReorderCountMap(result.reorderCountMap)
+      setCartKeySet(cartKeys)
     } catch (err) {
       console.error('[PersonalOrder] fulfillment 조회 실패:', err)
     }
@@ -455,6 +470,7 @@ export function usePersonalOrder() {
     setCurrentPage(1)
     setSelectedIds(new Set())
     setShowUnorderedOnly(false)
+    setShowCartOnly(false)
     setShowReleaseStopOnly(false)
     setShowNoInvoiceOnly(false)
     setShowReorderOnly(false)
@@ -464,6 +480,12 @@ export function usePersonalOrder() {
   // ── 미주문 필터 토글 ──────────────────────────────────────────
   const toggleUnorderedOnly = useCallback(() => {
     setShowUnorderedOnly((prev) => !prev)
+    setCurrentPage(1)
+  }, [])
+
+  // ── 🛒 카트 필터 토글 ─────────────────────────────────────────
+  const toggleCartOnly = useCallback(() => {
+    setShowCartOnly((prev) => !prev)
     setCurrentPage(1)
   }, [])
 
@@ -528,7 +550,10 @@ export function usePersonalOrder() {
       const key = makeFulfillmentKey(row.order_id, row.vendor_item_id)
       if (multiKeys.has(key)) return 'multi'
       const itemsForKey = orderItemsMap.get(key)
-      if (!itemsForKey || itemsForKey.length === 0) return 'none'
+      // ft_order_items 매칭 없음 → ORDER 카트에 있으면 '카트(🛒)', 아니면 '미주문'
+      if (!itemsForKey || itemsForKey.length === 0) {
+        return cartKeySet.has(key) ? 'cart' : 'none'
+      }
       const agg = aggMap.get(key) ?? EMPTY_AGG
       const qty = row.shipping_count ?? 0
       if (qty > 0 && agg.cancel >= qty) return 'red'
@@ -537,9 +562,14 @@ export function usePersonalOrder() {
       return 'gray'
     }
 
-    // 미주문 필터
+    // 미주문 필터 (카트 행은 별도 상태 → 제외됨)
     if (showUnorderedOnly) {
       result = result.filter((row) => computeStatus(row) === 'none')
+    }
+
+    // 🛒 카트 필터
+    if (showCartOnly) {
+      result = result.filter((row) => computeStatus(row) === 'cart')
     }
 
     // 출고중지 필터
@@ -577,7 +607,7 @@ export function usePersonalOrder() {
       const dateB = b.ordered_at ? new Date(b.ordered_at).getTime() : 0
       return dateA - dateB
     })
-  }, [items, activeTab, appliedSearch, showUnorderedOnly, showReleaseStopOnly, showNoInvoiceOnly, showReorderOnly, selectedStatuses, invoiceOrderIds, trackingMap, aggMap, multiKeys, orderItemsMap, reorderCountMap])
+  }, [items, activeTab, appliedSearch, showUnorderedOnly, showCartOnly, showReleaseStopOnly, showNoInvoiceOnly, showReorderOnly, selectedStatuses, invoiceOrderIds, trackingMap, aggMap, multiKeys, orderItemsMap, reorderCountMap, cartKeySet])
 
   // ── [엑셀 다운] 핸들러 (쿠팡 DeliveryList 양식) ────────────────
   const handleExcelDownload = useCallback(() => {
@@ -1206,6 +1236,7 @@ export function usePersonalOrder() {
     selectedIds,
     acknowledging,
     showUnorderedOnly,
+    showCartOnly,
     showReleaseStopOnly,
     showNoInvoiceOnly,
     showReorderOnly,
@@ -1253,6 +1284,7 @@ export function usePersonalOrder() {
     handleSelectAll,
     handleSelectRow,
     toggleUnorderedOnly,
+    toggleCartOnly,
     toggleReleaseStopOnly,
     toggleNoInvoiceOnly,
     toggleReorderOnly,

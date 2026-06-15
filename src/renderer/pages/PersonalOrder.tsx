@@ -32,6 +32,7 @@ const PersonalOrder: React.FC = () => {
     selectedIds,
     acknowledging,
     showUnorderedOnly,
+    showCartOnly,
     showReleaseStopOnly,
     showNoInvoiceOnly,
     showReorderOnly,
@@ -74,6 +75,7 @@ const PersonalOrder: React.FC = () => {
     handleSelectAll,
     handleSelectRow,
     toggleUnorderedOnly,
+    toggleCartOnly,
     toggleReleaseStopOnly,
     toggleNoInvoiceOnly,
     toggleReorderOnly,
@@ -283,6 +285,13 @@ const PersonalOrder: React.FC = () => {
           >
             📝송장필요
           </button>
+          <button
+            className={`po-tab-btn${showCartOnly ? ' active' : ''}`}
+            onClick={toggleCartOnly}
+            title="ORDER 카트에 담긴(미주문) 행만 보기"
+          >
+            🛒
+          </button>
 
           {/* ── 상태 점 필터 (shipped/green/red/gray/multi) ───── */}
           {(['shipped', 'green', 'red', 'gray', 'multi'] as const).map((st) => (
@@ -410,7 +419,14 @@ const PersonalOrder: React.FC = () => {
                               className={focusedClass.trim() || undefined}
                               onClick={onCellClick}
                             >
-                              {status !== 'none' ? (
+                              {status === 'cart' ? (
+                                <span
+                                  title={STATUS_DOT_LABELS.cart}
+                                  aria-label={STATUS_DOT_LABELS.cart}
+                                >
+                                  🛒
+                                </span>
+                              ) : status !== 'none' ? (
                                 <span
                                   className={`po-status-dot ${status}`}
                                   title={STATUS_DOT_LABELS[status]}
