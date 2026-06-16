@@ -8,7 +8,7 @@
    ================================================================ */
 
 import React, { useState, useEffect } from 'react'
-import { Link, useLocation } from 'react-router-dom'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { theme } from '../styles/theme'
 
 // ── 상수 ──────────────────────────────────────────────────────────
@@ -65,7 +65,14 @@ function findParentGroupLabel(currentPath: string): string | null {
 
 const Sidebar: React.FC = () => {
   const location = useLocation()
+  const navigate = useNavigate()
   const currentPath = location.pathname
+
+  // ── 로그아웃 ──────────────────────────────────────────────────
+  const handleLogout = () => {
+    localStorage.removeItem('user')
+    navigate('/login')
+  }
 
   const [expanded, setExpanded] = useState(false)
   // 펼쳐진 그룹 집합 (그룹 label key). 초기값: 현재 path 의 부모 그룹
@@ -196,6 +203,23 @@ const Sidebar: React.FC = () => {
       <nav style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '4px' }}>
         {MENU_ITEMS.map(renderItem)}
       </nav>
+
+      {/* ── 바닥: 로그아웃 ─────────────────────────────────────── */}
+      <button
+        onClick={handleLogout}
+        style={getLogoutStyle(expanded)}
+        onMouseEnter={(e) => {
+          ;(e.currentTarget as HTMLElement).style.backgroundColor = 'rgba(239, 68, 68, 0.18)'
+        }}
+        onMouseLeave={(e) => {
+          ;(e.currentTarget as HTMLElement).style.backgroundColor = 'transparent'
+        }}
+        title="로그아웃"
+        aria-label="로그아웃"
+      >
+        <span style={iconStyle}>🚪</span>
+        {expanded && <span style={labelStyle}>로그아웃</span>}
+      </button>
     </div>
   )
 }
@@ -229,6 +253,27 @@ function getLinkStyle(expanded: boolean, isActive: boolean): React.CSSProperties
     userSelect: 'none',
     backgroundColor: isActive ? 'rgba(255, 255, 255, 0.1)' : 'transparent',
     fontWeight: isActive ? 600 : 400,
+  }
+}
+
+function getLogoutStyle(expanded: boolean): React.CSSProperties {
+  return {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '6px',
+    padding: expanded ? '8px 10px' : '8px 0',
+    marginTop: '8px',
+    justifyContent: expanded ? 'flex-start' : 'center',
+    color: theme.colors.sidebarText,
+    background: 'transparent',
+    border: 'none',
+    borderTop: '1px solid rgba(255, 255, 255, 0.1)',
+    width: '100%',
+    borderRadius: theme.radius.sm,
+    cursor: 'pointer',
+    transition: 'background 0.2s',
+    userSelect: 'none',
+    flexShrink: 0,
   }
 }
 

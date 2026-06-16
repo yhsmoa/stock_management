@@ -1,5 +1,5 @@
 import React from 'react'
-import { Outlet, useNavigate } from 'react-router-dom'
+import { Outlet } from 'react-router-dom'
 import Sidebar from './Sidebar'
 import { theme } from '../styles/theme'
 
@@ -7,13 +7,6 @@ import { theme } from '../styles/theme'
 const RAIL_WIDTH = 44     // Sidebar 의 RAIL_WIDTH 와 동일하게 유지
 
 const Layout: React.FC = () => {
-  const navigate = useNavigate()
-
-  const handleLogout = () => {
-    localStorage.removeItem('user')
-    navigate('/login')
-  }
-
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden' }}>
       {/* 헤더 영역 - 항상 고정 */}
@@ -34,23 +27,7 @@ const Layout: React.FC = () => {
         <h1 style={{ margin: 0, fontSize: '20px', fontWeight: 'bold', color: theme.colors.textPrimary }}>
           Stock Management
         </h1>
-
-        {/* 오른쪽: 로그아웃 버튼 */}
-        <button
-          onClick={handleLogout}
-          style={{
-            padding: '8px 16px',
-            backgroundColor: theme.colors.danger,
-            color: 'white',
-            border: 'none',
-            borderRadius: theme.radius.md,
-            cursor: 'pointer',
-            fontSize: '14px',
-            fontWeight: '600',
-          }}
-        >
-          로그아웃
-        </button>
+        {/* 로그아웃 버튼은 사이드바 바닥으로 이동 */}
       </header>
 
       {/* 메인 컨텐츠 영역 — Sidebar 는 항상 보이는 rail (overlay 동작) */}
