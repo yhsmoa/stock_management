@@ -160,6 +160,99 @@ export async function fetchRgProductDetail(
 }
 
 // ══════════════════════════════════════════════════════════════════
+// 아이템별 가격 / 판매상태 API (vendorItemId 기준)
+//   - 가격 변경    : PUT  /api/coupang/vendor-item-price
+//   - 판매 재개/중지: PUT  /api/coupang/vendor-item-sale
+//   - 수량/가격/상태: GET  /api/coupang/vendor-item-inventory
+// ══════════════════════════════════════════════════════════════════
+
+/** 아이템별 수량/가격/판매상태 (inventories 조회 결과) */
+export interface VendorItemInventory {
+  vendorItemId: string
+  salePrice: number | null
+  amountInStock: number | null
+  saleStatus: string | null   // 쿠팡 원문 상태값 (예: ONSALE / SUSPENSION ...)
+  onSale: boolean             // 해석된 '판매중' 여부
+}
+
+/** 공통 응답 검증 — { success, data: { code, message, data } } */
+function assertCoupangOk(json: any, fallbackMsg: string): any {
+  // 프록시 레벨 실패
+  if (!json?.success) {
+    throw new Error(json?.error || fallbackMsg)
+  }
+  // 쿠팡 API 레벨 실패 (code !== SUCCESS)
+  if (json.data?.code && json.data.code !== 'SUCCESS') {
+    throw new Error(json.data?.message || fallbackMsg)
+  }
+  return json.data
+}
+
+/** 아이템별 수량/가격/판매상태 조회 */
+export async function fetchVendorItemInventory(vendorItemId: string): Promise<VendorItemInventory> {
+  const res = await fetch(
+    `/api/coupang/vendor-item-inventory?vendorItemId=${encodeURIComponent(vendorItemId)}`,
+    { headers: getCoupangHeaders() },
+  )
+  const json = await res.json()
+  const result = assertCoupangOk(json, '판매상태 조회에 실패했습니다.')
+
+  // 쿠팡 inventories 응답의 실제 data 본문
+  // (응답 필드명/판매상태 값 확인용 — 라이브 1회 확인 후 제거 가능)
+  const d = (result?.data ?? {}) as Record<string, any>
+  console.log('[fetchVendorItemInventory] data:', d)
+  // 상태 해석 — onSale(boolean) 우선, 없으면 saleStatus 문자열로 판정
+  const saleStatus: string | null = d.saleStatus ?? d.status ?? null
+  const onSale =
+    typeof d.onSale === 'boolean'
+      ? d.onSale
+      : typeof saleStatus === 'string'
+        ? /on.?sale/i.test(saleStatus)
+        : false
+
+  return {
+    vendorItemId: String(d.vendorItemId ?? vendorItemId),
+    salePrice: d.salePrice ?? null,
+    amountInStock: d.amountInStock ?? null,
+    saleStatus,
+    onSale,
+  }
+}
+
+/**
+ * 아이템별 판매가격 변경
+ * @param price 10원 단위 정수. (비율 제한은 호출 측에서 사전 검증)
+ * @param force forceSalePriceUpdate (기본 false — 비율 제한 적용)
+ */
+export async function updateVendorItemPrice(
+  vendorItemId: string,
+  price: number,
+  force = false,
+): Promise<void> {
+  const res = await fetch('/api/coupang/vendor-item-price', {
+    method: 'PUT',
+    headers: { ...getCoupangHeaders(), 'Content-Type': 'application/json' },
+    body: JSON.stringify({ vendorItemId, price, force }),
+  })
+  const json = await res.json()
+  assertCoupangOk(json, '가격 변경에 실패했습니다.')
+}
+
+/** 아이템별 판매 재개('resume') / 중지('stop') */
+export async function setVendorItemSale(
+  vendorItemId: string,
+  action: 'resume' | 'stop',
+): Promise<void> {
+  const res = await fetch('/api/coupang/vendor-item-sale', {
+    method: 'PUT',
+    headers: { ...getCoupangHeaders(), 'Content-Type': 'application/json' },
+    body: JSON.stringify({ vendorItemId, action }),
+  })
+  const json = await res.json()
+  assertCoupangOk(json, '판매상태 변경에 실패했습니다.')
+}
+
+// ══════════════════════════════════════════════════════════════════
 // 큐 기반 상세 조회 + 매핑
 // ══════════════════════════════════════════════════════════════════
 
@@ -254,6 +347,9 @@ export function mapToRgItems(
       external_vendor_sku: item.externalVendorSku ?? item.rocketGrowthItemData?.externalVendorSku ?? null,
       sale_price: item.salePrice ?? item.rocketGrowthItemData?.priceData?.salePrice ?? null,
       input: null,
+      in_qty: null,
+      out_qty: null,
+      order_qty: null,
       weight: item.rocketGrowthItemData?.skuInfo?.weight ?? null,
       width: item.rocketGrowthItemData?.skuInfo?.width ?? null,
       length: item.rocketGrowthItemData?.skuInfo?.length ?? null,
@@ -292,6 +388,9 @@ export function mapListItemToRgItems(
     external_vendor_sku: null,
     sale_price: null,
     input: null,
+    in_qty: null,
+    out_qty: null,
+    order_qty: null,
     weight: null,
     width: null,
     length: null,
@@ -337,6 +436,66 @@ export async function fetchRgItems(userId: string): Promise<RgItem[]> {
   const allData = batches.flat()
   console.log(`[purchaseService] si_rg_items ${allData.length}건 조회`)
   return allData
+}
+
+// ── 주문 수량(order_qty) 영속화 ─────────────────────────────────────
+
+/**
+ * '주문 🔗' 적용 시 si_rg_items.order_qty 갱신
+ * - STEP 1: 사용자 전체 order_qty 초기화 (항상 실행 — 클릭 때마다 리셋)
+ * - STEP 2: barcode 별 net 값을 일괄 update (net !== 0 인 것만)
+ *
+ * 매칭: si_rg_items.barcode = key. 동일 barcode 의 여러 행은 모두 같은 net 으로 설정.
+ * 주의: UPDATE 는 필터에 매칭되는 모든 행을 수정(SELECT 1000건 limit 과 무관)하지만,
+ *       .in() barcode 목록은 URL 길이 보호를 위해 100개 단위로 청크 분할한다.
+ *
+ * @param userId        si_users.id (= si_rg_items.user_id)
+ * @param barcodeToNet  barcode → net(주문-취소-출고) 맵
+ * @returns 값이 설정된(net!==0) 고유 barcode 수
+ */
+export async function persistOrderQty(
+  userId: string,
+  barcodeToNet: Map<string, number>,
+): Promise<number> {
+  // ── STEP 1: 초기화 (기존에 값이 있던 행만 null 로) ──
+  const { error: resetErr } = await supabase
+    .from('si_rg_items')
+    .update({ order_qty: null })
+    .eq('user_id', userId)
+    .not('order_qty', 'is', null)
+  if (resetErr) {
+    console.error('[persistOrderQty] 초기화 오류:', resetErr)
+    throw resetErr
+  }
+
+  // ── STEP 2: net 값별 그룹핑 → barcode 100개 단위 update ──
+  const netToBarcodes = new Map<number, string[]>()
+  for (const [bc, net] of barcodeToNet) {
+    if (!bc || net === 0) continue
+    const arr = netToBarcodes.get(net) ?? []
+    arr.push(bc)
+    netToBarcodes.set(net, arr)
+  }
+
+  const CHUNK = 100
+  let matchedBarcodes = 0
+  for (const [net, barcodes] of netToBarcodes) {
+    matchedBarcodes += barcodes.length
+    for (let i = 0; i < barcodes.length; i += CHUNK) {
+      const chunk = barcodes.slice(i, i + CHUNK)
+      const { error } = await supabase
+        .from('si_rg_items')
+        .update({ order_qty: net })
+        .eq('user_id', userId)
+        .in('barcode', chunk)
+      if (error) {
+        console.error('[persistOrderQty] 저장 오류:', error)
+        throw error
+      }
+    }
+  }
+
+  return matchedBarcodes
 }
 
 // ── si_rg_item_data 사용자별 전체 조회 ───────────────────────────────

@@ -24,6 +24,7 @@ export interface RgItem {
   input: number | null                     // 사용자 입력 수량
   in_qty: number | null                   // 입고 수량
   out_qty: number | null                  // 반출 수량
+  order_qty: number | null                // 주문 수량 (주문 🔗 적용 시 영속화, net = 주문-취소-출고)
   weight: number | null
   width: number | null
   length: number | null

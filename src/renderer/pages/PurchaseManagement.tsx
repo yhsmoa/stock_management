@@ -13,6 +13,7 @@ import UploadProgressModal from '../components/UploadProgressModal'
 import PasswordConfirmModal from '../components/common/PasswordConfirmModal'
 import CartNameInputModal from '../components/personal-order/CartNameInputModal'
 import DropdownMenu, { DropdownItem } from '../components/common/DropdownMenu'
+import BulkPriceModal from '../components/purchase/BulkPriceModal'
 
 // ── 상수: 조회수 변동 색상 ────────────────────────────────────
 const VIEW_DIFF_THRESHOLD = 10
@@ -169,9 +170,12 @@ const PurchaseManagement: React.FC = () => {
     isNotItemWinner,
     viewsDataMap,
     recentViewDates,
-    orderDeltaMap,
     isOrderLoading,
     loadOrderDelta,
+    bulkRunning,
+    bulkProgress,
+    handleBulkPrice,
+    handleBulkSale,
     warehouseQtyMap,
     copying,
     handleCopy,
@@ -189,6 +193,9 @@ const PurchaseManagement: React.FC = () => {
 
   // ── 리셋 확인 모달 (비밀번호 재확인) ────────────────────────
   const [resetModalOpen, setResetModalOpen] = useState(false)
+
+  // ── 일괄 가격수정 모달 ───────────────────────────────────────
+  const [bulkPriceModalOpen, setBulkPriceModalOpen] = useState(false)
 
   // ── 테이블 풀스크린 토글 (🔍 버튼) ──────────────────────────
   //   활성 시 .purchase-table-section.fullscreen 으로 viewport 전체 덮음
@@ -274,12 +281,11 @@ const PurchaseManagement: React.FC = () => {
       case 'out_qty':
         return renderEditableCell(item, 'out_qty', item.out_qty ?? null)
 
-      /* ── 주문 열: ft_order_items delta (주문 - 취소 - 출고) ── */
+      /* ── 주문 열: si_rg_items.order_qty (주문 🔗 적용 시 영속화된 net) ── */
       case 'order': {
-        const bc = item.barcode
-        const delta = bc ? orderDeltaMap.get(bc) : undefined
-        if (!delta || delta.net === 0) return ''
-        return delta.net.toLocaleString()
+        const v = item.order_qty
+        if (v == null || v === 0) return ''
+        return v.toLocaleString()
       }
 
       /* ── JOIN 컬럼: si_rg_item_data 필드 ────────────────── */
@@ -582,6 +588,38 @@ const PurchaseManagement: React.FC = () => {
           )}
         </div>
         <div className="purchase-toolbar-right">
+          {/* ── 일괄 가격수정 (체크된 행 동일가 적용) ──────────── */}
+          <button
+            className="purchase-btn"
+            onClick={() => setBulkPriceModalOpen(true)}
+            disabled={bulkRunning || selectedIds.size === 0}
+            title="체크된 행에 동일 가격 일괄 적용"
+          >
+            {bulkRunning ? (bulkProgress || '처리 중...') : '가격수정'}
+          </button>
+
+          {/* ── 일괄 판매상태 (전체 판매중 / 판매중지) ─────────── */}
+          <DropdownMenu
+            label={bulkRunning ? (bulkProgress || '처리 중...') : '판매상태'}
+            align="right"
+            disabled={bulkRunning || selectedIds.size === 0}
+          >
+            <DropdownItem
+              onClick={() => {
+                if (confirm(`체크한 ${selectedIds.size}건을 '판매중'으로 변경할까요?`)) handleBulkSale('resume')
+              }}
+            >
+              전체 판매중
+            </DropdownItem>
+            <DropdownItem
+              onClick={() => {
+                if (confirm(`체크한 ${selectedIds.size}건을 '판매중지'로 변경할까요?`)) handleBulkSale('stop')
+              }}
+            >
+              전체 판매중지
+            </DropdownItem>
+          </DropdownMenu>
+
           {/* ── 테이블 풀스크린 토글 (이모지 자체가 버튼) ────── */}
           <button
             className="purchase-icon-btn"
@@ -800,6 +838,18 @@ const PurchaseManagement: React.FC = () => {
         onClose={() => setOrderSendModalOpen(false)}
         onSubmit={handleConfirmOrderSend}
         loading={orderSending}
+      />
+
+      {/* ── 일괄 가격수정 모달 ─────────────────────────────────── */}
+      <BulkPriceModal
+        isOpen={bulkPriceModalOpen}
+        count={selectedIds.size}
+        loading={bulkRunning}
+        onClose={() => setBulkPriceModalOpen(false)}
+        onSubmit={(price) => {
+          setBulkPriceModalOpen(false)
+          handleBulkPrice(price)
+        }}
       />
 
       {/* ── 조회수 날짜 입력 모달 ──────────────────────────── */}

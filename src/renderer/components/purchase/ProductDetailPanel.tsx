@@ -1,7 +1,16 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import { theme } from '../../styles/theme'
-import { fetchRgProductDetail } from '../../services/purchaseService'
+import {
+  fetchRgProductDetail,
+  fetchVendorItemInventory,
+  updateVendorItemPrice,
+  setVendorItemSale,
+} from '../../services/purchaseService'
 import type { RgItem, CoupangProductDetail } from '../../types/purchase'
+
+// ── 가격 비율 제한 (쿠팡: 기존가 대비 최대 50% 인하 ~ 100% 인상) ──
+const PRICE_MIN_RATIO = 0.5   // 하한 = 기존가 × 0.5
+const PRICE_MAX_RATIO = 2     // 상한 = 기존가 × 2 (100% 인상)
 
 /* ================================================================
    ProductDetailPanel — 상품 상세 슬라이드 패널
@@ -210,6 +219,75 @@ const styles = {
     textAlign: 'center' as const,
     marginBottom: '16px',
   },
+
+  /* ── 가격 수정 입력폼 ────────────────────────────────────────── */
+  priceInputRow: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '8px',
+    marginTop: '8px',
+  },
+  priceInput: {
+    flex: 1,
+    minWidth: 0,
+    padding: '8px 10px',
+    border: `1px solid ${theme.colors.border}`,
+    borderRadius: theme.radius.md,
+    fontSize: theme.fontSize.base,
+    textAlign: 'right' as const,
+    outline: 'none',
+  },
+  priceSaveBtn: {
+    padding: '8px 16px',
+    border: 'none',
+    borderRadius: theme.radius.md,
+    background: theme.colors.primary,
+    color: '#fff',
+    fontSize: theme.fontSize.sm,
+    fontWeight: 600,
+    cursor: 'pointer',
+    whiteSpace: 'nowrap' as const,
+  },
+  priceHint: {
+    fontSize: '11px',
+    color: theme.colors.textMuted,
+    marginTop: '4px',
+  },
+  priceError: {
+    fontSize: '12px',
+    color: '#EF4444',
+    fontWeight: 500,
+    marginTop: '4px',
+  },
+
+  /* ── 판매상태 버튼 그룹 ──────────────────────────────────────── */
+  saleRow: {
+    display: 'flex',
+    gap: '8px',
+    padding: '16px 0 4px',
+  },
+  saleBtn: {
+    flex: 1,
+    padding: '10px 0',
+    border: `1px solid ${theme.colors.border}`,
+    borderRadius: theme.radius.md,
+    background: '#fff',
+    color: theme.colors.textSecondary,
+    fontSize: theme.fontSize.sm,
+    fontWeight: 600,
+    cursor: 'pointer',
+    transition: 'all 0.15s',
+  },
+  saleBtnOnActive: {
+    background: '#4A8CF7',
+    borderColor: '#4A8CF7',
+    color: '#fff',
+  },
+  saleBtnStopActive: {
+    background: '#EF4444',
+    borderColor: '#EF4444',
+    color: '#fff',
+  },
 }
 
 // ── 스피너 키프레임 (인라인 삽입) ────────────────────────────────────
@@ -238,6 +316,14 @@ const ProductDetailPanel: React.FC<ProductDetailPanelProps> = ({
   const [imgError, setImgError] = useState(false)
   const [copyTooltip, setCopyTooltip] = useState<{ x: number; y: number; key: number } | null>(null)
 
+  /* ── 가격/판매상태 (inventories 조회 + 변경) ─────────────────── */
+  const [baselinePrice, setBaselinePrice] = useState<number | null>(null)  // 비율 기준 = 현재 판매가
+  const [priceInput, setPriceInput] = useState('')
+  const [priceError, setPriceError] = useState<string | null>(null)
+  const [savingPrice, setSavingPrice] = useState(false)
+  const [onSale, setOnSale] = useState<boolean | null>(null)                // null = 조회 중/실패
+  const [savingSale, setSavingSale] = useState(false)
+
   /* ── 클릭 복사 핸들러 (마우스 위치에 "copy" 툴팁 표시) ──────── */
   const handleCopy = useCallback((value: string | null | undefined, e: React.MouseEvent) => {
     if (!value) return
@@ -245,6 +331,68 @@ const ProductDetailPanel: React.FC<ProductDetailPanelProps> = ({
     setCopyTooltip({ x: e.clientX + 12, y: e.clientY - 8, key: Date.now() })
     setTimeout(() => setCopyTooltip(null), 1000)
   }, [])
+
+  /* ── 가격 변경 (10원 단위 + 비율 제한 사전 검증) ─────────────
+     위반 시: 빨간 안내 + 원래 금액 복원 → 재수정 가능 */
+  const handleSavePrice = useCallback(async () => {
+    const vid = item?.vendor_item_id
+    if (!vid) return
+
+    const revert = () => setPriceInput(baselinePrice != null ? String(baselinePrice) : '')
+    const newPrice = Number(priceInput)
+
+    if (!Number.isFinite(newPrice) || newPrice <= 0) {
+      setPriceError('유효한 금액을 입력하세요.')
+      revert()
+      return
+    }
+    if (newPrice % 10 !== 0) {
+      setPriceError('가격은 10원 단위로 입력 가능합니다.')
+      revert()
+      return
+    }
+    if (baselinePrice != null && baselinePrice > 0) {
+      const min = baselinePrice * PRICE_MIN_RATIO
+      const max = baselinePrice * PRICE_MAX_RATIO
+      if (newPrice < min || newPrice > max) {
+        setPriceError('가격 비율 제한(기존가 대비 50%↓ ~ 100%↑)을 벗어날 수 없습니다.')
+        revert()
+        return
+      }
+    }
+    if (newPrice === baselinePrice) {
+      setPriceError(null)
+      return
+    }
+
+    setSavingPrice(true)
+    setPriceError(null)
+    try {
+      await updateVendorItemPrice(vid, newPrice, false)
+      setBaselinePrice(newPrice)
+      setPriceInput(String(newPrice))
+    } catch (err: any) {
+      setPriceError(err?.message || '가격 변경에 실패했습니다.')
+      revert()
+    } finally {
+      setSavingPrice(false)
+    }
+  }, [item?.vendor_item_id, priceInput, baselinePrice])
+
+  /* ── 판매 재개/중지 ─────────────────────────────────────────── */
+  const handleSetSale = useCallback(async (action: 'resume' | 'stop') => {
+    const vid = item?.vendor_item_id
+    if (!vid) return
+    setSavingSale(true)
+    try {
+      await setVendorItemSale(vid, action)
+      setOnSale(action === 'resume')
+    } catch (err: any) {
+      alert((action === 'resume' ? '판매 재개 실패: ' : '판매 중지 실패: ') + (err?.message || ''))
+    } finally {
+      setSavingSale(false)
+    }
+  }, [item?.vendor_item_id])
 
   /* ── 패널 열릴 때 상세 API 호출 ──────────────────────────────── */
   useEffect(() => {
@@ -272,6 +420,44 @@ const ProductDetailPanel: React.FC<ProductDetailPanelProps> = ({
 
     loadDetail()
   }, [isOpen, item?.seller_product_id])
+
+  /* ── 패널 열릴 때 inventories 조회 (현재 가격·판매상태) ──────────
+     - 비율 기준가(baselinePrice) 와 판매상태(onSale) 의 정본 소스.
+     - vendor_item_id 없으면 조회 불가 → 입력/버튼 비활성. */
+  useEffect(() => {
+    const vid = item?.vendor_item_id
+    if (!isOpen || !vid) {
+      setBaselinePrice(null)
+      setPriceInput('')
+      setPriceError(null)
+      setOnSale(null)
+      return
+    }
+
+    let cancelled = false
+    const loadInventory = async () => {
+      try {
+        const inv = await fetchVendorItemInventory(vid)
+        if (cancelled) return
+        const base = inv.salePrice ?? item?.sale_price ?? null
+        setBaselinePrice(base)
+        setPriceInput(base != null ? String(base) : '')
+        setOnSale(inv.onSale)
+      } catch (err: any) {
+        if (cancelled) return
+        console.error('[ProductDetailPanel] inventories 조회 실패:', err)
+        // 폴백: DB 판매가로 입력폼만 채우고 판매상태는 미상(null)
+        const base = item?.sale_price ?? null
+        setBaselinePrice(base)
+        setPriceInput(base != null ? String(base) : '')
+        setOnSale(null)
+      }
+      if (!cancelled) setPriceError(null)
+    }
+
+    loadInventory()
+    return () => { cancelled = true }
+  }, [isOpen, item?.vendor_item_id])
 
   // ── 패널이 닫혀 있으면 렌더링하지 않음 ────────────────────────────
   if (!isOpen || !item) return null
@@ -412,14 +598,80 @@ const ProductDetailPanel: React.FC<ProductDetailPanelProps> = ({
                 <span style={styles.infoValue}>{barcode || '-'}</span>
               </div>
 
-              {/* ── 가격 ───────────────────────────────────────── */}
-              <div style={styles.infoRow}>
-                <span style={styles.infoIcon}>🏷️</span>
-                <span style={styles.infoLabel}>가격</span>
-                <span style={styles.infoValue}>
-                  {salePrice != null ? `${salePrice.toLocaleString()}원` : '-'}
-                </span>
+              {/* ── 가격 수정 (입력폼 → 쿠팡 가격 변경 API) ───────── */}
+              <div style={{ padding: '12px 0', borderBottom: `1px solid ${theme.colors.borderLight}` }}>
+                <div style={{ display: 'flex', alignItems: 'center' }}>
+                  <span style={styles.infoIcon}>🏷️</span>
+                  <span style={styles.infoLabel}>가격</span>
+                </div>
+                {vendorItemId ? (
+                  <>
+                    <div style={styles.priceInputRow}>
+                      <input
+                        style={styles.priceInput}
+                        type="text"
+                        inputMode="numeric"
+                        value={priceInput}
+                        disabled={savingPrice}
+                        onChange={(e) => {
+                          setPriceInput(e.target.value.replace(/[^\d]/g, ''))
+                          if (priceError) setPriceError(null)
+                        }}
+                        onKeyDown={(e) => { if (e.key === 'Enter') handleSavePrice() }}
+                      />
+                      <span style={{ color: theme.colors.textSecondary }}>원</span>
+                      <button
+                        style={styles.priceSaveBtn}
+                        onClick={handleSavePrice}
+                        disabled={savingPrice}
+                      >
+                        {savingPrice ? '변경 중...' : '가격 변경'}
+                      </button>
+                    </div>
+                    {priceError ? (
+                      <div style={styles.priceError}>{priceError}</div>
+                    ) : (
+                      baselinePrice != null && (
+                        <div style={styles.priceHint}>
+                          현재 {baselinePrice.toLocaleString()}원 · 변경 가능 범위{' '}
+                          {Math.ceil(baselinePrice * PRICE_MIN_RATIO).toLocaleString()} ~{' '}
+                          {(baselinePrice * PRICE_MAX_RATIO).toLocaleString()}원 (10원 단위)
+                        </div>
+                      )
+                    )}
+                  </>
+                ) : (
+                  <div style={{ ...styles.infoValue, paddingLeft: '34px' }}>
+                    {salePrice != null ? `${salePrice.toLocaleString()}원` : '-'}
+                    <span style={styles.priceHint}> (옵션ID 없음 — 변경 불가)</span>
+                  </div>
+                )}
               </div>
+
+              {/* ── 판매상태 (판매중 / 판매중지) ────────────────── */}
+              {vendorItemId && (
+                <div>
+                  <div style={styles.saleRow}>
+                    <button
+                      style={{ ...styles.saleBtn, ...(onSale === true ? styles.saleBtnOnActive : {}) }}
+                      onClick={() => handleSetSale('resume')}
+                      disabled={savingSale || onSale === true}
+                    >
+                      판매중
+                    </button>
+                    <button
+                      style={{ ...styles.saleBtn, ...(onSale === false ? styles.saleBtnStopActive : {}) }}
+                      onClick={() => handleSetSale('stop')}
+                      disabled={savingSale || onSale === false}
+                    >
+                      판매중지
+                    </button>
+                  </div>
+                  {onSale === null && (
+                    <div style={styles.priceHint}>판매상태를 불러오는 중이거나 조회에 실패했습니다.</div>
+                  )}
+                </div>
+              )}
             </>
           )}
         </div>

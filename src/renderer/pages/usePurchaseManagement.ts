@@ -11,6 +11,7 @@ import {
   fetchAllRgProducts,
   mapListItemToRgItems,
   fetchRgItems,
+  persistOrderQty,
   fetchRgItemData,
   saveRgItems,
   validateItemDataExcel,
@@ -26,6 +27,8 @@ import {
   saveViewsData,
   fetchViewsData,
   getRecentViewDates,
+  updateVendorItemPrice,
+  setVendorItemSale,
 } from '../services/purchaseService'
 import { supabase, getOrderUserId } from '../services/supabase'
 import {
@@ -78,6 +81,22 @@ export const COLUMNS: Column[] = [
   { key: 'out_qty',  label: '반출',     width: '46px', editable: true, colClass: 'col-out-qty' },
   { key: 'note',     label: 'note',     width: '70px' },
 ]
+
+// ── 일괄 작업 유틸 ────────────────────────────────────────────
+const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms))
+
+/** 일괄 처리 결과 요약 메시지 (성공/실패/제외 + 실패 내역 미리보기) */
+function bulkSummary(label: string, ok: number, fails: string[], skipped: number): string {
+  let msg =
+    `${label} 완료\n성공 ${ok}건` +
+    (fails.length ? `, 실패 ${fails.length}건` : '') +
+    (skipped ? `, 옵션ID 없음 ${skipped}건 제외` : '')
+  if (fails.length) {
+    const preview = fails.slice(0, 10).join('\n')
+    msg += `\n\n[실패 내역]\n${preview}${fails.length > 10 ? `\n...외 ${fails.length - 10}건` : ''}`
+  }
+  return msg
+}
 
 // ── 사용자 ID 조회 ────────────────────────────────────────────
 const getUserId = (): string | null => {
@@ -167,8 +186,7 @@ export function usePurchaseManagement() {
   type FilterKey = 'sales' | 'storage' | 'input' | 'in_qty' | 'out_qty' | 'no_barcode'
   const [activeFilter, setActiveFilter] = useState<FilterKey | null>(null)
 
-  /* ── 주문 델타 (주문 - 취소 - 출고, barcode 기준) ──────── */
-  const [orderDeltaMap, setOrderDeltaMap] = useState<Map<string, OrderDelta>>(new Map())
+  /* ── 주문 로딩 상태 (주문 🔗 적용 → order_qty 영속화) ──── */
   const [isOrderLoading, setIsOrderLoading] = useState(false)
 
   // ══════════════════════════════════════════════════════════════
@@ -1227,17 +1245,25 @@ console.log('[조회수] 완료! 총 '+results.length+'건 CSV 저장됨');
   }
 
   // ══════════════════════════════════════════════════════════════
-  // 주문 델타 로드 (OrderModal [적용] 콜백)
-  //   - productIds (rg_items.seller_product_id) 로 주문/취소/출고 합계 조회
+  // 주문 수량 적용 (OrderModal [적용] 콜백)
+  //   - 주문/취소/출고 합계(net)를 계산해 si_rg_items.order_qty 에 영속화
+  //   - 클릭(적용) 시마다 order_qty 전체 초기화 후 재기록
+  //   - 화면 '주문' 열은 item.order_qty 를 직접 표시 (메모리 즉시표시 제거)
   // ══════════════════════════════════════════════════════════════
 
   const loadOrderDelta = useCallback(
     async (includeTypes: ShipmentType[], excludeShipmentIds: string[]) => {
+      const userId = getUserId()
+      if (!userId) {
+        alert('사용자 정보를 찾을 수 없습니다. 다시 로그인해주세요.')
+        return
+      }
+
       setIsOrderLoading(true)
       try {
         // ── order_user_id 조달 (ft_users.id) ──
         // localStorage → si_users 테이블 순으로 조회하는 공용 헬퍼 사용
-        // 주의: 기존 getUserId() 는 si_users.id 라 여기서 사용 불가
+        // 주의: getUserId() 는 si_users.id 라 ft 조회용으로 사용 불가
         const orderUserId = await getOrderUserId()
         if (!orderUserId) {
           alert('로그인 사용자의 order_user_id 가 없어 주문 데이터를 조회할 수 없습니다.')
@@ -1252,22 +1278,127 @@ console.log('[조회수] 완료! 총 '+results.length+'건 CSV 저장됨');
               .filter((b): b is string => !!b),
           ),
         )
-        if (barcodeList.length === 0) {
-          setOrderDeltaMap(new Map())
-          return
-        }
 
-        const map = await fetchOrderDelta(barcodeList, includeTypes, excludeShipmentIds, orderUserId)
-        setOrderDeltaMap(map)
+        // barcode 가 하나도 없으면 매칭 불가 → 빈 맵 (초기화만 수행)
+        const map = barcodeList.length > 0
+          ? await fetchOrderDelta(barcodeList, includeTypes, excludeShipmentIds, orderUserId)
+          : new Map<string, OrderDelta>()
+
+        // ── 영속화: order_qty 초기화 + net 저장 ──
+        const barcodeToNet = new Map<string, number>()
+        for (const [bc, delta] of map) barcodeToNet.set(bc, delta.net)
+        const matched = await persistOrderQty(userId, barcodeToNet)
+
+        // ── 로컬 상태 갱신 (net===0 또는 미매칭 → null) ──
+        setItems((prev) =>
+          prev.map((it) => {
+            const net = it.barcode ? (map.get(it.barcode)?.net ?? 0) : 0
+            return { ...it, order_qty: net !== 0 ? net : null }
+          }),
+        )
+
+        alert(
+          barcodeList.length === 0
+            ? '연결된 바코드가 없어 주문 수량을 초기화했습니다. (먼저 바코드 연결을 실행하세요)'
+            : `주문 수량 갱신 완료 (${matched.toLocaleString()}개 바코드)`,
+        )
       } catch (e) {
         console.error('[loadOrderDelta]', e)
-        alert('주문 데이터 조회 실패: ' + (e as Error).message)
+        alert('주문 데이터 적용 실패: ' + (e as Error).message)
       } finally {
         setIsOrderLoading(false)
       }
     },
     [items],
   )
+
+  // ══════════════════════════════════════════════════════════════
+  // 일괄 작업 (체크된 행) — 가격 변경 / 판매상태 변경
+  //   - selectedIds 는 filteredItems 의 인덱스 문자열
+  //   - 쿠팡 API rate limit 대응: 순차 호출 + 120ms 간격 + 진행 표시
+  // ══════════════════════════════════════════════════════════════
+
+  const selectedItems = useMemo(
+    () => filteredItems.filter((_, idx) => selectedIds.has(String(idx))),
+    [filteredItems, selectedIds],
+  )
+
+  const [bulkRunning, setBulkRunning] = useState(false)
+  const [bulkProgress, setBulkProgress] = useState('')
+  const bulkRunningRef = useRef(false)  // 재진입 방지 (드롭다운 hover 등)
+
+  /** 일괄 동일 가격 적용 (비율 초과 항목은 API 가 거절 → 실패로 집계) */
+  const handleBulkPrice = useCallback(async (price: number) => {
+    if (bulkRunningRef.current) return
+    if (selectedItems.length === 0) { alert('선택된 행이 없습니다.'); return }
+    const targets = selectedItems.filter((it) => it.vendor_item_id)
+    const skipped = selectedItems.length - targets.length
+    if (targets.length === 0) { alert('선택된 행에 옵션ID(vendor_item_id)가 없습니다.'); return }
+
+    bulkRunningRef.current = true
+    setBulkRunning(true)
+    let ok = 0
+    const fails: string[] = []
+    const successVids = new Set<string>()
+    try {
+      for (let i = 0; i < targets.length; i++) {
+        const it = targets[i]
+        setBulkProgress(`가격 변경 ${i + 1}/${targets.length}`)
+        try {
+          await updateVendorItemPrice(it.vendor_item_id!, price, false)
+          ok++
+          successVids.add(it.vendor_item_id!)
+        } catch (e: any) {
+          fails.push(`${it.option_name ?? it.vendor_item_id}: ${e?.message ?? '실패'}`)
+        }
+        await sleep(120)
+      }
+      // 성공 행 로컬 sale_price 갱신
+      if (successVids.size > 0) {
+        setItems((prev) => prev.map((it) =>
+          it.vendor_item_id && successVids.has(it.vendor_item_id) ? { ...it, sale_price: price } : it,
+        ))
+      }
+    } finally {
+      bulkRunningRef.current = false
+      setBulkRunning(false)
+      setBulkProgress('')
+    }
+    alert(bulkSummary('가격 변경', ok, fails, skipped))
+  }, [selectedItems])
+
+  /** 일괄 판매상태 변경 (resume=판매중 / stop=판매중지) */
+  const handleBulkSale = useCallback(async (action: 'resume' | 'stop') => {
+    if (bulkRunningRef.current) return
+    if (selectedItems.length === 0) { alert('선택된 행이 없습니다.'); return }
+    const targets = selectedItems.filter((it) => it.vendor_item_id)
+    const skipped = selectedItems.length - targets.length
+    if (targets.length === 0) { alert('선택된 행에 옵션ID(vendor_item_id)가 없습니다.'); return }
+
+    const label = action === 'resume' ? '판매중' : '판매중지'
+    bulkRunningRef.current = true
+    setBulkRunning(true)
+    let ok = 0
+    const fails: string[] = []
+    try {
+      for (let i = 0; i < targets.length; i++) {
+        const it = targets[i]
+        setBulkProgress(`${label} ${i + 1}/${targets.length}`)
+        try {
+          await setVendorItemSale(it.vendor_item_id!, action)
+          ok++
+        } catch (e: any) {
+          fails.push(`${it.option_name ?? it.vendor_item_id}: ${e?.message ?? '실패'}`)
+        }
+        await sleep(120)
+      }
+    } finally {
+      bulkRunningRef.current = false
+      setBulkRunning(false)
+      setBulkProgress('')
+    }
+    alert(bulkSummary(label, ok, fails, skipped))
+  }, [selectedItems])
 
   // ══════════════════════════════════════════════════════════════
   // 셀 렌더링 헬퍼
@@ -1392,10 +1523,15 @@ console.log('[조회수] 완료! 총 '+results.length+'건 CSV 저장됨');
     getItemData,
     isNotItemWinner,
 
-    // 주문 델타 (주문 모달)
-    orderDeltaMap,
+    // 주문 (주문 모달 → order_qty 영속화)
     isOrderLoading,
     loadOrderDelta,
+
+    // 일괄 작업 (가격 / 판매상태)
+    bulkRunning,
+    bulkProgress,
+    handleBulkPrice,
+    handleBulkSale,
 
     // 창고 재고
     warehouseQtyMap,

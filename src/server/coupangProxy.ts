@@ -325,6 +325,93 @@ export function coupangProxyPlugin(): Plugin {
         }
       })
 
+      // ── GET /api/coupang/vendor-item-inventory?vendorItemId= — 수량/가격/판매상태 조회 ──
+      server.middlewares.use('/api/coupang/vendor-item-inventory', async (req: any, res: any) => {
+        try {
+          const keys = extractCoupangKeys(req)
+          if (!keys) {
+            sendJson(res, 401, { success: false, error: '쿠팡 API 키가 요청에 포함되지 않았습니다.' })
+            return
+          }
+
+          const url = new URL(req.url || '/', `http://${req.headers.host}`)
+          const vendorItemId = url.searchParams.get('vendorItemId')
+          if (!vendorItemId) {
+            sendJson(res, 400, { success: false, error: 'vendorItemId 필요' })
+            return
+          }
+
+          const apiPath = `/v2/providers/seller_api/apis/api/v1/marketplace/vendor-items/${vendorItemId}/inventories`
+          const result = await callCoupangAPI('GET', apiPath, null, keys.accessKey, keys.secretKey, undefined, keys.vendorCode)
+
+          sendJson(res, 200, { success: true, data: result })
+        } catch (error: any) {
+          console.error('[coupang-proxy] vendor-item-inventory 오류:', error.message)
+          sendJson(res, 500, { success: false, error: error.message })
+        }
+      })
+
+      // ── PUT /api/coupang/vendor-item-price — 아이템별 가격 변경 ──
+      // body: { vendorItemId, price(10원 단위), force?:boolean }
+      server.middlewares.use('/api/coupang/vendor-item-price', async (req: any, res: any) => {
+        try {
+          const keys = extractCoupangKeys(req)
+          if (!keys) {
+            sendJson(res, 401, { success: false, error: '쿠팡 API 키가 요청에 포함되지 않았습니다.' })
+            return
+          }
+
+          const body = await parseBody(req)
+          const vendorItemId = body.vendorItemId
+          const price = Number(body.price)
+          if (!vendorItemId || !Number.isFinite(price) || price <= 0) {
+            sendJson(res, 400, { success: false, error: 'vendorItemId, price(양수) 필수' })
+            return
+          }
+          if (price % 10 !== 0) {
+            sendJson(res, 400, { success: false, error: 'price 는 10원 단위여야 합니다.' })
+            return
+          }
+
+          const apiPath = `/v2/providers/seller_api/apis/api/v1/marketplace/vendor-items/${vendorItemId}/prices/${price}`
+          const params = body.force ? { forceSalePriceUpdate: 'true' } : null
+          const result = await callCoupangAPI('PUT', apiPath, params, keys.accessKey, keys.secretKey, undefined, keys.vendorCode)
+
+          sendJson(res, 200, { success: true, data: result })
+        } catch (error: any) {
+          console.error('[coupang-proxy] vendor-item-price 오류:', error.message)
+          sendJson(res, 500, { success: false, error: error.message })
+        }
+      })
+
+      // ── PUT /api/coupang/vendor-item-sale — 아이템별 판매 재개/중지 ──
+      // body: { vendorItemId, action: 'resume' | 'stop' }
+      server.middlewares.use('/api/coupang/vendor-item-sale', async (req: any, res: any) => {
+        try {
+          const keys = extractCoupangKeys(req)
+          if (!keys) {
+            sendJson(res, 401, { success: false, error: '쿠팡 API 키가 요청에 포함되지 않았습니다.' })
+            return
+          }
+
+          const body = await parseBody(req)
+          const vendorItemId = body.vendorItemId
+          const action = body.action
+          if (!vendorItemId || (action !== 'resume' && action !== 'stop')) {
+            sendJson(res, 400, { success: false, error: "vendorItemId, action('resume'|'stop') 필수" })
+            return
+          }
+
+          const apiPath = `/v2/providers/seller_api/apis/api/v1/marketplace/vendor-items/${vendorItemId}/sales/${action}`
+          const result = await callCoupangAPI('PUT', apiPath, null, keys.accessKey, keys.secretKey, undefined, keys.vendorCode)
+
+          sendJson(res, 200, { success: true, data: result })
+        } catch (error: any) {
+          console.error('[coupang-proxy] vendor-item-sale 오류:', error.message)
+          sendJson(res, 500, { success: false, error: error.message })
+        }
+      })
+
       console.log('[coupang-proxy] 쿠팡 API 프록시 미들웨어 등록 완료')
     },
   }

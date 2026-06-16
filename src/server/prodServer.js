@@ -218,6 +218,71 @@ app.put('/api/coupang/ordersheets-acknowledge', async (req, res) => {
   }
 })
 
+// ── GET /api/coupang/vendor-item-inventory?vendorItemId= — 수량/가격/판매상태 조회 ──
+app.get('/api/coupang/vendor-item-inventory', async (req, res) => {
+  try {
+    const keys = extractCoupangKeys(req)
+    if (!keys) return res.status(401).json({ success: false, error: '쿠팡 API 키가 요청에 포함되지 않았습니다.' })
+
+    const vendorItemId = req.query.vendorItemId
+    if (!vendorItemId) return res.status(400).json({ success: false, error: 'vendorItemId 필요' })
+
+    const apiPath = `/v2/providers/seller_api/apis/api/v1/marketplace/vendor-items/${vendorItemId}/inventories`
+    const result = await callCoupangAPI('GET', apiPath, null, keys.accessKey, keys.secretKey, null, keys.vendorCode)
+    res.json({ success: true, data: result })
+  } catch (error) {
+    console.error('[prod-server] vendor-item-inventory 오류:', error.message)
+    res.status(500).json({ success: false, error: error.message })
+  }
+})
+
+// ── PUT /api/coupang/vendor-item-price — 아이템별 가격 변경 ──
+// body: { vendorItemId, price(10원 단위), force?:boolean }
+app.put('/api/coupang/vendor-item-price', async (req, res) => {
+  try {
+    const keys = extractCoupangKeys(req)
+    if (!keys) return res.status(401).json({ success: false, error: '쿠팡 API 키가 요청에 포함되지 않았습니다.' })
+
+    const { vendorItemId, force } = req.body
+    const price = Number(req.body.price)
+    if (!vendorItemId || !Number.isFinite(price) || price <= 0) {
+      return res.status(400).json({ success: false, error: 'vendorItemId, price(양수) 필수' })
+    }
+    if (price % 10 !== 0) {
+      return res.status(400).json({ success: false, error: 'price 는 10원 단위여야 합니다.' })
+    }
+
+    const apiPath = `/v2/providers/seller_api/apis/api/v1/marketplace/vendor-items/${vendorItemId}/prices/${price}`
+    const params = force ? { forceSalePriceUpdate: 'true' } : null
+    const result = await callCoupangAPI('PUT', apiPath, params, keys.accessKey, keys.secretKey, null, keys.vendorCode)
+    res.json({ success: true, data: result })
+  } catch (error) {
+    console.error('[prod-server] vendor-item-price 오류:', error.message)
+    res.status(500).json({ success: false, error: error.message })
+  }
+})
+
+// ── PUT /api/coupang/vendor-item-sale — 아이템별 판매 재개/중지 ──
+// body: { vendorItemId, action: 'resume' | 'stop' }
+app.put('/api/coupang/vendor-item-sale', async (req, res) => {
+  try {
+    const keys = extractCoupangKeys(req)
+    if (!keys) return res.status(401).json({ success: false, error: '쿠팡 API 키가 요청에 포함되지 않았습니다.' })
+
+    const { vendorItemId, action } = req.body
+    if (!vendorItemId || (action !== 'resume' && action !== 'stop')) {
+      return res.status(400).json({ success: false, error: "vendorItemId, action('resume'|'stop') 필수" })
+    }
+
+    const apiPath = `/v2/providers/seller_api/apis/api/v1/marketplace/vendor-items/${vendorItemId}/sales/${action}`
+    const result = await callCoupangAPI('PUT', apiPath, null, keys.accessKey, keys.secretKey, null, keys.vendorCode)
+    res.json({ success: true, data: result })
+  } catch (error) {
+    console.error('[prod-server] vendor-item-sale 오류:', error.message)
+    res.status(500).json({ success: false, error: error.message })
+  }
+})
+
 // ══════════════════════════════════════════════════════════════════
 // 정적 파일 서빙 + SPA fallback
 // ══════════════════════════════════════════════════════════════════
