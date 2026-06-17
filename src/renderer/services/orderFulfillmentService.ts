@@ -348,7 +348,7 @@ export async function fetchCartQtyByBarcode(
     let from = 0
     while (true) {
       const { data, error } = await (orderSupabase.from('ft_cart_items') as any)
-        .select('barcode, order_qty')
+        .select('barcode, order_qty, set_seq')
         .eq('user_id', orderUserId)
         .in('cart_id', chunk)
         .range(from, from + PAGE_SIZE - 1)
@@ -356,9 +356,16 @@ export async function fetchCartQtyByBarcode(
         console.error('[fetchCartQtyByBarcode]', error)
         throw error
       }
-      const rows = (data ?? []) as { barcode: string | null; order_qty: number | null }[]
+      const rows = (data ?? []) as {
+        barcode: string | null
+        order_qty: number | null
+        set_seq: number | null
+      }[]
       for (const r of rows) {
         if (!r.barcode) continue
+        // 세트상품 보정: 대표행(set_seq=1 또는 null)만 합산 — 구성품 중복 합산 방지
+        // (ft_order_items 주문 집계와 동일 로직)
+        if (r.set_seq != null && r.set_seq !== 1) continue
         map.set(r.barcode, (map.get(r.barcode) ?? 0) + (r.order_qty ?? 0))
       }
       if (rows.length < PAGE_SIZE) break
