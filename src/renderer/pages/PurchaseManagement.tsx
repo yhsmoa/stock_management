@@ -281,6 +281,13 @@ const PurchaseManagement: React.FC = () => {
       case 'out_qty':
         return renderEditableCell(item, 'out_qty', item.out_qty ?? null)
 
+      /* ── 카트 열(🛒): si_rg_items.cart_qty (선택 카트 합) ── */
+      case 'cart': {
+        const v = item.cart_qty
+        if (v == null || v === 0) return ''
+        return v.toLocaleString()
+      }
+
       /* ── 주문 열: si_rg_items.order_qty (주문 🔗 적용 시 영속화된 net) ── */
       case 'order': {
         const v = item.order_qty
@@ -540,7 +547,7 @@ const PurchaseManagement: React.FC = () => {
             className={`purchase-filter-btn${activeFilter === 'storage' ? ' active' : ''}`}
             onClick={() => handleFilterToggle('storage')}
           >
-            반출비
+            보관료
           </button>
 
           {/* ── 구분자 ─────────────────────────────────────── */}

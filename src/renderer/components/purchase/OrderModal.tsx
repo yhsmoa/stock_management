@@ -8,8 +8,10 @@
 import { useEffect, useState } from 'react'
 import {
   fetchRecentShipments,
+  fetchUserCarts,
   type ShipmentOption,
   type ShipmentType,
+  type UserCart,
 } from '../../services/orderFulfillmentService'
 import { getOrderUserId } from '../../services/supabase'
 
@@ -21,7 +23,11 @@ const RECENT_SHIPMENT_LIMIT = 2
 interface OrderModalProps {
   isOpen: boolean
   onClose: () => void
-  onApply: (includeTypes: ShipmentType[], excludeShipmentIds: string[]) => void
+  onApply: (
+    includeTypes: ShipmentType[],
+    excludeShipmentIds: string[],
+    cartIds: string[],
+  ) => void
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -32,6 +38,8 @@ export default function OrderModal({ isOpen, onClose, onApply }: OrderModalProps
   const [shipments, setShipments] = useState<ShipmentOption[]>([])
   const [selectedTypes, setSelectedTypes] = useState<Set<ShipmentType>>(new Set(['COUPANG']))
   const [checkedShipmentIds, setCheckedShipmentIds] = useState<Set<string>>(new Set())
+  const [carts, setCarts] = useState<UserCart[]>([])                          // 장바구니(NEW)+주문대기(ORDER)
+  const [checkedCartIds, setCheckedCartIds] = useState<Set<string>>(new Set()) // 기본 미선택
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -51,11 +59,18 @@ export default function OrderModal({ isOpen, onClose, onApply }: OrderModalProps
           setShipments([])
           return
         }
-        const list = await fetchRecentShipments(orderUserId, RECENT_SHIPMENT_LIMIT)
+        // 출고일 + 카트 목록 병렬 조회
+        const [list, cartList] = await Promise.all([
+          fetchRecentShipments(orderUserId, RECENT_SHIPMENT_LIMIT),
+          fetchUserCarts(orderUserId),
+        ])
         if (cancelled) return
         setShipments(list)
         // 기본: 최근 출고일 전체 체크 (= 전부 차감). 사용자가 미체크하면 그 출고건만 차감 제외.
         setCheckedShipmentIds(new Set(list.map((s) => s.id)))
+        // 카트는 기본 미선택 (체크한 카트만 cart_qty 합산)
+        setCarts(cartList)
+        setCheckedCartIds(new Set())
       } catch (e) {
         if (cancelled) return
         console.error('[OrderModal] fetchRecentShipments', e)
@@ -91,6 +106,14 @@ export default function OrderModal({ isOpen, onClose, onApply }: OrderModalProps
       return next
     })
   }
+  const toggleCart = (id: string) => {
+    setCheckedCartIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
 
   // ── 적용 ────────────────────────────────────────────────────────
   const handleApply = () => {
@@ -99,9 +122,38 @@ export default function OrderModal({ isOpen, onClose, onApply }: OrderModalProps
     const excludeIds = shipments
       .filter((s) => !checkedShipmentIds.has(s.id))
       .map((s) => s.id)
-    onApply(includeTypes, excludeIds)
+    // 체크된 카트 = cart_qty 합산 대상
+    const cartIds = Array.from(checkedCartIds)
+    onApply(includeTypes, excludeIds, cartIds)
     onClose()
   }
+
+  // ── 상태별 카트 분리 ────────────────────────────────────────────
+  const newCarts = carts.filter((c) => c.status === 'NEW')
+  const orderCarts = carts.filter((c) => c.status === 'ORDER')
+
+  // ── 카트 그룹 렌더 헬퍼 ─────────────────────────────────────────
+  const renderCartGroup = (title: string, list: UserCart[]) => (
+    <div style={{ marginBottom: '8px' }}>
+      <div style={{ fontSize: '12px', fontWeight: 600, color: '#6B7280', margin: '4px 0' }}>
+        {title} <span style={{ fontWeight: 400 }}>({list.length})</span>
+      </div>
+      {list.length === 0 ? (
+        <div style={{ fontSize: '12px', color: '#9CA3AF', paddingLeft: '4px' }}>없음</div>
+      ) : (
+        list.map((c) => (
+          <label key={c.id} className="order-modal-checkbox">
+            <input
+              type="checkbox"
+              checked={checkedCartIds.has(c.id)}
+              onChange={() => toggleCart(c.id)}
+            />
+            <span>{c.cart_name}</span>
+          </label>
+        ))
+      )}
+    </div>
+  )
 
   // ══════════════════════════════════════════════════════════════
   // 렌더
@@ -169,6 +221,26 @@ export default function OrderModal({ isOpen, onClose, onApply }: OrderModalProps
               )}
             </label>
           ))}
+        </div>
+
+        {/* ── 섹션 3: 장바구니 (체크 → cart_qty 합산) ──────────── */}
+        <div className="order-modal-section">
+          <div className="order-modal-section-title">
+            장바구니{' '}
+            <span style={{ fontWeight: 400, color: '#6B7280', fontSize: '11px' }}>
+              (체크한 카트의 수량을 🛒 열에 합산)
+            </span>
+          </div>
+          {loading && <div style={{ fontSize: '12px', color: '#6B7280' }}>불러오는 중...</div>}
+          {!loading && carts.length === 0 && (
+            <div style={{ fontSize: '12px', color: '#9CA3AF' }}>카트가 없습니다.</div>
+          )}
+          {!loading && carts.length > 0 && (
+            <>
+              {renderCartGroup('장바구니 (NEW)', newCarts)}
+              {renderCartGroup('주문대기 (ORDER)', orderCarts)}
+            </>
+          )}
         </div>
 
         {/* ── 푸터 ───────────────────────────────────────────── */}

@@ -350,6 +350,7 @@ export function mapToRgItems(
       in_qty: null,
       out_qty: null,
       order_qty: null,
+      cart_qty: null,
       weight: item.rocketGrowthItemData?.skuInfo?.weight ?? null,
       width: item.rocketGrowthItemData?.skuInfo?.width ?? null,
       length: item.rocketGrowthItemData?.skuInfo?.length ?? null,
@@ -391,6 +392,7 @@ export function mapListItemToRgItems(
     in_qty: null,
     out_qty: null,
     order_qty: null,
+    cart_qty: null,
     weight: null,
     width: null,
     length: null,
@@ -438,64 +440,82 @@ export async function fetchRgItems(userId: string): Promise<RgItem[]> {
   return allData
 }
 
-// ── 주문 수량(order_qty) 영속화 ─────────────────────────────────────
+// ── 수량 컬럼(order_qty / cart_qty) 영속화 ──────────────────────────
 
 /**
- * '주문 🔗' 적용 시 si_rg_items.order_qty 갱신
- * - STEP 1: 사용자 전체 order_qty 초기화 (항상 실행 — 클릭 때마다 리셋)
- * - STEP 2: barcode 별 net 값을 일괄 update (net !== 0 인 것만)
+ * si_rg_items 의 수량 컬럼을 barcode 기준으로 일괄 갱신 (공통 로직)
+ * - STEP 1: 사용자 전체 해당 컬럼 초기화 (항상 실행 — 적용 때마다 리셋)
+ * - STEP 2: 값별 그룹핑 → barcode 100개 단위 update (값 !== 0 인 것만)
  *
- * 매칭: si_rg_items.barcode = key. 동일 barcode 의 여러 행은 모두 같은 net 으로 설정.
- * 주의: UPDATE 는 필터에 매칭되는 모든 행을 수정(SELECT 1000건 limit 과 무관)하지만,
+ * 매칭: si_rg_items.barcode = key. 동일 barcode 의 여러 행은 모두 같은 값으로 설정.
+ * 주의: UPDATE 는 필터 매칭 행 전체를 수정(SELECT 1000건 limit 과 무관)하지만,
  *       .in() barcode 목록은 URL 길이 보호를 위해 100개 단위로 청크 분할한다.
  *
- * @param userId        si_users.id (= si_rg_items.user_id)
- * @param barcodeToNet  barcode → net(주문-취소-출고) 맵
- * @returns 값이 설정된(net!==0) 고유 barcode 수
+ * @param userId         si_users.id (= si_rg_items.user_id)
+ * @param column         갱신 대상 컬럼 ('order_qty' | 'cart_qty')
+ * @param barcodeToQty   barcode → 수량 맵
+ * @returns 값이 설정된(≠0) 고유 barcode 수
  */
-export async function persistOrderQty(
+async function persistQtyByBarcode(
   userId: string,
-  barcodeToNet: Map<string, number>,
+  column: 'order_qty' | 'cart_qty',
+  barcodeToQty: Map<string, number>,
 ): Promise<number> {
   // ── STEP 1: 초기화 (기존에 값이 있던 행만 null 로) ──
   const { error: resetErr } = await supabase
     .from('si_rg_items')
-    .update({ order_qty: null })
+    .update({ [column]: null })
     .eq('user_id', userId)
-    .not('order_qty', 'is', null)
+    .not(column, 'is', null)
   if (resetErr) {
-    console.error('[persistOrderQty] 초기화 오류:', resetErr)
+    console.error(`[persistQtyByBarcode:${column}] 초기화 오류:`, resetErr)
     throw resetErr
   }
 
-  // ── STEP 2: net 값별 그룹핑 → barcode 100개 단위 update ──
-  const netToBarcodes = new Map<number, string[]>()
-  for (const [bc, net] of barcodeToNet) {
-    if (!bc || net === 0) continue
-    const arr = netToBarcodes.get(net) ?? []
+  // ── STEP 2: 값별 그룹핑 → barcode 100개 단위 update ──
+  const qtyToBarcodes = new Map<number, string[]>()
+  for (const [bc, qty] of barcodeToQty) {
+    if (!bc || qty === 0) continue
+    const arr = qtyToBarcodes.get(qty) ?? []
     arr.push(bc)
-    netToBarcodes.set(net, arr)
+    qtyToBarcodes.set(qty, arr)
   }
 
   const CHUNK = 100
   let matchedBarcodes = 0
-  for (const [net, barcodes] of netToBarcodes) {
+  for (const [qty, barcodes] of qtyToBarcodes) {
     matchedBarcodes += barcodes.length
     for (let i = 0; i < barcodes.length; i += CHUNK) {
       const chunk = barcodes.slice(i, i + CHUNK)
       const { error } = await supabase
         .from('si_rg_items')
-        .update({ order_qty: net })
+        .update({ [column]: qty })
         .eq('user_id', userId)
         .in('barcode', chunk)
       if (error) {
-        console.error('[persistOrderQty] 저장 오류:', error)
+        console.error(`[persistQtyByBarcode:${column}] 저장 오류:`, error)
         throw error
       }
     }
   }
 
   return matchedBarcodes
+}
+
+/** '주문 🔗' 적용 시 order_qty 갱신 (net = 주문-취소-출고) */
+export async function persistOrderQty(
+  userId: string,
+  barcodeToNet: Map<string, number>,
+): Promise<number> {
+  return persistQtyByBarcode(userId, 'order_qty', barcodeToNet)
+}
+
+/** '주문 🔗' 적용 시 cart_qty 갱신 (선택 카트의 ft_cart_items.order_qty 합) */
+export async function persistCartQty(
+  userId: string,
+  barcodeToQty: Map<string, number>,
+): Promise<number> {
+  return persistQtyByBarcode(userId, 'cart_qty', barcodeToQty)
 }
 
 // ── si_rg_item_data 사용자별 전체 조회 ───────────────────────────────

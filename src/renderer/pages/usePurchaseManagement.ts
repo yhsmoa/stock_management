@@ -29,10 +29,12 @@ import {
   getRecentViewDates,
   updateVendorItemPrice,
   setVendorItemSale,
+  persistCartQty,
 } from '../services/purchaseService'
 import { supabase, getOrderUserId } from '../services/supabase'
 import {
   fetchOrderDelta,
+  fetchCartQtyByBarcode,
   type OrderDelta,
   type ShipmentType,
 } from '../services/orderFulfillmentService'
@@ -61,6 +63,7 @@ export interface Column {
 export const COLUMNS: Column[] = [
   { key: 'product',  label: '상품정보', width: '250px', isProduct: true },
   { key: 'input',    label: '입력',     width: '46px', isInput: true, editable: true },
+  { key: 'cart',     label: '🛒',       width: '40px' },
   { key: 'order',    label: '주문',     width: '44px' },
   { key: 'c_in',     label: 'C.in',     width: '46px' },
   { key: 'c_stock',  label: 'C.재고',   width: '48px' },
@@ -1252,7 +1255,7 @@ console.log('[조회수] 완료! 총 '+results.length+'건 CSV 저장됨');
   // ══════════════════════════════════════════════════════════════
 
   const loadOrderDelta = useCallback(
-    async (includeTypes: ShipmentType[], excludeShipmentIds: string[]) => {
+    async (includeTypes: ShipmentType[], excludeShipmentIds: string[], cartIds: string[] = []) => {
       const userId = getUserId()
       if (!userId) {
         alert('사용자 정보를 찾을 수 없습니다. 다시 로그인해주세요.')
@@ -1289,18 +1292,30 @@ console.log('[조회수] 완료! 총 '+results.length+'건 CSV 저장됨');
         for (const [bc, delta] of map) barcodeToNet.set(bc, delta.net)
         const matched = await persistOrderQty(userId, barcodeToNet)
 
-        // ── 로컬 상태 갱신 (net===0 또는 미매칭 → null) ──
+        // ── 카트(🛒): 선택 카트의 ft_cart_items.order_qty 합 → cart_qty ──
+        //   체크 카트 없으면 빈 맵 → cart_qty 전체 초기화만 수행
+        const cartMap = cartIds.length > 0
+          ? await fetchCartQtyByBarcode(cartIds, orderUserId)
+          : new Map<string, number>()
+        const cartMatched = await persistCartQty(userId, cartMap)
+
+        // ── 로컬 상태 갱신 (값 0 또는 미매칭 → null) ──
         setItems((prev) =>
           prev.map((it) => {
             const net = it.barcode ? (map.get(it.barcode)?.net ?? 0) : 0
-            return { ...it, order_qty: net !== 0 ? net : null }
+            const cq = it.barcode ? (cartMap.get(it.barcode) ?? 0) : 0
+            return {
+              ...it,
+              order_qty: net !== 0 ? net : null,
+              cart_qty: cq !== 0 ? cq : null,
+            }
           }),
         )
 
         alert(
           barcodeList.length === 0
             ? '연결된 바코드가 없어 주문 수량을 초기화했습니다. (먼저 바코드 연결을 실행하세요)'
-            : `주문 수량 갱신 완료 (${matched.toLocaleString()}개 바코드)`,
+            : `주문 수량 갱신 완료 (주문 ${matched.toLocaleString()} · 카트 ${cartMatched.toLocaleString()} 바코드)`,
         )
       } catch (e) {
         console.error('[loadOrderDelta]', e)

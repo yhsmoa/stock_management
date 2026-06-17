@@ -291,6 +291,84 @@ export async function fetchOrderCartKeys(
 }
 
 // ══════════════════════════════════════════════════════════════════
+// 카트 목록 / 카트 수량 합계 (사입관리 '주문' 모달 — cart_qty 산출)
+//   - ft_carts.status ∈ (NEW=장바구니, ORDER=주문대기)
+//   - 선택 카트의 ft_cart_items.order_qty 를 barcode 기준 합산
+//   - ft_order_items 의 barcode 매칭 로직과 동일한 흐름
+// ══════════════════════════════════════════════════════════════════
+
+/** 사입관리 주문 모달의 카트 체크리스트용 행 */
+export interface UserCart {
+  id: string
+  cart_name: string
+  status: string | null   // 'NEW'(장바구니) | 'ORDER'(주문대기)
+}
+
+/** 사용자의 NEW/ORDER 카트 목록 조회 (created_at 내림차순, 전 구간 페이지네이션) */
+export async function fetchUserCarts(orderUserId: string): Promise<UserCart[]> {
+  const out: UserCart[] = []
+  if (!isOrderSupabaseConfigured || !orderUserId) return out
+
+  let from = 0
+  while (true) {
+    const { data, error } = await (orderSupabase.from('ft_carts') as any)
+      .select('id, cart_name, status')
+      .eq('user_id', orderUserId)
+      .in('status', ['NEW', 'ORDER'])
+      .order('created_at', { ascending: false })
+      .range(from, from + PAGE_SIZE - 1)
+    if (error) {
+      console.error('[fetchUserCarts]', error)
+      throw error
+    }
+    const rows = (data ?? []) as UserCart[]
+    out.push(...rows)
+    if (rows.length < PAGE_SIZE) break
+    from += PAGE_SIZE
+  }
+  return out
+}
+
+/**
+ * 선택 카트들의 ft_cart_items.order_qty 를 barcode 기준 합산
+ * @param cartIds      선택된 ft_carts.id 배열
+ * @param orderUserId  ft_users.id (격리)
+ * @returns Map<barcode, Σ order_qty>
+ */
+export async function fetchCartQtyByBarcode(
+  cartIds: string[],
+  orderUserId: string,
+): Promise<Map<string, number>> {
+  const map = new Map<string, number>()
+  if (!isOrderSupabaseConfigured || !orderUserId || cartIds.length === 0) return map
+
+  // cart_id 인덱스 활용: BATCH_SIZE(100) 단위 .in() + 페이지네이션 루프
+  for (let i = 0; i < cartIds.length; i += BATCH_SIZE) {
+    const chunk = cartIds.slice(i, i + BATCH_SIZE)
+    let from = 0
+    while (true) {
+      const { data, error } = await (orderSupabase.from('ft_cart_items') as any)
+        .select('barcode, order_qty')
+        .eq('user_id', orderUserId)
+        .in('cart_id', chunk)
+        .range(from, from + PAGE_SIZE - 1)
+      if (error) {
+        console.error('[fetchCartQtyByBarcode]', error)
+        throw error
+      }
+      const rows = (data ?? []) as { barcode: string | null; order_qty: number | null }[]
+      for (const r of rows) {
+        if (!r.barcode) continue
+        map.set(r.barcode, (map.get(r.barcode) ?? 0) + (r.order_qty ?? 0))
+      }
+      if (rows.length < PAGE_SIZE) break
+      from += PAGE_SIZE
+    }
+  }
+  return map
+}
+
+// ══════════════════════════════════════════════════════════════════
 // 드로어: Fulfillment 이력 조회
 // ══════════════════════════════════════════════════════════════════
 
