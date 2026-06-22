@@ -123,6 +123,8 @@ const PurchaseManagement: React.FC = () => {
     pageItems,
     activeFilter,
     handleFilterToggle,
+    sort,
+    handleSortToggle,
     resetting,
     updating,
     updateProgress,
@@ -184,6 +186,8 @@ const PurchaseManagement: React.FC = () => {
     bulkProgress,
     handleBulkPrice,
     handleBulkSale,
+    statusSaving,
+    handleBulkItemStatus,
     warehouseQtyMap,
     copying,
     handleCopy,
@@ -574,6 +578,8 @@ const PurchaseManagement: React.FC = () => {
         </div>
       </div>
 
+      {/* ── 테이블 영역 (풀스크린 시 바로 위 툴바까지 함께 유지) ── */}
+      <div className={`purchase-table-area${isTableFullscreen ? ' fullscreen' : ''}`}>
       {/* ── 필터 툴바 (좌: 필터, 우: 저장) ──────────────────── */}
       <div className="purchase-table-toolbar">
         <div className="purchase-toolbar-left">
@@ -593,18 +599,22 @@ const PurchaseManagement: React.FC = () => {
             </div>
           </div>
 
-          <button
-            className={`purchase-filter-btn${activeFilter === 'sales' ? ' active' : ''}`}
-            onClick={() => handleFilterToggle('sales')}
-          >
-            판매량
-          </button>
-          <button
-            className={`purchase-filter-btn${activeFilter === 'storage' ? ' active' : ''}`}
-            onClick={() => handleFilterToggle('storage')}
-          >
-            보관료
-          </button>
+          {/* ── 정렬 (상품 단위 합산): 내림▼ → 오름▲ → 해제 ── */}
+          {([
+            { key: 'sales', label: '판매량' },
+            { key: 'storage', label: '보관료' },
+            { key: 'stock', label: '재고량' },
+          ] as const).map((s) => (
+            <button
+              key={s.key}
+              className={`purchase-filter-btn${sort?.key === s.key ? ' active' : ''}`}
+              onClick={() => handleSortToggle(s.key)}
+              title="상품 단위 합산 기준 정렬 (클릭: 내림→오름→해제)"
+            >
+              {s.label}
+              {sort?.key === s.key ? (sort.dir === 'desc' ? ' ▼' : ' ▲') : ''}
+            </button>
+          ))}
 
           {/* ── 구분자 ─────────────────────────────────────── */}
           <span className="purchase-separator">|</span>
@@ -651,6 +661,28 @@ const PurchaseManagement: React.FC = () => {
           )}
         </div>
         <div className="purchase-toolbar-right">
+          {/* ── 일괄 비활성화/활성화 (item_status) ─────────────── */}
+          <DropdownMenu
+            label={statusSaving ? '처리 중...' : '비활성화'}
+            align="right"
+            disabled={statusSaving || selectedIds.size === 0}
+          >
+            <DropdownItem
+              onClick={() => {
+                if (confirm(`체크한 ${selectedIds.size}건을 '비활성화'할까요?`)) handleBulkItemStatus('NOT_AVAILABLE')
+              }}
+            >
+              비활성화
+            </DropdownItem>
+            <DropdownItem
+              onClick={() => {
+                if (confirm(`체크한 ${selectedIds.size}건을 '활성화'(복원)할까요?`)) handleBulkItemStatus(null)
+              }}
+            >
+              활성화
+            </DropdownItem>
+          </DropdownMenu>
+
           {/* ── 일괄 가격수정 (체크된 행 동일가 적용) ──────────── */}
           <button
             className="purchase-btn"
@@ -711,18 +743,8 @@ const PurchaseManagement: React.FC = () => {
         </div>
       </div>
 
-      {/* ── 테이블 섹션 (풀스크린 토글 시 viewport 전체 덮음) ── */}
-      <div className={`purchase-table-section${isTableFullscreen ? ' fullscreen' : ''}`}>
-        {isTableFullscreen && (
-          <button
-            className="purchase-fullscreen-close"
-            onClick={() => setIsTableFullscreen(false)}
-            title="풀스크린 종료 (Esc)"
-            aria-label="풀스크린 종료"
-          >
-            ✕
-          </button>
-        )}
+      {/* ── 테이블 섹션 ─────────────────────────────────────── */}
+      <div className="purchase-table-section">
         {loading ? (
           <div className="purchase-loading">데이터를 불러오는 중...</div>
         ) : (
@@ -775,8 +797,12 @@ const PurchaseManagement: React.FC = () => {
                   ) : (
                     pageItems.map((item, idx) => {
                       const rowId = String(startIdx + idx)
+                      const isDisabled = item.item_status === 'NOT_AVAILABLE'
                       return (
-                        <tr key={item.id ?? `${item.seller_product_id}-${item.seller_product_item_id}-${idx}`}>
+                        <tr
+                          key={item.id ?? `${item.seller_product_id}-${item.seller_product_item_id}-${idx}`}
+                          className={isDisabled ? 'purchase-row-disabled' : undefined}
+                        >
                           <td>
                             <input
                               type="checkbox"
@@ -864,6 +890,7 @@ const PurchaseManagement: React.FC = () => {
             </div>
           </>
         )}
+      </div>
       </div>
 
       {/* ── 상품 상세 슬라이드 패널 ────────────────────────── */}

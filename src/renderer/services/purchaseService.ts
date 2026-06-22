@@ -352,6 +352,7 @@ export function mapToRgItems(
       order_qty: null,
       cart_qty: null,
       note: null,
+      item_status: null,
       weight: item.rocketGrowthItemData?.skuInfo?.weight ?? null,
       width: item.rocketGrowthItemData?.skuInfo?.width ?? null,
       length: item.rocketGrowthItemData?.skuInfo?.length ?? null,
@@ -395,6 +396,7 @@ export function mapListItemToRgItems(
     order_qty: null,
     cart_qty: null,
     note: null,
+    item_status: null,
     weight: null,
     width: null,
     length: null,
@@ -518,6 +520,29 @@ export async function persistCartQty(
   barcodeToQty: Map<string, number>,
 ): Promise<number> {
   return persistQtyByBarcode(userId, 'cart_qty', barcodeToQty)
+}
+
+/**
+ * si_rg_items.item_status 일괄 변경 (id 기준)
+ * - status='NOT_AVAILABLE' → 비활성화, null → 활성 복원
+ * - id 100개 단위 .in() 청크 update
+ */
+export async function saveItemStatus(
+  itemIds: string[],
+  status: string | null,
+): Promise<void> {
+  const CHUNK = 100
+  for (let i = 0; i < itemIds.length; i += CHUNK) {
+    const chunk = itemIds.slice(i, i + CHUNK)
+    const { error } = await supabase
+      .from('si_rg_items')
+      .update({ item_status: status })
+      .in('id', chunk)
+    if (error) {
+      console.error('[saveItemStatus] 저장 오류:', error)
+      throw error
+    }
+  }
 }
 
 // ── si_rg_item_data 사용자별 전체 조회 ───────────────────────────────

@@ -276,6 +276,14 @@
   user-select: none;
 }
 
+/* ── 테이블 영역 (필터 툴바 + 테이블; 풀스크린 단위) ──────────── */
+.purchase-table-area {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
 /* ── 테이블 섹션 (화면 가득) ─────────────────────────────────── */
 .purchase-table-section {
   flex: 1;
@@ -319,44 +327,21 @@
   outline-offset: 2px;
 }
 
-/* ── 테이블 풀스크린 모드 (🔍 토글) ────────────────────────────
-   헤더(z-index:1000) 보다 위, 다른 모달(2000+) 보다 아래에 위치.
-   기존 테이블 wrapper 는 flex 로 남은 공간을 채워 스크롤 담당.        */
-.purchase-table-section.fullscreen {
+/* ── 테이블 풀스크린 (🔍 토글) — 바로 위 필터 툴바까지 함께 유지 ──
+   영역(area) 전체를 viewport 에 고정. 헤더(z:1000) 위, 모달(2000+) 아래.
+   영역이 flex column 이라 툴바(상단)는 유지되고 섹션이 남은 공간을 채움. */
+.purchase-table-area.fullscreen {
   position: fixed;
   inset: 0;
   z-index: 1500;
-  margin: 0;
-  border-radius: 0;
-  border: none;
-  padding: 16px 16px 8px;
+  background: #fff;
+  padding: 12px 16px;
+  gap: 8px;
 }
-.purchase-table-section.fullscreen .purchase-table-wrapper {
+.purchase-table-area.fullscreen .purchase-table-wrapper {
   flex: 1 1 auto;
   min-height: 0;
   max-height: none;
-}
-
-/* ── 풀스크린 닫기 버튼 (이모지 자체가 버튼) ──────────────── */
-.purchase-fullscreen-close {
-  position: absolute;
-  top: 12px;
-  right: 16px;
-  z-index: 1501;
-  background: transparent;
-  border: none;
-  padding: 4px 8px;
-  cursor: pointer;
-  font-size: 18px;
-  line-height: 1;
-  color: #6B7280;
-  border-radius: 6px;
-  opacity: 0.7;
-  transition: opacity 0.15s ease, background-color 0.15s ease;
-}
-.purchase-fullscreen-close:hover {
-  opacity: 1;
-  background-color: rgba(0, 0, 0, 0.04);
 }
 
 .purchase-table {
@@ -451,6 +436,17 @@
 
 .purchase-table tbody tr:hover {
   background-color: #F8FAFC;
+}
+
+/* ── 비활성화 행 (item_status = NOT_AVAILABLE): 연회색 폰트 + 배경 ──
+   입력/입고/반출 등 특수 배경 열까지 덮도록 !important. */
+.purchase-table tbody tr.purchase-row-disabled td,
+.purchase-table tbody tr.purchase-row-disabled td.col-product {
+  color: #B6BBC2 !important;
+  background-color: #F3F4F6 !important;
+}
+.purchase-table tbody tr.purchase-row-disabled:hover td {
+  background-color: #EDEEF1 !important;
 }
 
 .purchase-table-empty {

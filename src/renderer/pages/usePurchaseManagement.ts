@@ -30,6 +30,7 @@ import {
   updateVendorItemPrice,
   setVendorItemSale,
   persistCartQty,
+  saveItemStatus,
 } from '../services/purchaseService'
 import { supabase, getOrderUserId } from '../services/supabase'
 import {
@@ -194,9 +195,23 @@ export function usePurchaseManagement() {
   /* ── 창고 재고 (barcode → si_stocks.qty 합산) ──────────── */
   const [warehouseQtyMap, setWarehouseQtyMap] = useState<Map<string, number>>(new Map())
 
-  /* ── 필터 (판매량 / 반출비 / 주문(input) / 입고 / 반출 / NO 바코드) ─ */
-  type FilterKey = 'sales' | 'storage' | 'input' | 'in_qty' | 'out_qty' | 'no_barcode'
+  /* ── 필터 (주문(input) / 입고 / 반출 / NO 바코드) ─ */
+  type FilterKey = 'input' | 'in_qty' | 'out_qty' | 'no_barcode'
   const [activeFilter, setActiveFilter] = useState<FilterKey | null>(null)
+
+  /* ── 정렬 (판매량 / 보관료 / 재고량 — 상품 단위 합산, 3단계 토글) ─ */
+  type SortKey = 'sales' | 'storage' | 'stock'
+  const [sort, setSort] = useState<{ key: SortKey; dir: 'desc' | 'asc' } | null>(null)
+
+  /** 정렬 토글: 같은 기준 재클릭 시 내림→오름→해제, 다른 기준 클릭 시 내림차순부터 */
+  const handleSortToggle = (key: SortKey) => {
+    setSort((prev) => {
+      if (!prev || prev.key !== key) return { key, dir: 'desc' }
+      if (prev.dir === 'desc') return { key, dir: 'asc' }
+      return null
+    })
+    setCurrentPage(1)
+  }
 
   /* ── 주문 로딩 상태 (주문 🔗 적용 → order_qty 영속화) ──── */
   const [isOrderLoading, setIsOrderLoading] = useState(false)
@@ -208,8 +223,7 @@ export function usePurchaseManagement() {
   const filteredItems = useMemo(() => {
     let result = items
 
-    // ── STEP A: 필터 토글 ──────────────────────────────────
-    // A-1) RgItem 컬럼 기반 필터 (input/in_qty/out_qty): itemDataMap 불필요
+    // ── STEP A: 필터 토글 (input/in_qty/out_qty/no_barcode) ──────
     if (activeFilter === 'input' || activeFilter === 'in_qty' || activeFilter === 'out_qty') {
       const col = activeFilter
       result = result.filter((item) => {
@@ -217,41 +231,9 @@ export function usePurchaseManagement() {
         return v != null && v > 0
       })
     }
-    // A-1b) NO 바코드 필터: barcode 가 비어있는(null/'') 행만
+    // NO 바코드 필터: barcode 가 비어있는(null/'') 행만
     else if (activeFilter === 'no_barcode') {
       result = result.filter((item) => !item.barcode || item.barcode.trim() === '')
-    }
-    // A-2) 외부 itemData(재고건강) 기반 필터 (판매량/반출비)
-    else if (activeFilter && itemDataMap.size > 0) {
-      const matchedItemIds = new Set<number>()
-      for (const d of itemDataMap.values()) {
-        if (d.item_id == null) continue
-        if (activeFilter === 'sales') {
-          const hasSalesData =
-            (d.recent_sales_qty_7d != null && d.recent_sales_qty_7d > 0) ||
-            (d.recent_sales_qty_30d != null && d.recent_sales_qty_30d > 0) ||
-            (d.recommended_inbound_qty != null && d.recommended_inbound_qty > 0)
-          if (hasSalesData) matchedItemIds.add(d.item_id)
-        } else if (activeFilter === 'storage') {
-          if (d.monthly_storage_fee != null && d.monthly_storage_fee > 0) {
-            matchedItemIds.add(d.item_id)
-          }
-        }
-      }
-
-      if (matchedItemIds.size === 0) return []
-
-      const matchedOptionIds = new Set<string>()
-      for (const d of itemDataMap.values()) {
-        if (d.item_id != null && matchedItemIds.has(d.item_id) && d.option_id != null) {
-          matchedOptionIds.add(String(d.option_id))
-        }
-      }
-
-      result = result.filter(
-        (item) => item.vendor_item_id != null && matchedOptionIds.has(item.vendor_item_id),
-      )
-
     }
 
     // ── STEP B: 검색어 (다중 검색 지원) ─────────────────────────
@@ -292,19 +274,42 @@ export function usePurchaseManagement() {
       }
     }
 
-    // ── STEP C: 정렬 — seller_product_name → option_name (한글 오름차순) ──
-    // 원본 items 를 변이시키지 않도록 복사 후 정렬
-    result = [...result].sort((a, b) => {
-      const nameCmp = (a.seller_product_name ?? '').localeCompare(
-        b.seller_product_name ?? '',
-        'ko',
-      )
-      if (nameCmp !== 0) return nameCmp
-      return (a.option_name ?? '').localeCompare(b.option_name ?? '', 'ko')
-    })
+    // ── STEP C: 정렬 ──────────────────────────────────────────
+    // 기본(정렬 미선택): 상품명 → 옵션명 (한글 오름차순)
+    // 정렬 선택 시: 상품(seller_product_id) 단위 합산값 기준 내림/오름차순.
+    //   같은 상품의 옵션은 합산값이 같아 인접 유지 → 2차 정렬(상품명/옵션명).
+    const nameCmp = (a: RgItem, b: RgItem): number => {
+      const c = (a.seller_product_name ?? '').localeCompare(b.seller_product_name ?? '', 'ko')
+      return c !== 0 ? c : (a.option_name ?? '').localeCompare(b.option_name ?? '', 'ko')
+    }
+
+    if (sort) {
+      // 상품별 합산 (전체 items 기준 — 필터/검색과 무관하게 상품 총합 사용)
+      const metricOf = (item: RgItem): number => {
+        const data = item.vendor_item_id ? itemDataMap.get(item.vendor_item_id) : undefined
+        if (!data) return 0
+        if (sort.key === 'sales') return data.recent_sales_qty_7d ?? 0
+        if (sort.key === 'storage') return data.monthly_storage_fee ?? 0
+        return data.orderable_qty ?? 0 // stock = C.재고
+      }
+      const prodSum = new Map<string, number>()
+      for (const it of items) {
+        prodSum.set(it.seller_product_id, (prodSum.get(it.seller_product_id) ?? 0) + metricOf(it))
+      }
+      // 0(또는 음수) 합산 상품은 정렬 대상에서 제외 — 0보다 큰 값만 노출
+      result = result.filter((it) => (prodSum.get(it.seller_product_id) ?? 0) > 0)
+      result = [...result].sort((a, b) => {
+        const sa = prodSum.get(a.seller_product_id) ?? 0
+        const sb = prodSum.get(b.seller_product_id) ?? 0
+        if (sa !== sb) return sort.dir === 'desc' ? sb - sa : sa - sb
+        return nameCmp(a, b)
+      })
+    } else {
+      result = [...result].sort(nameCmp)
+    }
 
     return result
-  }, [activeFilter, items, itemDataMap, searchQuery, searchMode])
+  }, [activeFilter, items, itemDataMap, searchQuery, searchMode, sort])
 
   const handleFilterToggle = (filter: FilterKey) => {
     setActiveFilter((prev) => (prev === filter ? null : filter))
@@ -1485,6 +1490,29 @@ console.log('[조회수] 완료! 총 '+results.length+'건 CSV 저장됨');
     alert(bulkSummary(label, ok, fails, skipped))
   }, [selectedItems])
 
+  /** 일괄 비활성화/활성화 — si_rg_items.item_status 변경 (DB, 쿠팡 API 아님) */
+  const [statusSaving, setStatusSaving] = useState(false)
+  const handleBulkItemStatus = useCallback(async (status: 'NOT_AVAILABLE' | null) => {
+    if (selectedItems.length === 0) { alert('선택된 행이 없습니다.'); return }
+    const ids = selectedItems.map((it) => it.id).filter((id): id is string => !!id)
+    if (ids.length === 0) { alert('선택된 행을 식별할 수 없습니다.'); return }
+
+    setStatusSaving(true)
+    try {
+      await saveItemStatus(ids, status)
+      const idSet = new Set(ids)
+      setItems((prev) => prev.map((it) =>
+        it.id && idSet.has(it.id) ? { ...it, item_status: status } : it,
+      ))
+      alert(`${status === 'NOT_AVAILABLE' ? '비활성화' : '활성화'} 완료 (${ids.length}건)`)
+    } catch (e: any) {
+      console.error('[handleBulkItemStatus] 실패:', e)
+      alert('상품 상태 변경 중 오류가 발생했습니다.')
+    } finally {
+      setStatusSaving(false)
+    }
+  }, [selectedItems])
+
   // ══════════════════════════════════════════════════════════════
   // 셀 렌더링 헬퍼
   // ══════════════════════════════════════════════════════════════
@@ -1527,6 +1555,10 @@ console.log('[조회수] 완료! 총 '+results.length+'건 CSV 저장됨');
     // 필터
     activeFilter,
     handleFilterToggle,
+
+    // 정렬 (판매량/보관료/재고량)
+    sort,
+    handleSortToggle,
 
     // 리셋 / 업데이트
     resetting,
@@ -1622,11 +1654,13 @@ console.log('[조회수] 완료! 총 '+results.length+'건 CSV 저장됨');
     isOrderLoading,
     loadOrderDelta,
 
-    // 일괄 작업 (가격 / 판매상태)
+    // 일괄 작업 (가격 / 판매상태 / 비활성화)
     bulkRunning,
     bulkProgress,
     handleBulkPrice,
     handleBulkSale,
+    statusSaving,
+    handleBulkItemStatus,
 
     // 창고 재고
     warehouseQtyMap,

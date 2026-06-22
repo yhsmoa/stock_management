@@ -225,7 +225,6 @@ const styles = {
     display: 'flex',
     alignItems: 'center',
     gap: '8px',
-    marginTop: '8px',
   },
   priceInput: {
     flex: 1,
@@ -598,15 +597,13 @@ const ProductDetailPanel: React.FC<ProductDetailPanelProps> = ({
                 <span style={styles.infoValue}>{barcode || '-'}</span>
               </div>
 
-              {/* ── 가격 수정 (입력폼 → 쿠팡 가격 변경 API) ───────── */}
+              {/* ── 가격 수정 (한 줄: 가격 라벨 + 입력폼 + 변경 버튼) ── */}
               <div style={{ padding: '12px 0', borderBottom: `1px solid ${theme.colors.borderLight}` }}>
-                <div style={{ display: 'flex', alignItems: 'center' }}>
-                  <span style={styles.infoIcon}>🏷️</span>
-                  <span style={styles.infoLabel}>가격</span>
-                </div>
                 {vendorItemId ? (
                   <>
                     <div style={styles.priceInputRow}>
+                      <span style={styles.infoIcon}>🏷️</span>
+                      <span style={styles.infoLabel}>가격</span>
                       <input
                         style={styles.priceInput}
                         type="text"
@@ -641,8 +638,12 @@ const ProductDetailPanel: React.FC<ProductDetailPanelProps> = ({
                     )}
                   </>
                 ) : (
-                  <div style={{ ...styles.infoValue, paddingLeft: '34px' }}>
-                    {salePrice != null ? `${salePrice.toLocaleString()}원` : '-'}
+                  <div style={{ display: 'flex', alignItems: 'center' }}>
+                    <span style={styles.infoIcon}>🏷️</span>
+                    <span style={styles.infoLabel}>가격</span>
+                    <span style={styles.infoValue}>
+                      {salePrice != null ? `${salePrice.toLocaleString()}원` : '-'}
+                    </span>
                     <span style={styles.priceHint}> (옵션ID 없음 — 변경 불가)</span>
                   </div>
                 )}

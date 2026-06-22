@@ -27,6 +27,7 @@ export interface RgItem {
   order_qty: number | null                // 주문 수량 (주문 🔗 적용 시 영속화, net = 주문-취소-출고)
   cart_qty: number | null                 // 🛒 카트 수량 (선택 카트의 ft_cart_items.order_qty 합)
   note: string | null                     // 메모 (인라인 편집 → 저장)
+  item_status: string | null              // 상품 상태 ('NOT_AVAILABLE'=비활성화, null/그외=활성)
   weight: number | null
   width: number | null
   length: number | null
