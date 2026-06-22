@@ -152,12 +152,36 @@
   margin-top: 16px;
 }
 
+/* ── 검색 영역 (검색모드 드롭박스 + 검색폼) ─────────────────── */
+.purchase-search-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  margin-bottom: 12px;
+  flex-shrink: 0;
+}
+
+/* ── 검색 모드 드롭박스 트리거 (테두리·배경 없음) ───────────── */
+.purchase-search-mode-trigger {
+  border: none !important;
+  background: transparent !important;
+  color: #6B7280;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 4px 6px;
+  white-space: nowrap;
+}
+.purchase-search-mode-trigger:hover:not(:disabled) {
+  background: transparent !important;
+  color: #374151;
+}
+
 /* ── 검색 입력폼 (가운데 상단, 타원형) ───────────────────────── */
 .purchase-search-bar {
   display: flex;
-  align-self: center;
-  margin-bottom: 12px;
-  flex-shrink: 0;
+  margin-bottom: 0;
+  flex-shrink: 1;
   border: 1px solid #E5E7EB;
   border-radius: 9999px;
   overflow: hidden;

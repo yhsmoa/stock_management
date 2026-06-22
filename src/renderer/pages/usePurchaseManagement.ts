@@ -55,7 +55,8 @@ export interface Column {
   width: string
   isProduct?: boolean
   isInput?: boolean        // 입력 열 전용 (노란 배경)
-  editable?: boolean       // 인라인 편집 가능 여부 (input, in_qty, out_qty)
+  editable?: boolean       // 숫자 인라인 편집 (input, in_qty, out_qty)
+  editableText?: boolean   // 문자열 인라인 편집 (note)
   borderLeft?: boolean     // 좌측 옅은 border (그룹 구분용)
   colClass?: string        // 추가 CSS 클래스 (배경색 등)
 }
@@ -82,7 +83,7 @@ export const COLUMNS: Column[] = [
   { key: 'margin',   label: 'margin',   width: '52px' },
   { key: 'in_qty',   label: '입고',     width: '46px', editable: true, colClass: 'col-in-qty' },
   { key: 'out_qty',  label: '반출',     width: '46px', editable: true, colClass: 'col-out-qty' },
-  { key: 'note',     label: 'note',     width: '70px' },
+  { key: 'note',     label: 'note',     width: '70px', editableText: true },
 ]
 
 // ── 일괄 작업 유틸 ────────────────────────────────────────────
@@ -120,6 +121,8 @@ export function usePurchaseManagement() {
   /* ── 검색 상태 ───────────────────────────────────────────── */
   const [searchValue, setSearchValue] = useState('')
   const [searchQuery, setSearchQuery] = useState('')
+  // 검색 모드: 'product'(상품검색, 기존) | 'note'(노트검색 — si_rg_items.note)
+  const [searchMode, setSearchMode] = useState<'product' | 'note'>('product')
 
   /* ── 데이터 & 페이지네이션 ───────────────────────────────── */
   const [items, setItems] = useState<RgItem[]>([])
@@ -155,6 +158,12 @@ export function usePurchaseManagement() {
   const dbOriginalsRef = useRef<Map<string, Partial<Record<EditableField, number | null>>>>(new Map())
   const [saving, setSaving] = useState(false)
   const [resettingInputs, setResettingInputs] = useState(false)
+
+  /* ── 노트(문자열) 인라인 편집 ─────────────────────────────── */
+  const [editingNoteId, setEditingNoteId] = useState<string | null>(null)
+  const [noteDraft, setNoteDraft] = useState('')
+  const [pendingNotes, setPendingNotes] = useState<Map<string, string | null>>(new Map())
+  const dbOriginalNotesRef = useRef<Map<string, string | null>>(new Map())
 
   /* ── 상품 상세 패널 ──────────────────────────────────────── */
   const [detailPanelOpen, setDetailPanelOpen] = useState(false)
@@ -257,7 +266,12 @@ export function usePurchaseManagement() {
         .filter(Boolean)
 
       if (tokens.length > 0) {
-        const matchToken = (item: RgItem, token: string): boolean => {
+        // ── 노트검색 모드: si_rg_items.note 부분 일치 ──
+        const matchNote = (item: RgItem, token: string): boolean =>
+          !!item.note && item.note.toLowerCase().includes(token.toLowerCase())
+
+        // ── 상품검색 모드(기존): 숫자=ID 정확 일치, 그 외=상품명/옵션명/바코드 부분 일치 ──
+        const matchProduct = (item: RgItem, token: string): boolean => {
           if (/^\d+$/.test(token)) {
             return (
               item.seller_product_id === token ||
@@ -272,6 +286,8 @@ export function usePurchaseManagement() {
             (!!item.barcode && item.barcode.toLowerCase().includes(q))
           )
         }
+
+        const matchToken = searchMode === 'note' ? matchNote : matchProduct
         result = result.filter((item) => tokens.some((token) => matchToken(item, token)))
       }
     }
@@ -288,7 +304,7 @@ export function usePurchaseManagement() {
     })
 
     return result
-  }, [activeFilter, items, itemDataMap, searchQuery])
+  }, [activeFilter, items, itemDataMap, searchQuery, searchMode])
 
   const handleFilterToggle = (filter: FilterKey) => {
     setActiveFilter((prev) => (prev === filter ? null : filter))
@@ -903,6 +919,44 @@ console.log('[조회수] 완료! 총 '+results.length+'건 CSV 저장됨');
     setEditingCellValue(currentValue != null ? String(currentValue) : '')
   }
 
+  // ── 노트(문자열) 편집 ────────────────────────────────────────
+  /** 노트 셀 클릭 → 편집 모드 진입 */
+  const handleNoteClick = (itemId: string, currentValue: string | null) => {
+    setEditingNoteId(itemId)
+    setNoteDraft(currentValue ?? '')
+  }
+
+  /** 노트 blur → DB 원본과 비교 → 변경/되돌리기 판정 (handleCellBlur 와 동일 패턴) */
+  const handleNoteBlur = (itemId: string, currentValue: string | null) => {
+    setEditingNoteId(null)
+    const newValue = noteDraft === '' ? null : noteDraft
+
+    // DB 원본 기록 (첫 편집 시에만)
+    const origMap = dbOriginalNotesRef.current
+    if (!origMap.has(itemId)) origMap.set(itemId, currentValue)
+    const dbOriginal = origMap.get(itemId) ?? null
+
+    // DB 원본과 동일 → 되돌리기 (pending 제거)
+    if (newValue === dbOriginal) {
+      setItems((prev) => prev.map((it) => (it.id === itemId ? { ...it, note: dbOriginal } : it)))
+      setPendingNotes((prev) => {
+        const next = new Map(prev)
+        next.delete(itemId)
+        return next
+      })
+      origMap.delete(itemId)
+      return
+    }
+
+    // 변경됨 → 로컬 반영 + pending 기록
+    setItems((prev) => prev.map((it) => (it.id === itemId ? { ...it, note: newValue } : it)))
+    setPendingNotes((prev) => {
+      const next = new Map(prev)
+      next.set(itemId, newValue)
+      return next
+    })
+  }
+
   /** 셀 blur → DB 원본값과 비교 → 변경/되돌리기 판정 */
   const handleCellBlur = (itemId: string, field: EditableField, currentValue: number | null) => {
     setEditingCell(null)
@@ -982,14 +1036,16 @@ console.log('[조회수] 완료! 총 '+results.length+'건 CSV 저장됨');
     })
   }
 
-  /** 일괄 저장 (input + in_qty + out_qty, 행 단위 병합) */
+  /** 일괄 저장 (input + in_qty + out_qty + note, 행 단위 병합) */
   const handleSaveInputs = async () => {
-    if (pendingEdits.size === 0) return
+    if (pendingEdits.size === 0 && pendingNotes.size === 0) return
 
     setSaving(true)
     try {
-      const entries = Array.from(pendingEdits.entries())
       const BATCH = 50
+
+      // ── 숫자 필드 (input/in_qty/out_qty) ──
+      const entries = Array.from(pendingEdits.entries())
       for (let i = 0; i < entries.length; i += BATCH) {
         const batch = entries.slice(i, i + BATCH)
         await Promise.all(
@@ -998,8 +1054,22 @@ console.log('[조회수] 완료! 총 '+results.length+'건 CSV 저장됨');
           ),
         )
       }
+
+      // ── 노트 (문자열) ──
+      const noteEntries = Array.from(pendingNotes.entries())
+      for (let i = 0; i < noteEntries.length; i += BATCH) {
+        const batch = noteEntries.slice(i, i + BATCH)
+        await Promise.all(
+          batch.map(([id, note]) =>
+            supabase.from('si_rg_items').update({ note }).eq('id', id),
+          ),
+        )
+      }
+
       setPendingEdits(new Map())
       dbOriginalsRef.current.clear()
+      setPendingNotes(new Map())
+      dbOriginalNotesRef.current.clear()
     } catch (err) {
       console.error('[저장] 실패:', err)
       alert('저장 중 오류가 발생했습니다.')
@@ -1433,6 +1503,8 @@ console.log('[조회수] 완료! 총 '+results.length+'건 CSV 저장됨');
     searchValue,
     setSearchValue,
     searchQuery,
+    searchMode,
+    setSearchMode,
     handleSearch,
     handleSearchClear,
 
@@ -1505,6 +1577,14 @@ console.log('[조회수] 완료! 총 '+results.length+'건 CSV 저장됨');
     setEditingCellValue,
     handleCellClick,
     handleCellBlur,
+
+    // 노트(문자열) 인라인 편집
+    editingNoteId,
+    noteDraft,
+    setNoteDraft,
+    handleNoteClick,
+    handleNoteBlur,
+    pendingNotes,
 
     // 저장 / 입력 초기화
     pendingEdits,

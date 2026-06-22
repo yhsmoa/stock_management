@@ -111,6 +111,8 @@ const PurchaseManagement: React.FC = () => {
   const {
     searchValue,
     setSearchValue,
+    searchMode,
+    setSearchMode,
     handleSearch,
     handleSearchClear,
     loading,
@@ -155,6 +157,12 @@ const PurchaseManagement: React.FC = () => {
     setEditingCellValue,
     handleCellClick,
     handleCellBlur,
+    editingNoteId,
+    noteDraft,
+    setNoteDraft,
+    handleNoteClick,
+    handleNoteBlur,
+    pendingNotes,
     pendingEdits,
     saving,
     handleSaveInputs,
@@ -362,6 +370,29 @@ const PurchaseManagement: React.FC = () => {
       }
 
       /* ── 기타 ────────────────────────────���───────────────── */
+      /* ── 노트(메모): 클릭 → 텍스트 입력, [저장] 시 si_rg_items.note 저장 ── */
+      case 'note': {
+        if (editingNoteId === item.id) {
+          return (
+            <input
+              className="purchase-input-cell"
+              type="text"
+              autoFocus
+              value={noteDraft}
+              onChange={(e) => setNoteDraft(e.target.value)}
+              onBlur={() => handleNoteBlur(item.id!, item.note ?? null)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault()
+                  handleNoteBlur(item.id!, item.note ?? null)
+                }
+              }}
+            />
+          )
+        }
+        return <span>{item.note ?? ''}</span>
+      }
+
       default:
         return ''
     }
@@ -489,12 +520,36 @@ const PurchaseManagement: React.FC = () => {
         <h1 className="purchase-title">사입관리</h1>
       </div>
 
-      {/* ── 검색 입력폼 ─────────────────────────────────────── */}
-      <div className="purchase-search-bar">
+      {/* ── 검색 영역 (좌: 검색모드 드롭박스 | 검색 입력폼) ──── */}
+      <div className="purchase-search-row">
+        {/* ── 검색 모드: 상품검색 / 노트검색 (테두리·배경 없는 드롭박스) ── */}
+        <DropdownMenu
+          label={`${searchMode === 'note' ? '노트검색' : '상품검색'} ▾`}
+          triggerClassName="purchase-search-mode-trigger"
+        >
+          <DropdownItem
+            className={searchMode === 'product' ? 'active' : ''}
+            onClick={() => setSearchMode('product')}
+          >
+            상품검색
+          </DropdownItem>
+          <DropdownItem
+            className={searchMode === 'note' ? 'active' : ''}
+            onClick={() => setSearchMode('note')}
+          >
+            노트검색
+          </DropdownItem>
+        </DropdownMenu>
+
+        <div className="purchase-search-bar">
         <input
           className="purchase-search-input"
           type="text"
-          placeholder="상품명, 바코드 또는 ID로 검색 (콤마·여러 줄 붙여넣기로 다중 검색)"
+          placeholder={
+            searchMode === 'note'
+              ? '노트(메모) 내용으로 검색 (콤마·여러 줄 붙여넣기로 다중 검색)'
+              : '상품명, 바코드 또는 ID로 검색 (콤마·여러 줄 붙여넣기로 다중 검색)'
+          }
           value={searchValue}
           onChange={(e) => {
             setSearchValue(e.target.value)
@@ -516,6 +571,7 @@ const PurchaseManagement: React.FC = () => {
           }}
           onKeyDown={(e) => { if (e.key === 'Enter') handleSearch() }}
         />
+        </div>
       </div>
 
       {/* ── 필터 툴바 (좌: 필터, 우: 저장) ──────────────────── */}
@@ -646,9 +702,11 @@ const PurchaseManagement: React.FC = () => {
           <button
             className="purchase-btn purchase-save-btn"
             onClick={handleSaveInputs}
-            disabled={saving || pendingEdits.size === 0}
+            disabled={saving || (pendingEdits.size === 0 && pendingNotes.size === 0)}
           >
-            {saving ? '저장 중...' : `저장${pendingEdits.size > 0 ? ` (${pendingEdits.size})` : ''}`}
+            {saving
+              ? '저장 중...'
+              : `저장${pendingEdits.size + pendingNotes.size > 0 ? ` (${pendingEdits.size + pendingNotes.size})` : ''}`}
           </button>
         </div>
       </div>
@@ -748,9 +806,15 @@ const PurchaseManagement: React.FC = () => {
                                             handleCellClick(item.id!, field, item[field] ?? null)
                                           }
                                         }
-                                      : undefined
+                                      : c.editableText
+                                        ? () => {
+                                            if (editingNoteId !== item.id) {
+                                              handleNoteClick(item.id!, item.note ?? null)
+                                            }
+                                          }
+                                        : undefined
                                 }
-                                style={c.isProduct || c.editable ? { cursor: 'pointer' } : undefined}
+                                style={c.isProduct || c.editable || c.editableText ? { cursor: 'pointer' } : undefined}
                               >
                                 {renderCell(c, item)}
                               </td>
