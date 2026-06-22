@@ -269,6 +269,21 @@
   margin-left: 4px;
 }
 
+/* ── 상태 필터 드롭박스 트리거 (필터 버튼과 동일한 알약 모양) ──
+   공용 .dropdown-trigger 보다 우선하도록 툴바로 스코프(specificity↑). */
+.purchase-table-toolbar .purchase-status-trigger {
+  border-radius: 9999px;
+}
+.purchase-table-toolbar .purchase-status-trigger.active {
+  background-color: #4A8CF7;
+  border-color: #4A8CF7;
+  color: #fff;
+}
+.purchase-table-toolbar .purchase-status-trigger.active:hover:not(:disabled) {
+  background-color: #3B7DE6;
+  border-color: #3B7DE6;
+}
+
 /* ── 필터 버튼 그룹 구분자 (|) ───────────────────────────────── */
 .purchase-separator {
   color: #D1D5DB;
@@ -438,15 +453,11 @@
   background-color: #F8FAFC;
 }
 
-/* ── 비활성화 행 (item_status = NOT_AVAILABLE): 연회색 폰트 + 배경 ──
-   입력/입고/반출 등 특수 배경 열까지 덮도록 !important. */
+/* ── 비활성화 행 (item_status = NOT_AVAILABLE): 행 전체 연회색 폰트 ──
+   배경은 건드리지 않음. col-product 검정 폰트까지 덮도록 !important. */
 .purchase-table tbody tr.purchase-row-disabled td,
 .purchase-table tbody tr.purchase-row-disabled td.col-product {
   color: #B6BBC2 !important;
-  background-color: #F3F4F6 !important;
-}
-.purchase-table tbody tr.purchase-row-disabled:hover td {
-  background-color: #EDEEF1 !important;
 }
 
 .purchase-table-empty {

@@ -125,6 +125,8 @@ const PurchaseManagement: React.FC = () => {
     handleFilterToggle,
     sort,
     handleSortToggle,
+    statusFilter,
+    setStatusFilter,
     resetting,
     updating,
     updateProgress,
@@ -653,6 +655,31 @@ const PurchaseManagement: React.FC = () => {
           >
             NO 바코드
           </button>
+
+          {/* ── 상태 필터 (활성/비활성/전체) — 기본 '활성'(비활성 숨김) ── */}
+          <DropdownMenu
+            label={`${statusFilter === 'inactive' ? '비활성' : statusFilter === 'all' ? '전체' : '활성'} ▾`}
+            triggerClassName={`purchase-status-trigger${statusFilter !== 'active' ? ' active' : ''}`}
+          >
+            <DropdownItem
+              className={statusFilter === 'active' ? 'active' : ''}
+              onClick={() => setStatusFilter('active')}
+            >
+              활성
+            </DropdownItem>
+            <DropdownItem
+              className={statusFilter === 'inactive' ? 'active' : ''}
+              onClick={() => setStatusFilter('inactive')}
+            >
+              비활성
+            </DropdownItem>
+            <DropdownItem
+              className={statusFilter === 'all' ? 'active' : ''}
+              onClick={() => setStatusFilter('all')}
+            >
+              전체
+            </DropdownItem>
+          </DropdownMenu>
 
           {activeFilter && (
             <span className="purchase-filter-count">

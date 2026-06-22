@@ -199,6 +199,14 @@ export function usePurchaseManagement() {
   type FilterKey = 'input' | 'in_qty' | 'out_qty' | 'no_barcode'
   const [activeFilter, setActiveFilter] = useState<FilterKey | null>(null)
 
+  /* ── 상태 필터 (활성/비활성/전체) — 기본 'active'(비활성 숨김) ─ */
+  type StatusFilter = 'active' | 'inactive' | 'all'
+  const [statusFilter, setStatusFilterRaw] = useState<StatusFilter>('active')
+  const setStatusFilter = useCallback((v: StatusFilter) => {
+    setStatusFilterRaw(v)
+    setCurrentPage(1)
+  }, [])
+
   /* ── 정렬 (판매량 / 보관료 / 재고량 — 상품 단위 합산, 3단계 토글) ─ */
   type SortKey = 'sales' | 'storage' | 'stock'
   const [sort, setSort] = useState<{ key: SortKey; dir: 'desc' | 'asc' } | null>(null)
@@ -222,6 +230,14 @@ export function usePurchaseManagement() {
 
   const filteredItems = useMemo(() => {
     let result = items
+
+    // ── STEP 0: 상태 필터 (활성/비활성/전체) ──────────────────────
+    //   active(기본): 비활성 상품 숨김 / inactive: 비활성만 / all: 전체
+    if (statusFilter === 'active') {
+      result = result.filter((item) => item.item_status !== 'NOT_AVAILABLE')
+    } else if (statusFilter === 'inactive') {
+      result = result.filter((item) => item.item_status === 'NOT_AVAILABLE')
+    }
 
     // ── STEP A: 필터 토글 (input/in_qty/out_qty/no_barcode) ──────
     if (activeFilter === 'input' || activeFilter === 'in_qty' || activeFilter === 'out_qty') {
@@ -309,7 +325,7 @@ export function usePurchaseManagement() {
     }
 
     return result
-  }, [activeFilter, items, itemDataMap, searchQuery, searchMode, sort])
+  }, [activeFilter, statusFilter, items, itemDataMap, searchQuery, searchMode, sort])
 
   const handleFilterToggle = (filter: FilterKey) => {
     setActiveFilter((prev) => (prev === filter ? null : filter))
@@ -1559,6 +1575,10 @@ console.log('[조회수] 완료! 총 '+results.length+'건 CSV 저장됨');
     // 정렬 (판매량/보관료/재고량)
     sort,
     handleSortToggle,
+
+    // 상태 필터 (활성/비활성/전체)
+    statusFilter,
+    setStatusFilter,
 
     // 리셋 / 업데이트
     resetting,
