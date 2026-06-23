@@ -16,6 +16,8 @@ import {
   upsertTrackingNumbers,
   fetchTrackingNumbers,
   cleanupStaleTracking,
+  fetchOrderNotes,
+  saveOrderNote,
   STATUS_MAP,
   STATUS_REVERSE_MAP,
   type PersonalOrderRow,
@@ -24,10 +26,14 @@ import {
   fetchFulfillmentData,
   fetchOrderCartKeys,
   fetchCancelMetaForItems,
+  fetchShipmentsWithin,
+  fetchShipmentDetails,
   makeFulfillmentKey,
   EMPTY_AGG,
   type FulfillmentAgg,
   type OrderItemDetail,
+  type ShipmentPickerOption,
+  type ShipmentDetailRow,
 } from '../services/orderFulfillmentService'
 import {
   fetchRgItemsWithBarcode,
@@ -72,7 +78,7 @@ export const COLUMNS = [
   { key: 'shipping_count', label: '수량',      width: '50px'  },
   { key: 'status_label',   label: '주문상태',  width: '70px'  },
   { key: 'estimated_shipping_date', label: '출고예정', width: '60px' },
-  { key: 'ordered_at_label', label: '주문일시', width: '60px' },
+  { key: 'ordered_at_label', label: '주문일', width: '60px' },
   { key: 'ff_status',      label: '상태',      width: '36px'  },
   { key: 'ff_arrival',     label: '입고',      width: '36px'  },
   { key: 'ff_packed',      label: '포장',      width: '36px'  },
@@ -111,6 +117,51 @@ export function formatDateTime(isoStr: string | null): string {
   }
 }
 
+/** 날짜만 포맷 (yyyy-MM-dd) — 시간 제외 */
+export function formatDate(isoStr: string | null): string {
+  return formatDateTime(isoStr).slice(0, 10)
+}
+
+// ── 쿠팡 DeliveryList 엑셀 헤더 ────────────────────────────────────
+const DELIVERY_HEADERS = [
+  '번호', '묶음배송번호', '주문번호', '택배사', '운송장번호',
+  '분리배송 Y/N', '분리배송 출고예정일', '주문시 출고예정일',
+  '출고일(발송일)', '주문일', '등록상품명', '등록옵션명',
+  '노출상품명(옵션명)', '노출상품ID', '옵션ID',
+  '최초등록등록상품명/옵션명', '업체상품코드', '바코드',
+  '결제액', '배송비구분', '배송비', '도서산간 추가배송비',
+  '구매수(수량)', '옵션판매가(판매단가)', '구매자', '구매자전화번호',
+  '수취인이름', '수취인전화번호', '우편번호', '수취인 주소',
+  '배송메세지', '상품별 추가메시지', '주문자 추가메시지',
+  '배송완료일', '구매확정일자', '개인통관번호(PCCC)',
+  '통관용수취인전화번호', '기타', '결제위치', '배송유형',
+]
+
+/**
+ * DeliveryList aoa 생성 (헤더 + 행). boxPrefixOf 지정 시 등록상품명 앞에 박스 접두 추가.
+ * - 기존 [엑셀] 과 입고엑셀 Delivery 시트가 공유.
+ */
+function buildDeliveryAoA(
+  rows: PersonalOrderRow[],
+  boxPrefixOf?: (r: PersonalOrderRow) => string,
+): (string | number)[][] {
+  const body = rows.map((r, i) => [
+    i + 1, r.shipment_box_id, r.order_id, r.delivery_company_name, r.invoice_number,
+    r.split_shipping === 'Y' ? 'Y' : '분리배송불가', r.planned_shipping_date ?? '',
+    r.estimated_shipping_date ?? '',
+    r.in_transit_date_time ? formatDateTime(r.in_transit_date_time) : '',
+    r.ordered_at ? formatDateTime(r.ordered_at) : '',
+    (boxPrefixOf ? boxPrefixOf(r) : '') + r.item_name, r.option_name, r.product_name, r.product_id, r.vendor_item_id,
+    `${r.item_name},${r.option_name}`, r.external_vendor_sku_code, r.barcode,
+    r.order_price_units, '무료', 0, 0, r.shipping_count, r.sales_price_units,
+    r.orderer_name, r.receiver_safe_number, r.receiver_name, r.receiver_safe_number,
+    r.receiver_post_code, r.receiver_address, r.parcel_print_message, '', '',
+    r.delivered_date ? formatDateTime(r.delivered_date) : '', '', '', '', '',
+    r.refer, r.shipment_type,
+  ])
+  return [DELIVERY_HEADERS, ...body]
+}
+
 /** 행 데이터 → 테이블 표시용 값 추출 */
 export function getCellValue(row: PersonalOrderRow, key: string): string {
   switch (key) {
@@ -119,7 +170,7 @@ export function getCellValue(row: PersonalOrderRow, key: string): string {
     case 'status_label':
       return STATUS_MAP[row.status] ?? row.status
     case 'ordered_at_label':
-      return formatDateTime(row.ordered_at)
+      return formatDate(row.ordered_at)
     case 'estimated_shipping_date':
       return row.estimated_shipping_date ?? ''
     default:
@@ -139,9 +190,11 @@ export interface DrawerItemState {
   ids: string[]                 // ft_order_items.id 배열 (재주문 등 복수)
   itemName: string | null
   optionName: string | null
-  orderNo: string | null
+  orderNo: string | null        // 표시/송장용 (ft_order_items.order_no)
   itemNo: string | null
   productNo: string | null
+  noteOrderNo: string | null    // 비고 키 = 화면 order_id
+  noteOptionId: string | null   // 비고 키 = 화면 vendor_item_id
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -150,7 +203,8 @@ export interface DrawerItemState {
 
 export function usePersonalOrder() {
   // ── 상태 ──────────────────────────────────────────────────────
-  const [activeTab, setActiveTab] = useState<OrderStatusTab>('전체')
+  // 배송 탭 다중 선택 — 빈 Set = '전체'(모든 상태). 기본 '상품준비중'
+  const [selectedTabs, setSelectedTabs] = useState<Set<OrderStatusTab>>(new Set(['상품준비중']))
   const [searchValue, setSearchValue] = useState('')
   const [appliedSearch, setAppliedSearch] = useState('')
   const [currentPage, setCurrentPage] = useState(1)
@@ -187,6 +241,19 @@ export function usePersonalOrder() {
 
   // ── 드로어 선택 상태 ──────────────────────────────────────────
   const [selectedDrawerItem, setSelectedDrawerItem] = useState<DrawerItemState | null>(null)
+
+  // ── 고객주문 비고(note) Map<`${order_id}|${vendor_item_id}`, note> ──
+  const [noteMap, setNoteMap] = useState<Map<string, string>>(new Map())
+
+  // ── 입고준비 (shipment 재고 → 주문 바코드 할당) ──────────────
+  const [inboundActive, setInboundActive] = useState(false)        // 매칭 적용 상태
+  const [inboundLoading, setInboundLoading] = useState(false)
+  const [inboundModalOpen, setInboundModalOpen] = useState(false)
+  const [shipmentOptions, setShipmentOptions] = useState<ShipmentPickerOption[]>([])
+  // rowKey → { boxStr, matched }
+  const [inboundAllocMap, setInboundAllocMap] = useState<Map<string, { boxStr: string; matched: boolean }>>(new Map())
+  // 엑셀 shipment_list 시트용: 상세 + 출고(allocated)
+  const [inboundDetails, setInboundDetails] = useState<Array<ShipmentDetailRow & { allocated: number }>>([])
 
   // ── 진행 모달 상태 (업데이트/바코드연결/송장연결 공용) ─────
   const [progressOpen, setProgressOpen] = useState(false)
@@ -297,14 +364,16 @@ export function usePersonalOrder() {
       setLoading(true)
       try {
         // DB 주문 조회 + Storage 송장 파일 목록 + xlsx 운송장 번호 (병렬)
-        const [data, invIds, trkMap] = await Promise.all([
+        const [data, invIds, trkMap, notes] = await Promise.all([
           fetchPersonalOrders(userId),
           fetchInvoiceOrderIds(userId),
           fetchTrackingNumbers(userId),
+          fetchOrderNotes(userId),
         ])
         setItems(data)
         setInvoiceOrderIds(invIds)
         setTrackingMap(trkMap)
+        setNoteMap(notes)
         await loadFulfillmentData(data)
       } catch (err) {
         console.error('데이터 로드 실패:', err)
@@ -464,9 +533,16 @@ export function usePersonalOrder() {
     }
   }, [selectedIds, items, getUserInfo])
 
-  // ── 탭 전환 ───────────────────────────────────────────────────
+  // ── 탭 전환 (다중 선택) ───────────────────────────────────────
+  //   '전체' 선택 → 비움(= 모든 상태). 그 외 → 토글. 모두 해제 시 = 전체.
   const handleTabChange = useCallback((tab: OrderStatusTab) => {
-    setActiveTab(tab)
+    setSelectedTabs((prev) => {
+      if (tab === '전체') return new Set()
+      const next = new Set(prev)
+      if (next.has(tab)) next.delete(tab)
+      else next.add(tab)
+      return next
+    })
     setCurrentPage(1)
     setSelectedIds(new Set())
     setShowUnorderedOnly(false)
@@ -524,10 +600,16 @@ export function usePersonalOrder() {
     setCurrentPage(1)
   }, [searchValue])
 
-  // ── 필터링 (activeTab + 검색 + 미주문 필터 + 주문일시 오름차순) ──
+  // ── 필터링 (선택 탭 다중 + 검색 + 미주문 필터 + 주문일시 오름차순) ──
   const filteredItems = useMemo(() => {
-    const statusCode = STATUS_REVERSE_MAP[activeTab]
-    let result = statusCode ? items.filter((row) => row.status === statusCode) : items
+    // 선택 탭이 비어있으면 '전체'. 아니면 선택된 상태코드들로 OR 필터.
+    let result = items
+    if (selectedTabs.size > 0) {
+      const codes = new Set(
+        Array.from(selectedTabs).map((t) => STATUS_REVERSE_MAP[t]).filter(Boolean),
+      )
+      result = items.filter((row) => codes.has(row.status))
+    }
 
     // 검색 필터 (Enter로 적용된 검색어 기준)
     if (appliedSearch) {
@@ -607,7 +689,7 @@ export function usePersonalOrder() {
       const dateB = b.ordered_at ? new Date(b.ordered_at).getTime() : 0
       return dateA - dateB
     })
-  }, [items, activeTab, appliedSearch, showUnorderedOnly, showCartOnly, showReleaseStopOnly, showNoInvoiceOnly, showReorderOnly, selectedStatuses, invoiceOrderIds, trackingMap, aggMap, multiKeys, orderItemsMap, reorderCountMap, cartKeySet])
+  }, [items, selectedTabs, appliedSearch, showUnorderedOnly, showCartOnly, showReleaseStopOnly, showNoInvoiceOnly, showReorderOnly, selectedStatuses, invoiceOrderIds, trackingMap, aggMap, multiKeys, orderItemsMap, reorderCountMap, cartKeySet])
 
   // ── [엑셀 다운] 핸들러 (쿠팡 DeliveryList 양식) ────────────────
   const handleExcelDownload = useCallback(() => {
@@ -621,37 +703,7 @@ export function usePersonalOrder() {
       return
     }
 
-    const HEADERS = [
-      '번호', '묶음배송번호', '주문번호', '택배사', '운송장번호',
-      '분리배송 Y/N', '분리배송 출고예정일', '주문시 출고예정일',
-      '출고일(발송일)', '주문일', '등록상품명', '등록옵션명',
-      '노출상품명(옵션명)', '노출상품ID', '옵션ID',
-      '최초등록등록상품명/옵션명', '업체상품코드', '바코드',
-      '결제액', '배송비구분', '배송비', '도서산간 추가배송비',
-      '구매수(수량)', '옵션판매가(판매단가)', '구매자', '구매자전화번호',
-      '수취인이름', '수취인전화번호', '우편번호', '수취인 주소',
-      '배송메세지', '상품별 추가메시지', '주문자 추가메시지',
-      '배송완료일', '구매확정일자', '개인통관번호(PCCC)',
-      '통관용수취인전화번호', '기타', '결제위치', '배송유형',
-    ]
-
-    const rows = targetRows.map((r, i) => [
-      i + 1, r.shipment_box_id, r.order_id, r.delivery_company_name, r.invoice_number,
-      r.split_shipping === 'Y' ? 'Y' : '분리배송불가', r.planned_shipping_date ?? '',
-      r.estimated_shipping_date ?? '',
-      r.in_transit_date_time ? formatDateTime(r.in_transit_date_time) : '',
-      r.ordered_at ? formatDateTime(r.ordered_at) : '',
-      r.item_name, r.option_name, r.product_name, r.product_id, r.vendor_item_id,
-      `${r.item_name},${r.option_name}`, r.external_vendor_sku_code, r.barcode,
-      r.order_price_units, '무료', 0, 0, r.shipping_count, r.sales_price_units,
-      r.orderer_name, r.receiver_safe_number, r.receiver_name, r.receiver_safe_number,
-      r.receiver_post_code, r.receiver_address, r.parcel_print_message, '', '',
-      r.delivered_date ? formatDateTime(r.delivered_date) : '', '', '', '', '',
-      r.refer, r.shipment_type,
-    ])
-
-    const wsData = [HEADERS, ...rows]
-    const ws = XLSX.utils.aoa_to_sheet(wsData)
+    const ws = XLSX.utils.aoa_to_sheet(buildDeliveryAoA(targetRows))
     const wb = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb, ws, 'Delivery')
 
@@ -799,23 +851,176 @@ export function usePersonalOrder() {
     }
   }, [selectedIds, filteredItems, getUserInfo])
 
-  // ── 행 클릭 → 드로어 열기 (복합 키: order_id|option_id) ──────
+  // ── 행 클릭 → 드로어 열기 ────────────────────────────────────
+  //   주문 이력(ft_order_items)이 없는 행(미주문 등)도 비고 입력을 위해 모두 열림.
   const handleRowClick = useCallback((row: PersonalOrderRow) => {
     if (!row.order_id) return
     const key = makeFulfillmentKey(row.order_id, row.vendor_item_id)
-    const items = orderItemsMap.get(key)
-    if (!items || items.length === 0) return
-    // 대표 상품정보는 첫 번째 (created_at 오름차순 정렬됨), 이력은 전체
-    const first = items[0]
+    const oitems = orderItemsMap.get(key) ?? []
+    const first = oitems[0]  // 이력 없으면 undefined → 행 값으로 폴백
     setSelectedDrawerItem({
-      ids: items.map((oi) => oi.id),
-      itemName: first.item_name,
-      optionName: first.option_name,
-      orderNo: first.order_no,
-      itemNo: first.item_no,
-      productNo: first.product_no,
+      ids: oitems.map((oi) => oi.id),
+      itemName: first?.item_name ?? row.item_name,
+      optionName: first?.option_name ?? row.option_name,
+      orderNo: first?.order_no ?? row.order_id,
+      itemNo: first?.item_no ?? null,
+      productNo: first?.product_no ?? null,
+      noteOrderNo: row.order_id,
+      noteOptionId: row.vendor_item_id,
     })
   }, [orderItemsMap])
+
+  // ── 비고 저장 (드로어 입력폼 blur) ──────────────────────────
+  const handleSaveNote = useCallback(async (orderNo: string, optionId: string | null, note: string) => {
+    const { userId } = getUserInfo()
+    if (!userId || !orderNo) return
+    const key = makeFulfillmentKey(orderNo, optionId)
+    const trimmed = note.trim()
+    // 로컬 Map 선반영 (낙관적)
+    setNoteMap((prev) => {
+      const next = new Map(prev)
+      if (trimmed === '') next.delete(key)
+      else next.set(key, trimmed)
+      return next
+    })
+    try {
+      await saveOrderNote(userId, orderNo, optionId ?? '', trimmed)
+    } catch {
+      alert('비고 저장에 실패했습니다. (coupang_personal_orders_details 테이블 생성 여부를 확인하세요)')
+    }
+  }, [getUserInfo])
+
+  // ── 입고준비 토글: 활성→해제 / 비활성→shipment 선택 모달 오픈 ──
+  const handleInboundToggle = useCallback(async () => {
+    if (inboundActive) {
+      setInboundActive(false)
+      setInboundAllocMap(new Map())
+      setInboundDetails([])
+      return
+    }
+    const { orderUserId } = getUserInfo()
+    if (!orderUserId) { alert('주문 계정(order_user_id)이 없습니다.'); return }
+    setInboundLoading(true)
+    try {
+      const opts = await fetchShipmentsWithin(orderUserId, 31)
+      setShipmentOptions(opts)
+      setInboundModalOpen(true)
+    } catch (e: any) {
+      alert('shipment 목록 조회 실패: ' + (e?.message ?? ''))
+    } finally {
+      setInboundLoading(false)
+    }
+  }, [inboundActive, getUserInfo])
+
+  // ── 모달 [준비] → 상세 조회 + 바코드 할당(선착순·분할·부분충당) ──
+  const handleInboundConfirm = useCallback(async (shipmentId: string) => {
+    const { orderUserId } = getUserInfo()
+    if (!orderUserId) return
+    setInboundLoading(true)
+    try {
+      const details = await fetchShipmentDetails(shipmentId, orderUserId)
+
+      // ── 재고: barcode → [{idx, box_code, remaining}] (box_code 오름차순) ──
+      const allocated = new Array<number>(details.length).fill(0)
+      const stock = new Map<string, Array<{ idx: number; box_code: string; remaining: number }>>()
+      details.forEach((d, idx) => {
+        if (!d.barcode || !d.quantity || d.quantity <= 0) return
+        const arr = stock.get(d.barcode) ?? []
+        arr.push({ idx, box_code: d.box_code ?? '', remaining: d.quantity })
+        stock.set(d.barcode, arr)
+      })
+      for (const arr of stock.values()) arr.sort((a, b) => a.box_code.localeCompare(b.box_code))
+
+      // ── 매칭 풀: 선택 탭 주문, 주문일 오름차순(선착순) ──
+      const codes = selectedTabs.size > 0
+        ? new Set(Array.from(selectedTabs).map((t) => STATUS_REVERSE_MAP[t]).filter(Boolean))
+        : null
+      const pool = items
+        .filter((r) => !codes || codes.has(r.status))
+        .slice()
+        .sort((a, b) => {
+          const da = a.ordered_at ? new Date(a.ordered_at).getTime() : 0
+          const db = b.ordered_at ? new Date(b.ordered_at).getTime() : 0
+          return da - db
+        })
+
+      const allocMap = new Map<string, { boxStr: string; matched: boolean }>()
+      for (const row of pool) {
+        const bc = row.barcode
+        let need = row.shipping_count ?? 0
+        if (!bc || need <= 0) continue
+        const units = stock.get(bc)
+        if (!units || units.length === 0) continue
+        const parts: string[] = []
+        for (const u of units) {
+          if (need <= 0) break
+          if (u.remaining <= 0) continue
+          const take = Math.min(need, u.remaining)
+          u.remaining -= take
+          need -= take
+          allocated[u.idx] += take
+          parts.push(`${u.box_code} - ${take}`)
+        }
+        if (parts.length === 0) continue
+        if (need > 0) parts.push('추가★')
+        allocMap.set(getRowKey(row), { boxStr: `[${parts.join(', ')}]`, matched: true })
+      }
+
+      setInboundAllocMap(allocMap)
+      setInboundDetails(details.map((d, idx) => ({ ...d, allocated: allocated[idx] })))
+      setInboundActive(true)
+      setInboundModalOpen(false)
+    } catch (e: any) {
+      alert('입고준비 매칭 실패: ' + (e?.message ?? ''))
+    } finally {
+      setInboundLoading(false)
+    }
+  }, [getUserInfo, items, selectedTabs])
+
+  // ── 입고엑셀: 시트1 Delivery(매칭 주문) + 시트2 shipment_list ──
+  const handleInboundExcel = useCallback(() => {
+    // 매칭된 주문 (주문일 오름차순)
+    const deliveryRows = items
+      .filter((r) => inboundAllocMap.get(getRowKey(r))?.matched)
+      .slice()
+      .sort((a, b) => {
+        const da = a.ordered_at ? new Date(a.ordered_at).getTime() : 0
+        const db = b.ordered_at ? new Date(b.ordered_at).getTime() : 0
+        return da - db
+      })
+
+    if (deliveryRows.length === 0 && inboundDetails.length === 0) {
+      alert('내보낼 데이터가 없습니다.')
+      return
+    }
+
+    // 시트1: Delivery (등록상품명 앞에 박스 접두, ✔️ 제외)
+    const aoa1 = buildDeliveryAoA(deliveryRows, (r) => {
+      const a = inboundAllocMap.get(getRowKey(r))
+      return a?.boxStr ? `${a.boxStr} ` : ''
+    })
+
+    // 시트2: shipment_list (구성 컬럼 + 출고/잔여)
+    const SHIPMENT_HEADERS = [
+      'box_code', 'shipment_no', 'product_no', 'barcode', 'item_name', 'option_name',
+      'china_option1', 'china_option2', 'price_cny', 'shipment_size', '수량', '출고', '잔여', 'composition',
+    ]
+    const aoa2: (string | number)[][] = [
+      SHIPMENT_HEADERS,
+      ...inboundDetails.map((d) => [
+        d.box_code ?? '', d.shipment_no ?? '', d.product_no ?? '', d.barcode ?? '',
+        d.item_name ?? '', d.option_name ?? '', d.china_option1 ?? '', d.china_option2 ?? '',
+        d.price_cny ?? '', d.shipment_size ?? '', d.quantity ?? 0,
+        d.allocated, (d.quantity ?? 0) - d.allocated, d.composition ?? '',
+      ]),
+    ]
+
+    const wb = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa1), 'Delivery')
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa2), 'shipment_list')
+    const today = new Date().toISOString().slice(0, 10)
+    XLSX.writeFile(wb, `입고준비(${today}).xlsx`)
+  }, [items, inboundAllocMap, inboundDetails])
 
   // ── [바코드 연결] 핸들러 ──────────────────────────────────────────
   const [barcodeLoading, setBarcodeLoading] = useState(false)
@@ -1225,7 +1430,7 @@ export function usePersonalOrder() {
   // ── 반환 ──────────────────────────────────────────────────────
   return {
     // 상태
-    activeTab,
+    selectedTabs,
     searchValue,
     setSearchValue,
     currentPage,
@@ -1244,6 +1449,19 @@ export function usePersonalOrder() {
     invoiceOrderIds,
     selectedDrawerItem,
     setSelectedDrawerItem,
+    noteMap,
+    handleSaveNote,
+
+    // 입고준비 / 입고엑셀
+    inboundActive,
+    inboundLoading,
+    inboundModalOpen,
+    setInboundModalOpen,
+    shipmentOptions,
+    inboundAllocMap,
+    handleInboundToggle,
+    handleInboundConfirm,
+    handleInboundExcel,
 
     // 진행 모달
     progressOpen,

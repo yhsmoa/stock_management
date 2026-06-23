@@ -613,3 +613,39 @@
   font-size: 12px;
   color: #9CA3AF;
 }
+
+/* ── 드로어 비고(note) 입력 — 제일 하단 ─────────────────────────── */
+.po-drawer-note {
+  flex-shrink: 0;
+  padding: 12px 24px 16px;
+  border-top: 1px solid #F3F4F6;
+  background: #FFFFFF;
+}
+
+.po-drawer-note-label {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  color: #374151;
+  margin-bottom: 6px;
+}
+
+.po-drawer-note-input {
+  width: 100%;
+  min-height: 64px;
+  resize: vertical;
+  padding: 8px 10px;
+  border: 1px solid #D1D5DB;
+  border-radius: 6px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: #1F2937;
+  outline: none;
+  box-sizing: border-box;
+  font-family: inherit;
+}
+
+.po-drawer-note-input:focus {
+  border-color: #4A8CF7;
+  box-shadow: 0 0 0 2px rgba(74, 140, 247, 0.2);
+}

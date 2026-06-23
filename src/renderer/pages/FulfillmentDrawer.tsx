@@ -14,12 +14,16 @@ import type { AuthUser } from '../types/auth'
 
 // ── Props ──────────────────────────────────────────────────────────
 interface Props {
+  open: boolean              // 드로어 열림 여부 (이력 없는 행도 열림 → 비고 입력)
   itemIds: string[]          // ft_order_items.id 배열 (여러 재주문 이력 포함)
   itemName: string | null
   optionName: string | null
   orderNo: string | null
   itemNo: string | null
   productNo: string | null
+  note: string               // 현재 비고 값
+  noteResetKey: string       // 선택 행 식별 키 (변경 시 입력 draft 리셋)
+  onSaveNote: (note: string) => void
   onClose: () => void
 }
 
@@ -43,13 +47,18 @@ function formatDateTime(iso: string): string {
 
 // ── 컴포넌트 ──────────────────────────────────────────────────────
 const FulfillmentDrawer: React.FC<Props> = ({
-  itemIds, itemName, optionName, orderNo, itemNo, productNo, onClose,
+  open, itemIds, itemName, optionName, orderNo, itemNo, productNo,
+  note, noteResetKey, onSaveNote, onClose,
 }) => {
   const [rows, setRows] = useState<FulfillmentRow[]>([])
   const [isLoading, setIsLoading] = useState(false)
   const [hasInvoice, setHasInvoice] = useState(false)
+  const [noteDraft, setNoteDraft] = useState(note)
 
-  const isOpen = itemIds.length > 0
+  const isOpen = open
+
+  // 선택 행 변경 시 비고 입력값 동기화
+  useEffect(() => { setNoteDraft(note) }, [note, noteResetKey])
 
   // ── 사용자 정보 (order_user_id) ─────────────────────────────────
   const getOrderUserId = useCallback((): string => {
@@ -232,6 +241,18 @@ const FulfillmentDrawer: React.FC<Props> = ({
             총 <strong>{rows.length}건</strong>의 이력
           </div>
         )}
+
+        {/* ── 비고(note) 입력 — 제일 하단. 포커스 벗어나면 저장 ── */}
+        <div className="po-drawer-note">
+          <label className="po-drawer-note-label">📌 비고</label>
+          <textarea
+            className="po-drawer-note-input"
+            value={noteDraft}
+            placeholder="고객주문 비고 입력 (입력 후 포커스를 벗어나면 저장)"
+            onChange={(e) => setNoteDraft(e.target.value)}
+            onBlur={() => { if (noteDraft !== note) onSaveNote(noteDraft) }}
+          />
+        </div>
       </aside>
     </>
   )

@@ -718,3 +718,71 @@ export async function cleanupStaleTracking(
 
   return { deleted }
 }
+
+// ══════════════════════════════════════════════════════════════════
+// 고객주문 비고(note) — coupang_personal_orders_details
+//   - 컬럼명은 coupang_personal_orders 와 동일하게 order_id / vendor_item_id 사용
+//   - 매칭 키: (order_id, vendor_item_id)
+//   - 불러오기 때 주문 데이터는 초기화되지만, note 는 이 테이블에서 별도
+//     fetch → Map join 으로 보존된다.
+//   - 권장 스키마: UNIQUE(user_id, order_id, vendor_item_id) (upsert onConflict 용)
+//   - 테이블 미생성 시에도 페이지 로드가 깨지지 않도록 fetch 는 방어적 처리.
+// ══════════════════════════════════════════════════════════════════
+
+/** 사용자 비고 전체 조회 → Map<`${order_id}|${vendor_item_id}`, note> (1000건 루프) */
+export async function fetchOrderNotes(userId: string): Promise<Map<string, string>> {
+  const map = new Map<string, string>()
+  if (!userId) return map
+
+  try {
+    let from = 0
+    const SIZE = 1000
+    while (true) {
+      const { data, error } = await supabase
+        .from('coupang_personal_orders_details')
+        .select('order_id, vendor_item_id, note')
+        .eq('user_id', userId)
+        .range(from, from + SIZE - 1)
+      if (error) {
+        // 테이블 미생성 등 → 경고만 남기고 빈 Map 반환 (로드 비차단)
+        console.warn('[fetchOrderNotes] 조회 실패(테이블 미생성?):', error.message)
+        break
+      }
+      const rows = (data ?? []) as { order_id: string | null; vendor_item_id: string | null; note: string | null }[]
+      for (const r of rows) {
+        if (!r.order_id || !r.note) continue
+        map.set(`${r.order_id}|${r.vendor_item_id ?? ''}`, r.note)
+      }
+      if (rows.length < SIZE) break
+      from += SIZE
+    }
+  } catch (e) {
+    console.warn('[fetchOrderNotes] 예외(테이블 미생성?):', e)
+  }
+  return map
+}
+
+/** 비고 저장 (upsert) — note 빈 값이면 null 로 저장 */
+export async function saveOrderNote(
+  userId: string,
+  orderId: string,
+  vendorItemId: string,
+  note: string,
+): Promise<void> {
+  const trimmed = note.trim()
+  const { error } = await supabase
+    .from('coupang_personal_orders_details')
+    .upsert(
+      {
+        user_id: userId,
+        order_id: orderId,
+        vendor_item_id: vendorItemId,
+        note: trimmed === '' ? null : trimmed,
+      },
+      { onConflict: 'user_id,order_id,vendor_item_id' },
+    )
+  if (error) {
+    console.error('[saveOrderNote] 저장 실패:', error)
+    throw error
+  }
+}

@@ -17,11 +17,12 @@ import {
 } from './usePersonalOrder'
 import { makeFulfillmentKey } from '../services/orderFulfillmentService'
 import CartNameInputModal from '../components/personal-order/CartNameInputModal'
+import InboundShipmentModal from '../components/personal-order/InboundShipmentModal'
 import DropdownMenu, { DropdownItem } from '../components/common/DropdownMenu'
 
 const PersonalOrder: React.FC = () => {
   const {
-    activeTab,
+    selectedTabs,
     searchValue,
     setSearchValue,
     currentPage,
@@ -40,6 +41,17 @@ const PersonalOrder: React.FC = () => {
     invoiceOrderIds,
     selectedDrawerItem,
     setSelectedDrawerItem,
+    noteMap,
+    handleSaveNote,
+    inboundActive,
+    inboundLoading,
+    inboundModalOpen,
+    setInboundModalOpen,
+    shipmentOptions,
+    inboundAllocMap,
+    handleInboundToggle,
+    handleInboundConfirm,
+    handleInboundExcel,
     filteredCount,
     totalPages,
     pagedItems,
@@ -168,18 +180,21 @@ const PersonalOrder: React.FC = () => {
              다른 버튼과 달리 '액션'이 아니라 현재 보고 있는 화면(어떤 상품 목록인지)을
              나타내므로 강조 스타일(po-ship-trigger)로 구분한다. */}
           <DropdownMenu
-            label={`배송 · ${activeTab}`}
+            label={`배송 · ${selectedTabs.size === 0 ? '전체' : Array.from(selectedTabs).join(', ')}`}
             triggerClassName="po-ship-trigger"
           >
-            {ORDER_STATUS_TABS.map((tab) => (
-              <DropdownItem
-                key={tab}
-                className={activeTab === tab ? 'active' : ''}
-                onClick={() => handleTabChange(tab)}
-              >
-                {tab}
-              </DropdownItem>
-            ))}
+            {ORDER_STATUS_TABS.map((tab) => {
+              const isActive = tab === '전체' ? selectedTabs.size === 0 : selectedTabs.has(tab)
+              return (
+                <DropdownItem
+                  key={tab}
+                  className={isActive ? 'active' : ''}
+                  onClick={() => handleTabChange(tab)}
+                >
+                  {tab}
+                </DropdownItem>
+              )
+            })}
           </DropdownMenu>
 
           <button
@@ -228,8 +243,8 @@ const PersonalOrder: React.FC = () => {
             엑셀
           </button>
 
-          {/* ── [주문]: 전송 / 복사 ── */}
-          <DropdownMenu label="주문" align="right">
+          {/* ── [장바구니]: 전송 / 복사 ── */}
+          <DropdownMenu label="장바구니" align="right">
             <DropdownItem
               onClick={handleOrderSend}
               disabled={orderSending}
@@ -271,7 +286,7 @@ const PersonalOrder: React.FC = () => {
       <div className="po-table-toolbar">
         <div className="po-toolbar-left">
           <span className="po-filter-count">
-            {activeTab} {filteredCount}건
+            {selectedTabs.size === 0 ? '전체' : Array.from(selectedTabs).join(', ')} {filteredCount}건
           </span>
           <button
             className={`po-tab-btn${showReleaseStopOnly ? ' active' : ''}`}
@@ -318,17 +333,40 @@ const PersonalOrder: React.FC = () => {
             재주문
           </button>
         </div>
-        {activeTab === '결제완료' && (
+        <div className="po-toolbar-right">
+          {/* ── 입고준비 (바코드 기준 매칭 토글) ── */}
           <button
-            className="po-btn po-acknowledge-btn"
-            onClick={handleAcknowledge}
-            disabled={acknowledging || selectedIds.size === 0}
+            className={`po-btn${inboundActive ? ' po-acknowledge-btn' : ''}`}
+            onClick={handleInboundToggle}
+            disabled={inboundLoading}
+            title="선택 shipment 의 입고 재고를 주문에 바코드 기준 할당"
           >
-            {acknowledging
-              ? '처리 중...'
-              : `주문확인${selectedIds.size > 0 ? ` (${selectedIds.size}건)` : ''}`}
+            {inboundLoading ? '매칭 중...' : (inboundActive ? '입고준비 해제' : '입고준비')}
           </button>
-        )}
+
+          {/* ── 입고엑셀 (입고준비 활성 시에만) ── */}
+          {inboundActive && (
+            <button
+              className="po-btn"
+              onClick={handleInboundExcel}
+              title="Delivery + shipment_list 2개 시트 엑셀 다운로드"
+            >
+              입고엑셀
+            </button>
+          )}
+
+          {selectedTabs.has('결제완료') && (
+            <button
+              className="po-btn po-acknowledge-btn"
+              onClick={handleAcknowledge}
+              disabled={acknowledging || selectedIds.size === 0}
+            >
+              {acknowledging
+                ? '처리 중...'
+                : `주문확인${selectedIds.size > 0 ? ` (${selectedIds.size}건)` : ''}`}
+            </button>
+          )}
+        </div>
       </div>
 
       {/* ── 테이블 ────────────────────────────────────────────── */}
@@ -343,6 +381,7 @@ const PersonalOrder: React.FC = () => {
                   style={col.width ? { width: col.width } : undefined}
                 />
               ))}
+              {inboundActive && <col style={{ width: '40px' }} />}
             </colgroup>
             <thead>
               <tr>
@@ -362,18 +401,19 @@ const PersonalOrder: React.FC = () => {
                     {col.label}
                   </th>
                 ))}
+                {inboundActive && <th>준비</th>}
               </tr>
             </thead>
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={COLUMNS.length + 1} className="po-loading">
+                  <td colSpan={COLUMNS.length + 1 + (inboundActive ? 1 : 0)} className="po-loading">
                     데이터를 불러오는 중...
                   </td>
                 </tr>
               ) : pagedItems.length === 0 ? (
                 <tr>
-                  <td colSpan={COLUMNS.length + 1} className="po-table-empty">
+                  <td colSpan={COLUMNS.length + 1 + (inboundActive ? 1 : 0)} className="po-table-empty">
                     데이터가 없습니다
                   </td>
                 </tr>
@@ -495,8 +535,12 @@ const PersonalOrder: React.FC = () => {
                             && !invoiceOrderIds.has(row.order_id)
                             && !trackingMap.has(row.order_id)
                             && !row.invoice_number
+                          const hasNote = !!ffKey && noteMap.has(ffKey)
+                          const alloc = inboundActive ? inboundAllocMap.get(rowKey) : undefined
                           const baseTitle = getCellValue(row, col.key)
                           const titleParts: string[] = []
+                          if (alloc?.boxStr) titleParts.push(alloc.boxStr)
+                          if (hasNote) titleParts.push('[비고]')
                           if (row.release_stop) titleParts.push('[출고중지요청]')
                           if (reorderCount >= 2) titleParts.push(`[${reorderCount}차]`)
                           if (needInvoice) titleParts.push('[송장 미연결]')
@@ -513,6 +557,23 @@ const PersonalOrder: React.FC = () => {
                                 handleRowClick(row)
                               }}
                             >
+                              {alloc?.boxStr && (
+                                <span
+                                  style={{ marginRight: 4, color: '#2563EB', fontWeight: 600 }}
+                                  title="입고 위치/수량"
+                                >
+                                  {alloc.boxStr}
+                                </span>
+                              )}
+                              {hasNote && (
+                                <span
+                                  style={{ marginRight: 4 }}
+                                  title="비고 있음"
+                                  aria-label="비고 있음"
+                                >
+                                  📌
+                                </span>
+                              )}
                               {row.release_stop && (
                                 <span
                                   style={{ marginRight: 4 }}
@@ -547,6 +608,9 @@ const PersonalOrder: React.FC = () => {
                                 >
                                   📝
                                 </span>
+                              )}
+                              {alloc?.matched && (
+                                <span style={{ marginLeft: 4 }} title="입고준비 매칭">✔️</span>
                               )}
                             </td>
                           )
@@ -591,6 +655,11 @@ const PersonalOrder: React.FC = () => {
                           </td>
                         )
                       })}
+                      {inboundActive && (
+                        <td style={{ textAlign: 'center' }}>
+                          {inboundAllocMap.get(rowKey)?.matched ? '✔️' : ''}
+                        </td>
+                      )}
                     </tr>
                   )
                 })
@@ -633,14 +702,26 @@ const PersonalOrder: React.FC = () => {
         </div>
       </div>
 
-      {/* ── Fulfillment 히스토리 드로어 ────────────────────── */}
+      {/* ── Fulfillment 히스토리 드로어 (+ 비고 입력) ────────── */}
       <FulfillmentDrawer
+        open={selectedDrawerItem != null}
         itemIds={selectedDrawerItem?.ids ?? []}
         itemName={selectedDrawerItem?.itemName ?? null}
         optionName={selectedDrawerItem?.optionName ?? null}
         orderNo={selectedDrawerItem?.orderNo ?? null}
         itemNo={selectedDrawerItem?.itemNo ?? null}
         productNo={selectedDrawerItem?.productNo ?? null}
+        note={
+          selectedDrawerItem?.noteOrderNo
+            ? (noteMap.get(makeFulfillmentKey(selectedDrawerItem.noteOrderNo, selectedDrawerItem.noteOptionId)) ?? '')
+            : ''
+        }
+        noteResetKey={`${selectedDrawerItem?.noteOrderNo ?? ''}|${selectedDrawerItem?.noteOptionId ?? ''}`}
+        onSaveNote={(n) => {
+          if (selectedDrawerItem?.noteOrderNo) {
+            handleSaveNote(selectedDrawerItem.noteOrderNo, selectedDrawerItem.noteOptionId, n)
+          }
+        }}
         onClose={() => setSelectedDrawerItem(null)}
       />
 
@@ -650,6 +731,15 @@ const PersonalOrder: React.FC = () => {
         title={progressTitle}
         steps={progressSteps}
         status={progressStatus}
+      />
+
+      {/* ── 입고준비 — shipment 선택 모달 ───────────────────── */}
+      <InboundShipmentModal
+        isOpen={inboundModalOpen}
+        options={shipmentOptions}
+        loading={inboundLoading}
+        onClose={() => setInboundModalOpen(false)}
+        onConfirm={handleInboundConfirm}
       />
 
       {/* ── 주문 전송 — 카트 이름 입력 모달 ───────────────────── */}

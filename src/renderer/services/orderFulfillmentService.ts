@@ -376,6 +376,90 @@ export async function fetchCartQtyByBarcode(
 }
 
 // ══════════════════════════════════════════════════════════════════
+// 입고준비 — ft_shipments / ft_shipment_details
+//   - 개인주문 '입고준비'에서 shipment 선택 → 상세 재고를 주문에 할당
+// ══════════════════════════════════════════════════════════════════
+
+/** 입고준비 모달용 shipment 옵션 */
+export interface ShipmentPickerOption {
+  id: string
+  shipment_no: string | null
+  created_at: string | null
+}
+
+/** ft_shipment_details 행 (할당 + 엑셀용) */
+export interface ShipmentDetailRow {
+  box_code: string | null
+  barcode: string | null
+  quantity: number | null
+  shipment_no: string | null
+  product_no: string | null
+  item_name: string | null
+  option_name: string | null
+  china_option1: string | null
+  china_option2: string | null
+  price_cny: number | null
+  shipment_size: string | null
+  composition: string | null
+}
+
+/** 최근 N일(created_at 기준) 이내 shipment 목록 (created_at 내림차순) */
+export async function fetchShipmentsWithin(
+  orderUserId: string,
+  days = 31,
+): Promise<ShipmentPickerOption[]> {
+  if (!isOrderSupabaseConfigured || !orderUserId) return []
+  const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString()
+
+  const out: ShipmentPickerOption[] = []
+  let from = 0
+  while (true) {
+    const { data, error } = await (orderSupabase.from('ft_shipments') as any)
+      .select('id, shipment_no, created_at')
+      .eq('user_id', orderUserId)
+      .gte('created_at', since)
+      .order('created_at', { ascending: false })
+      .range(from, from + PAGE_SIZE - 1)
+    if (error) {
+      console.error('[fetchShipmentsWithin]', error)
+      throw error
+    }
+    const rows = (data ?? []) as ShipmentPickerOption[]
+    out.push(...rows)
+    if (rows.length < PAGE_SIZE) break
+    from += PAGE_SIZE
+  }
+  return out
+}
+
+/** shipment_id 의 상세 전체 조회 (전 구간 페이지네이션 — 누락 금지) */
+export async function fetchShipmentDetails(
+  shipmentId: string,
+  orderUserId: string,
+): Promise<ShipmentDetailRow[]> {
+  if (!isOrderSupabaseConfigured || !orderUserId || !shipmentId) return []
+
+  const out: ShipmentDetailRow[] = []
+  let from = 0
+  while (true) {
+    const { data, error } = await (orderSupabase.from('ft_shipment_details') as any)
+      .select('box_code, barcode, quantity, shipment_no, product_no, item_name, option_name, china_option1, china_option2, price_cny, shipment_size, composition')
+      .eq('user_id', orderUserId)
+      .eq('shipment_id', shipmentId)
+      .range(from, from + PAGE_SIZE - 1)
+    if (error) {
+      console.error('[fetchShipmentDetails]', error)
+      throw error
+    }
+    const rows = (data ?? []) as ShipmentDetailRow[]
+    out.push(...rows)
+    if (rows.length < PAGE_SIZE) break
+    from += PAGE_SIZE
+  }
+  return out
+}
+
+// ══════════════════════════════════════════════════════════════════
 // 드로어: Fulfillment 이력 조회
 // ══════════════════════════════════════════════════════════════════
 
