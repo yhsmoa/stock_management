@@ -381,7 +381,6 @@ const PersonalOrder: React.FC = () => {
                   style={col.width ? { width: col.width } : undefined}
                 />
               ))}
-              {inboundActive && <col style={{ width: '40px' }} />}
             </colgroup>
             <thead>
               <tr>
@@ -401,19 +400,18 @@ const PersonalOrder: React.FC = () => {
                     {col.label}
                   </th>
                 ))}
-                {inboundActive && <th>준비</th>}
               </tr>
             </thead>
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={COLUMNS.length + 1 + (inboundActive ? 1 : 0)} className="po-loading">
+                  <td colSpan={COLUMNS.length + 1} className="po-loading">
                     데이터를 불러오는 중...
                   </td>
                 </tr>
               ) : pagedItems.length === 0 ? (
                 <tr>
-                  <td colSpan={COLUMNS.length + 1 + (inboundActive ? 1 : 0)} className="po-table-empty">
+                  <td colSpan={COLUMNS.length + 1} className="po-table-empty">
                     데이터가 없습니다
                   </td>
                 </tr>
@@ -655,11 +653,6 @@ const PersonalOrder: React.FC = () => {
                           </td>
                         )
                       })}
-                      {inboundActive && (
-                        <td style={{ textAlign: 'center' }}>
-                          {inboundAllocMap.get(rowKey)?.matched ? '✔️' : ''}
-                        </td>
-                      )}
                     </tr>
                   )
                 })

@@ -913,12 +913,16 @@ export function usePersonalOrder() {
   }, [inboundActive, getUserInfo])
 
   // ── 모달 [준비] → 상세 조회 + 바코드 할당(선착순·분할·부분충당) ──
-  const handleInboundConfirm = useCallback(async (shipmentId: string) => {
+  //   여러 shipment 를 동시에 선택 가능 → 재고를 합쳐 매칭
+  const handleInboundConfirm = useCallback(async (shipmentIds: string[]) => {
     const { orderUserId } = getUserInfo()
-    if (!orderUserId) return
+    if (!orderUserId || shipmentIds.length === 0) return
     setInboundLoading(true)
     try {
-      const details = await fetchShipmentDetails(shipmentId, orderUserId)
+      const detailLists = await Promise.all(
+        shipmentIds.map((sid) => fetchShipmentDetails(sid, orderUserId)),
+      )
+      const details = detailLists.flat()
 
       // ── 재고: barcode → [{idx, box_code, remaining}] (box_code 오름차순) ──
       const allocated = new Array<number>(details.length).fill(0)

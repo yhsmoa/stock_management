@@ -1,7 +1,8 @@
 /* ================================================================
-   InboundShipmentModal — 입고준비 대상 shipment 선택 모달
-   - ft_shipments.shipment_no 드롭박스 (created_at 31일 이내)
-   - [준비] 클릭 시 선택된 shipment_id 로 매칭 실행
+   InboundShipmentModal — 입고준비 대상 shipment 선택 모달 (다중 선택)
+   - ft_shipments.shipment_no 체크박스 리스트 (created_at 31일 이내)
+   - 여러 shipment 를 동시에 선택 → 재고를 합쳐 매칭
+   - [준비] 클릭 시 선택된 shipment_id 배열로 매칭 실행
    ================================================================ */
 
 import React, { useState, useEffect } from 'react'
@@ -12,27 +13,35 @@ interface Props {
   options: ShipmentPickerOption[]
   loading?: boolean        // 옵션 조회 / 매칭 진행 중
   onClose: () => void
-  onConfirm: (shipmentId: string) => void
+  onConfirm: (shipmentIds: string[]) => void
 }
 
 const InboundShipmentModal: React.FC<Props> = ({ isOpen, options, loading, onClose, onConfirm }) => {
-  const [selectedId, setSelectedId] = useState('')
+  const [checked, setChecked] = useState<Set<string>>(new Set())
 
-  // 열릴 때 첫 옵션 기본 선택
+  // 열릴 때 선택 초기화
   useEffect(() => {
-    if (isOpen) setSelectedId(options[0]?.id ?? '')
-  }, [isOpen, options])
+    if (isOpen) setChecked(new Set())
+  }, [isOpen])
 
   if (!isOpen) return null
 
   const fmt = (iso: string | null) => (iso ? iso.slice(0, 10) : '')
+  const toggle = (id: string) => {
+    setChecked((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
 
   return (
     <div className="modal-overlay" onClick={loading ? undefined : onClose}>
-      <div className="modal-content" style={{ width: '360px' }} onClick={(e) => e.stopPropagation()}>
+      <div className="modal-content" style={{ width: '380px' }} onClick={(e) => e.stopPropagation()}>
         <h3 style={{ margin: '0 0 12px', fontSize: '15px', fontWeight: 600 }}>입고준비 — shipment 선택</h3>
         <p style={{ margin: '0 0 10px', fontSize: '12px', color: '#6B7280' }}>
-          최근 31일 이내 shipment ({options.length}건)
+          최근 31일 이내 shipment ({options.length}건) · 여러 개 동시 선택 가능
         </p>
 
         {options.length === 0 ? (
@@ -40,25 +49,26 @@ const InboundShipmentModal: React.FC<Props> = ({ isOpen, options, loading, onClo
             최근 31일 이내 shipment 가 없습니다.
           </div>
         ) : (
-          <select
-            value={selectedId}
-            disabled={loading}
-            onChange={(e) => setSelectedId(e.target.value)}
-            style={{
-              width: '100%',
-              padding: '8px 10px',
-              border: '1px solid #d1d5db',
-              borderRadius: '6px',
-              fontSize: '14px',
-              outline: 'none',
-            }}
-          >
+          <div style={{ maxHeight: '260px', overflowY: 'auto', border: '1px solid #E5E7EB', borderRadius: '6px' }}>
             {options.map((o) => (
-              <option key={o.id} value={o.id}>
-                {(o.shipment_no ?? '(번호없음)')}{o.created_at ? ` · ${fmt(o.created_at)}` : ''}
-              </option>
+              <label
+                key={o.id}
+                className="order-modal-checkbox"
+                style={{ padding: '6px 10px', borderBottom: '1px solid #F3F4F6' }}
+              >
+                <input
+                  type="checkbox"
+                  checked={checked.has(o.id)}
+                  disabled={loading}
+                  onChange={() => toggle(o.id)}
+                />
+                <span style={{ fontWeight: 500 }}>{o.shipment_no ?? '(번호없음)'}</span>
+                {o.created_at && (
+                  <span style={{ color: '#6B7280', fontSize: '12px' }}> · {fmt(o.created_at)}</span>
+                )}
+              </label>
             ))}
-          </select>
+          </div>
         )}
 
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '16px' }}>
@@ -72,10 +82,10 @@ const InboundShipmentModal: React.FC<Props> = ({ isOpen, options, loading, onClo
           </button>
           <button
             className="po-btn po-acknowledge-btn"
-            onClick={() => selectedId && onConfirm(selectedId)}
-            disabled={loading || !selectedId}
+            onClick={() => checked.size > 0 && onConfirm(Array.from(checked))}
+            disabled={loading || checked.size === 0}
           >
-            {loading ? '매칭 중...' : '준비'}
+            {loading ? '매칭 중...' : `준비${checked.size > 0 ? ` (${checked.size})` : ''}`}
           </button>
         </div>
       </div>
