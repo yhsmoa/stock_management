@@ -554,6 +554,39 @@ const Inventory: React.FC = () => {
     }
   }, [selectedIds, loadStocks])
 
+  // 전체 삭제 (사용자 재고 전부)
+  const handleDeleteAll = useCallback(async () => {
+    const userId = getUserId()
+    if (!userId) {
+      alert('사용자 정보를 찾을 수 없습니다. 다시 로그인해주세요.')
+      return
+    }
+    if (stocks.length === 0) {
+      alert('삭제할 재고가 없습니다.')
+      return
+    }
+    if (!window.confirm(`재고 전체(${stocks.length}건)를 삭제하시겠습니까?\n이 작업은 되돌릴 수 없습니다.`)) {
+      return
+    }
+
+    setIsLoading(true)
+    try {
+      const success = await StockService.deleteAllStocks(userId)
+      if (success) {
+        setSelectedIds([])
+        await loadStocks()
+        alert('재고가 전체 삭제되었습니다.')
+      } else {
+        alert('전체 삭제 중 오류가 발생했습니다.')
+      }
+    } catch (error) {
+      console.error('전체 삭제 실패:', error)
+      alert('전체 삭제 중 오류가 발생했습니다.')
+    } finally {
+      setIsLoading(false)
+    }
+  }, [stocks, loadStocks])
+
   // 컴포넌트 마운트시 데이터 로드
   useEffect(() => {
     loadStocks()
@@ -569,9 +602,13 @@ const Inventory: React.FC = () => {
         title="재고 엑셀 업로드"
       />
 
-      {/* ── 상단 버튼 영역: 좌측 비어있음 | 우측 엑셀·삭제 ── */}
+      {/* ── 상단 버튼 영역: 좌측 전체 삭제 | 우측 엑셀·삭제 ── */}
       <div className="page-top-actions">
-        <div className="page-toolbar-left" />
+        <div className="page-toolbar-left">
+          <button className="page-btn" onClick={handleDeleteAll} disabled={isLoading || isUploading}>
+            전체 삭제
+          </button>
+        </div>
         <div className="page-toolbar-right">
           <input ref={fileInputRef} type="file" accept=".xlsx,.xls" style={{ display: 'none' }} onChange={handleFileChange} />
           <input ref={fileDeductRef} type="file" accept=".xlsx,.xls" style={{ display: 'none' }} onChange={handleDeductFileChange} />

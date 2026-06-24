@@ -262,6 +262,28 @@ export class StockService {
   }
 
   /**
+   * 사용자 전체 재고 삭제 (user_id 격리)
+   * - 필터(user_id)에 매칭되는 모든 행 삭제 (1000건 limit 무관)
+   */
+  static async deleteAllStocks(userId: string): Promise<boolean> {
+    try {
+      const { error } = await supabase
+        .from('si_stocks')
+        .delete()
+        .eq('user_id', userId)
+
+      if (error) {
+        console.error('재고 전체 삭제 오류:', error)
+        throw error
+      }
+      return true
+    } catch (error) {
+      console.error('재고 전체 삭제 실패:', error)
+      return false
+    }
+  }
+
+  /**
    * location과 barcode로 기존 재고 조회
    */
   static async getStockByLocationAndBarcode(
