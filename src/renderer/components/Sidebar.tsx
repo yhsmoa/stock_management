@@ -12,7 +12,7 @@ import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { theme } from '../styles/theme'
 
 // ── 상수 ──────────────────────────────────────────────────────────
-const RAIL_WIDTH = 44
+const RAIL_WIDTH = 40
 const EXPANDED_WIDTH = 230
 const HEADER_HEIGHT = 60
 
@@ -193,7 +193,7 @@ const Sidebar: React.FC = () => {
         zIndex: 998,
         display: 'flex',
         flexDirection: 'column',
-        padding: '10px 6px',
+        padding: expanded ? '10px 6px' : '10px 4px',
         borderRight: '1px solid rgba(255, 255, 255, 0.1)',
         boxShadow: expanded ? '4px 0 16px rgba(0, 0, 0, 0.2)' : 'none',
         overflowY: 'auto',

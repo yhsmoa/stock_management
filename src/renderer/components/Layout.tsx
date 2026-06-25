@@ -4,7 +4,7 @@ import Sidebar from './Sidebar'
 import { theme } from '../styles/theme'
 
 // ── 상수 ──────────────────────────────────────────────────────────
-const RAIL_WIDTH = 44     // Sidebar 의 RAIL_WIDTH 와 동일하게 유지
+const RAIL_WIDTH = 40     // Sidebar 의 RAIL_WIDTH 와 동일하게 유지
 
 const Layout: React.FC = () => {
   return (
