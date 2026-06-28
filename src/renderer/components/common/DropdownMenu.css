@@ -59,6 +59,11 @@
   display: block;
 }
 
+/* 비활성 상태에서는 hover 로도 메뉴가 열리지 않음 */
+.dropdown-disabled:hover .dropdown-menu {
+  display: none;
+}
+
 /* ── 메뉴 항목 ───────────────────────────────────────────────── */
 .dropdown-item {
   display: block;

@@ -141,6 +141,22 @@
   gap: 6px;
 }
 
+/* ── 필터/상태 드롭박스 트리거 (알약 모양, 활성 시 파랑) ──────
+   공용 .dropdown-trigger 보다 우선하도록 툴바로 스코프(specificity↑). */
+.po-table-toolbar .po-filter-trigger {
+  border-radius: 9999px;
+  font-size: 12px;
+}
+.po-table-toolbar .po-filter-trigger.active {
+  background-color: #4A8CF7;
+  border-color: #4A8CF7;
+  color: #fff;
+}
+.po-table-toolbar .po-filter-trigger.active:hover:not(:disabled) {
+  background-color: #3B7DE6;
+  border-color: #3B7DE6;
+}
+
 /* 탭과 액션 버튼 구분선 */
 .po-separator {
   color: #D1D5DB;

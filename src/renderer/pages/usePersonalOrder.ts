@@ -925,9 +925,11 @@ export function usePersonalOrder() {
       const details = detailLists.flat()
 
       // ── 재고: barcode → [{idx, box_code, remaining}] (box_code 오름차순) ──
+      //   매칭 대상은 shipment_type='PERSONAL' 입고분만 (DIRECT/COUPANG 제외)
       const allocated = new Array<number>(details.length).fill(0)
       const stock = new Map<string, Array<{ idx: number; box_code: string; remaining: number }>>()
       details.forEach((d, idx) => {
+        if (d.shipment_type !== 'PERSONAL') return
         if (!d.barcode || !d.quantity || d.quantity <= 0) return
         const arr = stock.get(d.barcode) ?? []
         arr.push({ idx, box_code: d.box_code ?? '', remaining: d.quantity })
@@ -971,7 +973,12 @@ export function usePersonalOrder() {
       }
 
       setInboundAllocMap(allocMap)
-      setInboundDetails(details.map((d, idx) => ({ ...d, allocated: allocated[idx] })))
+      // shipment_list 시트: PERSONAL + DIRECT 만
+      setInboundDetails(
+        details
+          .map((d, idx) => ({ ...d, allocated: allocated[idx] }))
+          .filter((d) => d.shipment_type === 'PERSONAL' || d.shipment_type === 'DIRECT'),
+      )
       setInboundActive(true)
       setInboundModalOpen(false)
     } catch (e: any) {

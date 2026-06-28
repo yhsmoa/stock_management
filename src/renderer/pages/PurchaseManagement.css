@@ -284,6 +284,30 @@
   border-color: #3B7DE6;
 }
 
+/* ── 정렬(판매량/보관료) 드롭박스 트리거 (알약, 활성 시 파랑) ──
+   공용 .dropdown-trigger 보다 우선하도록 툴바로 스코프(specificity↑). */
+.purchase-table-toolbar .purchase-sort-trigger {
+  border-radius: 9999px;
+  font-size: 12px;
+}
+.purchase-table-toolbar .purchase-sort-trigger.active {
+  background-color: #4A8CF7;
+  border-color: #4A8CF7;
+  color: #fff;
+}
+.purchase-table-toolbar .purchase-sort-trigger.active:hover:not(:disabled) {
+  background-color: #3B7DE6;
+  border-color: #3B7DE6;
+}
+
+/* 드롭박스 내 소제목 (기간 / 정렬) */
+.purchase-dropdown-section {
+  padding: 6px 14px 2px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #9CA3AF;
+}
+
 /* ── 필터 버튼 그룹 구분자 (|) ───────────────────────────────── */
 .purchase-separator {
   color: #D1D5DB;

@@ -401,6 +401,8 @@ export interface ShipmentDetailRow {
   price_cny: number | null
   shipment_size: string | null
   composition: string | null
+  order_item_id: string | null
+  shipment_type: string | null   // order_item_id → ft_order_items.shipment_type 조인 결과
 }
 
 /** 최근 N일(created_at 기준) 이내 shipment 목록 (created_at 내림차순) */
@@ -432,7 +434,10 @@ export async function fetchShipmentsWithin(
   return out
 }
 
-/** shipment_id 의 상세 전체 조회 (전 구간 페이지네이션 — 누락 금지) */
+/**
+ * shipment_id 의 상세 전체 조회 (전 구간 페이지네이션 — 누락 금지)
+ * + order_item_id → ft_order_items.shipment_type 조인 (PERSONAL/DIRECT 구분용)
+ */
 export async function fetchShipmentDetails(
   shipmentId: string,
   orderUserId: string,
@@ -443,7 +448,7 @@ export async function fetchShipmentDetails(
   let from = 0
   while (true) {
     const { data, error } = await (orderSupabase.from('ft_shipment_details') as any)
-      .select('box_code, barcode, quantity, shipment_no, product_no, item_name, option_name, china_option1, china_option2, price_cny, shipment_size, composition')
+      .select('box_code, barcode, quantity, shipment_no, product_no, item_name, option_name, china_option1, china_option2, price_cny, shipment_size, composition, order_item_id')
       .eq('user_id', orderUserId)
       .eq('shipment_id', shipmentId)
       .range(from, from + PAGE_SIZE - 1)
@@ -456,6 +461,25 @@ export async function fetchShipmentDetails(
     if (rows.length < PAGE_SIZE) break
     from += PAGE_SIZE
   }
+
+  // ── order_item_id → ft_order_items.shipment_type 조인 ──
+  const itemIds = Array.from(
+    new Set(out.map((d) => d.order_item_id).filter((v): v is string => !!v)),
+  )
+  if (itemIds.length > 0) {
+    const oi = await batchIn<{ id: string; shipment_type: string | null }>(
+      'ft_order_items',
+      'id, shipment_type',
+      'id',
+      itemIds,
+    )
+    const typeMap = new Map<string, string | null>()
+    for (const r of oi) typeMap.set(r.id, r.shipment_type)
+    for (const d of out) {
+      d.shipment_type = d.order_item_id ? (typeMap.get(d.order_item_id) ?? null) : null
+    }
+  }
+
   return out
 }
 

@@ -288,50 +288,44 @@ const PersonalOrder: React.FC = () => {
           <span className="po-filter-count">
             {selectedTabs.size === 0 ? '전체' : Array.from(selectedTabs).join(', ')} {filteredCount}건
           </span>
-          <button
-            className={`po-tab-btn${showReleaseStopOnly ? ' active' : ''}`}
-            onClick={toggleReleaseStopOnly}
-          >
-            ⚠️출고중지
-          </button>
-          <button
-            className={`po-tab-btn${showNoInvoiceOnly ? ' active' : ''}`}
-            onClick={toggleNoInvoiceOnly}
-          >
-            📝송장필요
-          </button>
-          <button
-            className={`po-tab-btn${showCartOnly ? ' active' : ''}`}
-            onClick={toggleCartOnly}
-            title="ORDER 카트에 담긴(미주문) 행만 보기"
-          >
-            🛒
-          </button>
+          {/* ── 필터 드롭박스: 출고중지 / 송장필요 / 미주문 / 재주문 ── */}
+          {(() => {
+            const cnt = [showReleaseStopOnly, showNoInvoiceOnly, showUnorderedOnly, showReorderOnly].filter(Boolean).length
+            return (
+              <DropdownMenu
+                label={`필터${cnt ? ` (${cnt})` : ''}`}
+                triggerClassName={`po-filter-trigger${cnt ? ' active' : ''}`}
+              >
+                <DropdownItem className={showReleaseStopOnly ? 'active' : ''} onClick={toggleReleaseStopOnly}>⚠️ 출고중지</DropdownItem>
+                <DropdownItem className={showNoInvoiceOnly ? 'active' : ''} onClick={toggleNoInvoiceOnly}>📝 송장필요</DropdownItem>
+                <DropdownItem className={showUnorderedOnly ? 'active' : ''} onClick={toggleUnorderedOnly}>🕊️ 미주문</DropdownItem>
+                <DropdownItem className={showReorderOnly ? 'active' : ''} onClick={toggleReorderOnly}>🔄 재주문</DropdownItem>
+              </DropdownMenu>
+            )
+          })()}
 
-          {/* ── 상태 점 필터 (shipped/green/red/gray/multi) ───── */}
-          {(['shipped', 'green', 'red', 'gray', 'multi'] as const).map((st) => (
-            <button
-              key={st}
-              className={`po-status-filter-btn${selectedStatuses.has(st) ? ' active' : ''}`}
-              onClick={() => toggleStatusFilter(st)}
-              title={STATUS_DOT_LABELS[st]}
-              aria-label={STATUS_DOT_LABELS[st]}
-            >
-              <span className={`po-status-dot ${st}`} />
-            </button>
-          ))}
-          <button
-            className={`po-tab-btn${showUnorderedOnly ? ' active' : ''}`}
-            onClick={toggleUnorderedOnly}
-          >
-            미주문
-          </button>
-          <button
-            className={`po-tab-btn${showReorderOnly ? ' active' : ''}`}
-            onClick={toggleReorderOnly}
-          >
-            재주문
-          </button>
+          {/* ── 상태 드롭박스: 카트 + 상태 색 동그라미 ── */}
+          {(() => {
+            const cnt = (showCartOnly ? 1 : 0) + selectedStatuses.size
+            return (
+              <DropdownMenu
+                label={`상태${cnt ? ` (${cnt})` : ''}`}
+                triggerClassName={`po-filter-trigger${cnt ? ' active' : ''}`}
+              >
+                <DropdownItem className={showCartOnly ? 'active' : ''} onClick={toggleCartOnly}>🛒 카트</DropdownItem>
+                {(['shipped', 'green', 'red', 'gray', 'multi'] as const).map((st) => (
+                  <DropdownItem
+                    key={st}
+                    className={selectedStatuses.has(st) ? 'active' : ''}
+                    onClick={() => toggleStatusFilter(st)}
+                  >
+                    <span className={`po-status-dot ${st}`} style={{ marginRight: 6, verticalAlign: 'middle' }} />
+                    {STATUS_DOT_LABELS[st]}
+                  </DropdownItem>
+                ))}
+              </DropdownMenu>
+            )
+          })()}
         </div>
         <div className="po-toolbar-right">
           {/* ── 입고준비 (바코드 기준 매칭 토글) ── */}

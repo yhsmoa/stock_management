@@ -25,6 +25,7 @@ interface ProductDetailPanelProps {
   onClose: () => void
   item: RgItem | null
   itemWinner?: string | null   // '아이템위너 아님' 등 아이템위너 상태
+  onSaveNote?: (note: string) => void   // 비고 저장 (포커스 아웃 시)
 }
 
 // ── 스타일 ──────────────────────────────────────────────────────────
@@ -287,6 +288,69 @@ const styles = {
     borderColor: '#EF4444',
     color: '#fff',
   },
+
+  /* ── 상단 행: 이미지(좌) + ID/바코드(우) ───────────────────── */
+  topRow: {
+    display: 'flex',
+    gap: '16px',
+    alignItems: 'flex-start',
+    marginBottom: '20px',
+  },
+  imageWrapperSm: {
+    width: '160px',
+    height: '160px',
+    flexShrink: 0,
+    borderRadius: theme.radius.lg,
+    overflow: 'hidden',
+    border: `1px solid ${theme.colors.borderLight}`,
+    backgroundColor: '#F9FAFB',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  idCol: {
+    flex: 1,
+    minWidth: 0,
+    display: 'flex',
+    flexDirection: 'column' as const,
+    gap: '8px',
+  },
+  idItem: {
+    display: 'flex',
+    flexDirection: 'column' as const,
+    gap: '2px',
+    padding: '6px 10px',
+    backgroundColor: theme.colors.primaryLight,
+    borderRadius: theme.radius.md,
+  },
+
+  /* ── 비고 입력 (하단) ──────────────────────────────────────── */
+  noteSection: {
+    paddingTop: '16px',
+    marginTop: '8px',
+    borderTop: `1px solid ${theme.colors.borderLight}`,
+  },
+  noteLabel: {
+    display: 'block',
+    fontSize: theme.fontSize.sm,
+    fontWeight: 600,
+    color: theme.colors.textPrimary,
+    marginBottom: '6px',
+  },
+  noteInput: {
+    width: '100%',
+    minHeight: '80px',
+    resize: 'vertical' as const,
+    padding: '8px 10px',
+    border: `1px solid ${theme.colors.border}`,
+    borderRadius: theme.radius.md,
+    fontSize: theme.fontSize.base,
+    lineHeight: 1.5,
+    color: theme.colors.textPrimary,
+    outline: 'none',
+    boxSizing: 'border-box' as const,
+    fontFamily: 'inherit',
+  },
 }
 
 // ── 스피너 키프레임 (인라인 삽입) ────────────────────────────────────
@@ -307,6 +371,7 @@ const ProductDetailPanel: React.FC<ProductDetailPanelProps> = ({
   onClose,
   item,
   itemWinner,
+  onSaveNote,
 }) => {
   /* ── 상태 ─────────────────────────────────────────────────────── */
   const [detailLoading, setDetailLoading] = useState(false)
@@ -322,6 +387,10 @@ const ProductDetailPanel: React.FC<ProductDetailPanelProps> = ({
   const [savingPrice, setSavingPrice] = useState(false)
   const [onSale, setOnSale] = useState<boolean | null>(null)                // null = 조회 중/실패
   const [savingSale, setSavingSale] = useState(false)
+
+  /* ── 비고 입력 draft (선택 상품 변경 시 동기화) ─────────────── */
+  const [noteDraft, setNoteDraft] = useState('')
+  useEffect(() => { setNoteDraft(item?.note ?? '') }, [item?.id, item?.note])
 
   /* ── 클릭 복사 핸들러 (마우스 위치에 "copy" 툴팁 표시) ──────── */
   const handleCopy = useCallback((value: string | null | undefined, e: React.MouseEvent) => {
@@ -540,24 +609,8 @@ const ProductDetailPanel: React.FC<ProductDetailPanelProps> = ({
               {/* ── API 실패 안내 ───────────────────────────────── */}
               {error && <div style={styles.errorMsg}>{error}</div>}
 
-              {/* ── 상품 이미지 ─────────────────────────────────── */}
-              <div style={styles.imageWrapper}>
-                {imageUrl && !imgError ? (
-                  <img
-                    src={imageUrl}
-                    alt={productName || '상품 이미지'}
-                    style={styles.image}
-                    onError={() => setImgError(true)}
-                  />
-                ) : (
-                  <span style={styles.noImage}>이미지 없음</span>
-                )}
-              </div>
-
-              {/* ── 상품명 + 옵션명 + 아이템위너 상태 ────────────── */}
-              <div style={styles.productName}>
-                {productName || '-'}
-              </div>
+              {/* ── 상품명 + 옵션명 (최상단) ─────────────────────── */}
+              <div style={styles.productName}>{productName || '-'}</div>
               <div style={styles.itemName}>
                 {itemName ? `옵션: ${itemName}` : ''}
                 {itemWinner === '아이템위너 아님' && (
@@ -567,34 +620,38 @@ const ProductDetailPanel: React.FC<ProductDetailPanelProps> = ({
                 )}
               </div>
 
-              {/* ── ID 배지 3개 (클릭 → 클립보드 복사) ──────────── */}
-              <div style={styles.badgeGroup}>
-                {[
-                  { label: '노출상품 ID', value: sellerProductId },
-                  { label: '등록상품 ID', value: sellerProductItemId },
-                  { label: '옵션 ID', value: vendorItemId },
-                ].map((b) => (
-                  <div
-                    key={b.label}
-                    style={{ ...styles.badge, ...styles.copyable }}
-                    onClick={(e) => handleCopy(b.value, e)}
-                    title="클릭하여 복사"
-                  >
-                    <span style={styles.badgeLabel}>{b.label}</span>
-                    <span style={styles.badgeValue}>{b.value || '-'}</span>
-                  </div>
-                ))}
-              </div>
-
-              {/* ── 바코드 (클릭 → 클립보드 복사) ────────────────── */}
-              <div
-                style={{ ...styles.infoRow, ...styles.copyable }}
-                onClick={(e) => handleCopy(barcode, e)}
-                title="클릭하여 복사"
-              >
-                <span style={styles.infoIcon}>𝄃𝄂𝄀𝄁𝄃</span>
-                <span style={styles.infoLabel}>바코드</span>
-                <span style={styles.infoValue}>{barcode || '-'}</span>
+              {/* ── 이미지(좌) + 노출/등록/옵션 ID·바코드(우) ────── */}
+              <div style={styles.topRow}>
+                <div style={styles.imageWrapperSm}>
+                  {imageUrl && !imgError ? (
+                    <img
+                      src={imageUrl}
+                      alt={productName || '상품 이미지'}
+                      style={styles.image}
+                      onError={() => setImgError(true)}
+                    />
+                  ) : (
+                    <span style={styles.noImage}>이미지 없음</span>
+                  )}
+                </div>
+                <div style={styles.idCol}>
+                  {[
+                    { label: '노출상품 ID', value: sellerProductId },
+                    { label: '등록상품 ID', value: sellerProductItemId },
+                    { label: '옵션 ID', value: vendorItemId },
+                    { label: '바코드', value: barcode },
+                  ].map((b) => (
+                    <div
+                      key={b.label}
+                      style={{ ...styles.idItem, ...styles.copyable }}
+                      onClick={(e) => handleCopy(b.value, e)}
+                      title="클릭하여 복사"
+                    >
+                      <span style={styles.badgeLabel}>{b.label}</span>
+                      <span style={styles.badgeValue}>{b.value || '-'}</span>
+                    </div>
+                  ))}
+                </div>
               </div>
 
               {/* ── 가격 수정 (한 줄: 가격 라벨 + 입력폼 + 변경 버튼) ── */}
@@ -673,6 +730,20 @@ const ProductDetailPanel: React.FC<ProductDetailPanelProps> = ({
                   )}
                 </div>
               )}
+
+              {/* ── 비고 (하단) — 포커스 벗어나면 저장 ──────────── */}
+              <div style={styles.noteSection}>
+                <label style={styles.noteLabel}>📌 비고</label>
+                <textarea
+                  style={styles.noteInput}
+                  value={noteDraft}
+                  placeholder="비고 입력 (입력 후 포커스를 벗어나면 저장)"
+                  onChange={(e) => setNoteDraft(e.target.value)}
+                  onBlur={() => {
+                    if (noteDraft !== (item.note ?? '')) onSaveNote?.(noteDraft)
+                  }}
+                />
+              </div>
             </>
           )}
         </div>

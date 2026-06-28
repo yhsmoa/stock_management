@@ -210,6 +210,8 @@ export function usePurchaseManagement() {
   /* ── 정렬 (판매량 / 보관료 / 재고량 — 상품 단위 합산, 3단계 토글) ─ */
   type SortKey = 'sales' | 'storage' | 'stock'
   const [sort, setSort] = useState<{ key: SortKey; dir: 'desc' | 'asc' } | null>(null)
+  // 판매량 정렬 기준 기간 (7일 / 30일)
+  const [salesPeriod, setSalesPeriodRaw] = useState<'7d' | '30d'>('7d')
 
   /** 정렬 토글: 같은 기준 재클릭 시 내림→오름→해제, 다른 기준 클릭 시 내림차순부터 */
   const handleSortToggle = (key: SortKey) => {
@@ -220,6 +222,18 @@ export function usePurchaseManagement() {
     })
     setCurrentPage(1)
   }
+
+  /** 정렬 방향 직접 지정 (드롭박스: 오름/내림/전체). dir=null → 해제 */
+  const setSortDir = useCallback((key: SortKey, dir: 'desc' | 'asc' | null) => {
+    setSort(dir ? { key, dir } : null)
+    setCurrentPage(1)
+  }, [])
+
+  /** 판매량 기간 변경 (드롭박스: 7일/30일) */
+  const setSalesPeriod = useCallback((p: '7d' | '30d') => {
+    setSalesPeriodRaw(p)
+    setCurrentPage(1)
+  }, [])
 
   /* ── 주문 로딩 상태 (주문 🔗 적용 → order_qty 영속화) ──── */
   const [isOrderLoading, setIsOrderLoading] = useState(false)
@@ -304,7 +318,9 @@ export function usePurchaseManagement() {
       const metricOf = (item: RgItem): number => {
         const data = item.vendor_item_id ? itemDataMap.get(item.vendor_item_id) : undefined
         if (!data) return 0
-        if (sort.key === 'sales') return data.recent_sales_qty_7d ?? 0
+        if (sort.key === 'sales') {
+          return (salesPeriod === '30d' ? data.recent_sales_qty_30d : data.recent_sales_qty_7d) ?? 0
+        }
         if (sort.key === 'storage') return data.monthly_storage_fee ?? 0
         return data.orderable_qty ?? 0 // stock = C.재고
       }
@@ -325,7 +341,7 @@ export function usePurchaseManagement() {
     }
 
     return result
-  }, [activeFilter, statusFilter, items, itemDataMap, searchQuery, searchMode, sort])
+  }, [activeFilter, statusFilter, items, itemDataMap, searchQuery, searchMode, sort, salesPeriod])
 
   const handleFilterToggle = (filter: FilterKey) => {
     setActiveFilter((prev) => (prev === filter ? null : filter))
@@ -978,6 +994,25 @@ console.log('[조회수] 완료! 총 '+results.length+'건 CSV 저장됨');
     })
   }
 
+  /** 상세 패널 비고 — 즉시 저장 (테이블 [저장] 거치지 않음) */
+  const saveDetailNote = useCallback(async (itemId: string, note: string) => {
+    const val = note.trim() === '' ? null : note.trim()
+    setItems((prev) => prev.map((it) => (it.id === itemId ? { ...it, note: val } : it)))
+    // 인라인 편집 pending 과 충돌 방지
+    setPendingNotes((prev) => {
+      const next = new Map(prev)
+      next.delete(itemId)
+      return next
+    })
+    dbOriginalNotesRef.current.delete(itemId)
+    try {
+      await supabase.from('si_rg_items').update({ note: val }).eq('id', itemId)
+    } catch (e) {
+      console.error('[saveDetailNote] 실패:', e)
+      alert('비고 저장에 실패했습니다.')
+    }
+  }, [])
+
   /** 셀 blur → DB 원본값과 비교 → 변경/되돌리기 판정 */
   const handleCellBlur = (itemId: string, field: EditableField, currentValue: number | null) => {
     setEditingCell(null)
@@ -1575,6 +1610,9 @@ console.log('[조회수] 완료! 총 '+results.length+'건 CSV 저장됨');
     // 정렬 (판매량/보관료/재고량)
     sort,
     handleSortToggle,
+    setSortDir,
+    salesPeriod,
+    setSalesPeriod,
 
     // 상태 필터 (활성/비활성/전체)
     statusFilter,
@@ -1637,6 +1675,7 @@ console.log('[조회수] 완료! 총 '+results.length+'건 CSV 저장됨');
     handleNoteClick,
     handleNoteBlur,
     pendingNotes,
+    saveDetailNote,
 
     // 저장 / 입력 초기화
     pendingEdits,

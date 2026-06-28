@@ -125,6 +125,9 @@ const PurchaseManagement: React.FC = () => {
     handleFilterToggle,
     sort,
     handleSortToggle,
+    setSortDir,
+    salesPeriod,
+    setSalesPeriod,
     statusFilter,
     setStatusFilter,
     resetting,
@@ -167,6 +170,7 @@ const PurchaseManagement: React.FC = () => {
     handleNoteClick,
     handleNoteBlur,
     pendingNotes,
+    saveDetailNote,
     pendingEdits,
     saving,
     handleSaveInputs,
@@ -601,22 +605,38 @@ const PurchaseManagement: React.FC = () => {
             </div>
           </div>
 
-          {/* ── 정렬 (상품 단위 합산): 내림▼ → 오름▲ → 해제 ── */}
-          {([
-            { key: 'sales', label: '판매량' },
-            { key: 'storage', label: '보관료' },
-            { key: 'stock', label: '재고량' },
-          ] as const).map((s) => (
-            <button
-              key={s.key}
-              className={`purchase-filter-btn${sort?.key === s.key ? ' active' : ''}`}
-              onClick={() => handleSortToggle(s.key)}
-              title="상품 단위 합산 기준 정렬 (클릭: 내림→오름→해제)"
-            >
-              {s.label}
-              {sort?.key === s.key ? (sort.dir === 'desc' ? ' ▼' : ' ▲') : ''}
-            </button>
-          ))}
+          {/* ── 판매량 정렬 드롭박스 (기간 7/30일 + 오름/내림/전체) ── */}
+          <DropdownMenu
+            label={`판매량 · ${salesPeriod === '30d' ? '30일' : '7일'}${sort?.key === 'sales' ? (sort.dir === 'desc' ? ' ▼' : ' ▲') : ''}`}
+            triggerClassName={`purchase-sort-trigger${sort?.key === 'sales' ? ' active' : ''}`}
+          >
+            <DropdownItem className={sort?.key !== 'sales' ? 'active' : ''} onClick={() => setSortDir('sales', null)}>전체</DropdownItem>
+            <div className="purchase-dropdown-section">기간</div>
+            <DropdownItem className={salesPeriod === '7d' ? 'active' : ''} onClick={() => setSalesPeriod('7d')}>7일</DropdownItem>
+            <DropdownItem className={salesPeriod === '30d' ? 'active' : ''} onClick={() => setSalesPeriod('30d')}>30일</DropdownItem>
+            <div className="purchase-dropdown-section">정렬</div>
+            <DropdownItem className={sort?.key === 'sales' && sort.dir === 'asc' ? 'active' : ''} onClick={() => setSortDir('sales', 'asc')}>오름차순</DropdownItem>
+            <DropdownItem className={sort?.key === 'sales' && sort.dir === 'desc' ? 'active' : ''} onClick={() => setSortDir('sales', 'desc')}>내림차순</DropdownItem>
+          </DropdownMenu>
+
+          {/* ── 보관료 정렬 드롭박스 (오름/내림/전체) ── */}
+          <DropdownMenu
+            label={`보관료${sort?.key === 'storage' ? (sort.dir === 'desc' ? ' ▼' : ' ▲') : ''}`}
+            triggerClassName={`purchase-sort-trigger${sort?.key === 'storage' ? ' active' : ''}`}
+          >
+            <DropdownItem className={sort?.key !== 'storage' ? 'active' : ''} onClick={() => setSortDir('storage', null)}>전체</DropdownItem>
+            <DropdownItem className={sort?.key === 'storage' && sort.dir === 'asc' ? 'active' : ''} onClick={() => setSortDir('storage', 'asc')}>오름차순</DropdownItem>
+            <DropdownItem className={sort?.key === 'storage' && sort.dir === 'desc' ? 'active' : ''} onClick={() => setSortDir('storage', 'desc')}>내림차순</DropdownItem>
+          </DropdownMenu>
+
+          {/* ── 재고량 정렬 버튼 (내림▼ → 오름▲ → 해제) ── */}
+          <button
+            className={`purchase-filter-btn${sort?.key === 'stock' ? ' active' : ''}`}
+            onClick={() => handleSortToggle('stock')}
+            title="C.재고 상품 단위 합산 정렬 (클릭: 내림→오름→해제)"
+          >
+            재고량{sort?.key === 'stock' ? (sort.dir === 'desc' ? ' ▼' : ' ▲') : ''}
+          </button>
 
           {/* ── 구분자 ─────────────────────────────────────── */}
           <span className="purchase-separator">|</span>
@@ -926,6 +946,7 @@ const PurchaseManagement: React.FC = () => {
         onClose={() => setDetailPanelOpen(false)}
         item={detailItem}
         itemWinner={detailItem ? getItemData(detailItem)?.item_winner : undefined}
+        onSaveNote={(note) => { if (detailItem?.id) saveDetailNote(detailItem.id, note) }}
       />
 
       {/* ── 엑셀 업로드 프로그레스 모달 ────────────────────── */}

@@ -31,7 +31,7 @@ const DropdownMenu: React.FC<DropdownMenuProps> = ({
   align = 'left',
   disabled,
 }) => (
-  <div className="dropdown">
+  <div className={`dropdown${disabled ? ' dropdown-disabled' : ''}`}>
     <button
       type="button"
       className={`dropdown-trigger${triggerClassName ? ` ${triggerClassName}` : ''}`}
