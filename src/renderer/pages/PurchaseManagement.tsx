@@ -607,13 +607,13 @@ const PurchaseManagement: React.FC = () => {
 
           {/* ── 판매량 정렬 드롭박스 (기간 7/30일 + 오름/내림/전체) ── */}
           <DropdownMenu
-            label={`판매량 · ${salesPeriod === '30d' ? '30일' : '7일'}${sort?.key === 'sales' ? (sort.dir === 'desc' ? ' ▼' : ' ▲') : ''}`}
+            label={`판매량${sort?.key === 'sales' ? ` · ${salesPeriod === '30d' ? '30일' : '7일'} ${sort.dir === 'desc' ? '▼' : '▲'}` : ''}`}
             triggerClassName={`purchase-sort-trigger${sort?.key === 'sales' ? ' active' : ''}`}
           >
             <DropdownItem className={sort?.key !== 'sales' ? 'active' : ''} onClick={() => setSortDir('sales', null)}>전체</DropdownItem>
             <div className="purchase-dropdown-section">기간</div>
-            <DropdownItem className={salesPeriod === '7d' ? 'active' : ''} onClick={() => setSalesPeriod('7d')}>7일</DropdownItem>
-            <DropdownItem className={salesPeriod === '30d' ? 'active' : ''} onClick={() => setSalesPeriod('30d')}>30일</DropdownItem>
+            <DropdownItem className={sort?.key === 'sales' && salesPeriod === '7d' ? 'active' : ''} onClick={() => setSalesPeriod('7d')}>7일</DropdownItem>
+            <DropdownItem className={sort?.key === 'sales' && salesPeriod === '30d' ? 'active' : ''} onClick={() => setSalesPeriod('30d')}>30일</DropdownItem>
             <div className="purchase-dropdown-section">정렬</div>
             <DropdownItem className={sort?.key === 'sales' && sort.dir === 'asc' ? 'active' : ''} onClick={() => setSortDir('sales', 'asc')}>오름차순</DropdownItem>
             <DropdownItem className={sort?.key === 'sales' && sort.dir === 'desc' ? 'active' : ''} onClick={() => setSortDir('sales', 'desc')}>내림차순</DropdownItem>

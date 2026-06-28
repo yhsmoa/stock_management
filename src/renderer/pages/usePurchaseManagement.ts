@@ -229,9 +229,11 @@ export function usePurchaseManagement() {
     setCurrentPage(1)
   }, [])
 
-  /** 판매량 기간 변경 (드롭박스: 7일/30일) */
+  /** 판매량 기간 변경 (드롭박스: 7일/30일)
+   *  - 기간 선택 = 판매량 정렬 활성화. 이미 sales 면 방향 유지, 아니면 내림차순으로 시작 */
   const setSalesPeriod = useCallback((p: '7d' | '30d') => {
     setSalesPeriodRaw(p)
+    setSort((prev) => (prev?.key === 'sales' ? prev : { key: 'sales', dir: 'desc' }))
     setCurrentPage(1)
   }, [])
 
