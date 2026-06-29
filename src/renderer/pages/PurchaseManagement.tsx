@@ -513,14 +513,14 @@ const PurchaseManagement: React.FC = () => {
             {copying ? '복사 중...' : '복사'}
           </button>
 
-          {/* ── 주문 전송 (ft_carts + ft_cart_items: input > 0 행만) ── */}
+          {/* ── 장바구니 (ft_carts + ft_cart_items: input > 0 행만) ── */}
           <button
             className="purchase-btn"
             onClick={handleOrderSend}
             disabled={orderSending}
             title="입력 값이 있는 행을 ft_cart_items 로 전송"
           >
-            {orderSending ? '전송 중...' : '주문 전송'}
+            {orderSending ? '전송 중...' : '장바구니'}
           </button>
         </div>
       </div>
@@ -629,14 +629,15 @@ const PurchaseManagement: React.FC = () => {
             <DropdownItem className={sort?.key === 'storage' && sort.dir === 'desc' ? 'active' : ''} onClick={() => setSortDir('storage', 'desc')}>내림차순</DropdownItem>
           </DropdownMenu>
 
-          {/* ── 재고량 정렬 버튼 (내림▼ → 오름▲ → 해제) ── */}
-          <button
-            className={`purchase-filter-btn${sort?.key === 'stock' ? ' active' : ''}`}
-            onClick={() => handleSortToggle('stock')}
-            title="C.재고 상품 단위 합산 정렬 (클릭: 내림→오름→해제)"
+          {/* ── 재고량 정렬 드롭박스 (오름/내림/전체) — C.재고 기준 ── */}
+          <DropdownMenu
+            label={`재고량${sort?.key === 'stock' ? (sort.dir === 'desc' ? ' ▼' : ' ▲') : ''}`}
+            triggerClassName={`purchase-sort-trigger${sort?.key === 'stock' ? ' active' : ''}`}
           >
-            재고량{sort?.key === 'stock' ? (sort.dir === 'desc' ? ' ▼' : ' ▲') : ''}
-          </button>
+            <DropdownItem className={sort?.key !== 'stock' ? 'active' : ''} onClick={() => setSortDir('stock', null)}>전체</DropdownItem>
+            <DropdownItem className={sort?.key === 'stock' && sort.dir === 'asc' ? 'active' : ''} onClick={() => setSortDir('stock', 'asc')}>오름차순</DropdownItem>
+            <DropdownItem className={sort?.key === 'stock' && sort.dir === 'desc' ? 'active' : ''} onClick={() => setSortDir('stock', 'desc')}>내림차순</DropdownItem>
+          </DropdownMenu>
 
           {/* ── 구분자 ─────────────────────────────────────── */}
           <span className="purchase-separator">|</span>
@@ -708,6 +709,16 @@ const PurchaseManagement: React.FC = () => {
           )}
         </div>
         <div className="purchase-toolbar-right">
+          {/* ── 테이블 풀스크린 토글 (비활성화 버튼 왼쪽) ────── */}
+          <button
+            className="purchase-icon-btn"
+            onClick={() => setIsTableFullscreen((v) => !v)}
+            title={isTableFullscreen ? '풀스크린 종료 (Esc)' : '테이블 풀스크린'}
+            aria-label="테이블 풀스크린 토글"
+          >
+            {isTableFullscreen ? '🗗' : '🔍'}
+          </button>
+
           {/* ── 일괄 비활성화/활성화 (item_status) ─────────────── */}
           <DropdownMenu
             label={statusSaving ? '처리 중...' : '비활성화'}
@@ -762,15 +773,6 @@ const PurchaseManagement: React.FC = () => {
             </DropdownItem>
           </DropdownMenu>
 
-          {/* ── 테이블 풀스크린 토글 (이모지 자체가 버튼) ────── */}
-          <button
-            className="purchase-icon-btn"
-            onClick={() => setIsTableFullscreen((v) => !v)}
-            title={isTableFullscreen ? '풀스크린 종료 (Esc)' : '테이블 풀스크린'}
-            aria-label="테이블 풀스크린 토글"
-          >
-            {isTableFullscreen ? '🗗' : '🔍'}
-          </button>
           <button
             className="purchase-btn"
             onClick={handleResetInputs}
