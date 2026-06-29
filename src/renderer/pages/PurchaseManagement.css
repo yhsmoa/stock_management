@@ -56,9 +56,14 @@
   line-height: 1.4;
 }
 
-.purchase-btn:hover {
+.purchase-btn:hover:not(:disabled) {
   background-color: #F3F4F6;
   border-color: #9CA3AF;
+}
+
+.purchase-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 /* ── 드롭다운 버튼 ───────────────────────────────────────────── */

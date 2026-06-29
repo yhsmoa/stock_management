@@ -249,11 +249,11 @@ const PurchaseManagement: React.FC = () => {
             if (e.key === 'Enter') {
               e.preventDefault()
               handleCellBlur(item.id!, field, value)
-              // 같은 필드의 다음 행으로 이동
+              // 같은 필드에서 Enter=다음 행(아래), Shift+Enter=이전 행(위)
               const currentIdx = pageItems.findIndex((pi) => pi.id === item.id)
-              const nextItem = pageItems[currentIdx + 1]
-              if (nextItem?.id) {
-                handleCellClick(nextItem.id, field, nextItem[field] ?? null)
+              const target = pageItems[currentIdx + (e.shiftKey ? -1 : 1)]
+              if (target?.id) {
+                handleCellClick(target.id, field, target[field] ?? null)
               }
             }
           }}

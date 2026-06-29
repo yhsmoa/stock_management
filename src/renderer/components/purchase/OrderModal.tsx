@@ -1,7 +1,7 @@
 /* ================================================================
    OrderModal — 사입관리 '주문' 열 조회 조건 설정 모달
    - 섹션1: shipment_type (포함할 주문 유형 선택, 기본 COUPANG 체크)
-   - 섹션2: 출고일 (차감할 출고건 선택, 기본 전체 체크)
+   - 섹션2: 출고일 (체크한 출고건을 net 에 합산, 기본 전체 해제)
    - [적용] 클릭 시 선택값을 onApply 콜백으로 전달
    ================================================================ */
 
@@ -66,8 +66,8 @@ export default function OrderModal({ isOpen, onClose, onApply }: OrderModalProps
         ])
         if (cancelled) return
         setShipments(list)
-        // 기본: 최근 출고일 전체 체크 (= 전부 차감). 사용자가 미체크하면 그 출고건만 차감 제외.
-        setCheckedShipmentIds(new Set(list.map((s) => s.id)))
+        // 기본: 최근 출고일 전체 해제. 체크한 출고건만 net 에 합산(더함).
+        setCheckedShipmentIds(new Set())
         // 카트는 기본 미선택 (체크한 카트만 cart_qty 합산)
         setCarts(cartList)
         setCheckedCartIds(new Set())
@@ -118,9 +118,10 @@ export default function OrderModal({ isOpen, onClose, onApply }: OrderModalProps
   // ── 적용 ────────────────────────────────────────────────────────
   const handleApply = () => {
     const includeTypes = Array.from(selectedTypes)
-    // 미체크된 출고일 = 차감 제외 대상
+    // 체크한 출고일 = net 에 합산(차감 제외). 미체크는 기존대로 차감.
+    //   fetchOrderDelta 는 excludeShipmentIds 출고를 차감에서 제외 → 체크=더해지는 효과.
     const excludeIds = shipments
-      .filter((s) => !checkedShipmentIds.has(s.id))
+      .filter((s) => checkedShipmentIds.has(s.id))
       .map((s) => s.id)
     // 체크된 카트 = cart_qty 합산 대상
     const cartIds = Array.from(checkedCartIds)
@@ -191,12 +192,12 @@ export default function OrderModal({ isOpen, onClose, onApply }: OrderModalProps
           </div>
         </div>
 
-        {/* ── 섹션 2: 출고일 (체크 = 차감) ──────────────────── */}
+        {/* ── 섹션 2: 출고일 (체크 = 합산) ──────────────────── */}
         <div className="order-modal-section">
           <div className="order-modal-section-title">
             출고일{' '}
             <span style={{ fontWeight: 400, color: '#6B7280', fontSize: '11px' }}>
-              (체크된 출고건을 차감)
+              (체크한 출고일을 합산)
             </span>
           </div>
           {loading && <div style={{ fontSize: '12px', color: '#6B7280' }}>불러오는 중...</div>}
