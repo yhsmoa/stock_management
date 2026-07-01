@@ -37,6 +37,7 @@ const PersonalOrder: React.FC = () => {
     showReleaseStopOnly,
     showNoInvoiceOnly,
     showReorderOnly,
+    showNoteOnly,
     selectedStatuses,
     invoiceOrderIds,
     selectedDrawerItem,
@@ -91,6 +92,7 @@ const PersonalOrder: React.FC = () => {
     toggleReleaseStopOnly,
     toggleNoInvoiceOnly,
     toggleReorderOnly,
+    toggleNoteOnly,
     toggleStatusFilter,
     getAgg,
     getRowStatus,
@@ -290,7 +292,7 @@ const PersonalOrder: React.FC = () => {
           </span>
           {/* ── 필터 드롭박스: 출고중지 / 송장필요 / 미주문 / 재주문 ── */}
           {(() => {
-            const cnt = [showReleaseStopOnly, showNoInvoiceOnly, showUnorderedOnly, showReorderOnly].filter(Boolean).length
+            const cnt = [showReleaseStopOnly, showNoInvoiceOnly, showUnorderedOnly, showReorderOnly, showNoteOnly].filter(Boolean).length
             return (
               <DropdownMenu
                 label={`필터${cnt ? ` (${cnt})` : ''}`}
@@ -300,6 +302,7 @@ const PersonalOrder: React.FC = () => {
                 <DropdownItem className={showNoInvoiceOnly ? 'active' : ''} onClick={toggleNoInvoiceOnly}>📝 송장필요</DropdownItem>
                 <DropdownItem className={showUnorderedOnly ? 'active' : ''} onClick={toggleUnorderedOnly}>🕊️ 미주문</DropdownItem>
                 <DropdownItem className={showReorderOnly ? 'active' : ''} onClick={toggleReorderOnly}>🔄 재주문</DropdownItem>
+                <DropdownItem className={showNoteOnly ? 'active' : ''} onClick={toggleNoteOnly}>📌 노트</DropdownItem>
               </DropdownMenu>
             )
           })()}

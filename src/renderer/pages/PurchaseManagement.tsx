@@ -702,6 +702,15 @@ const PurchaseManagement: React.FC = () => {
             </DropdownItem>
           </DropdownMenu>
 
+          {/* ── 📌 노트 필터 (note 데이터 있는 행) ───────────── */}
+          <button
+            className={`purchase-filter-btn${activeFilter === 'note' ? ' active' : ''}`}
+            onClick={() => handleFilterToggle('note')}
+            title="노트(메모) 데이터가 있는 행"
+          >
+            📌
+          </button>
+
           {activeFilter && (
             <span className="purchase-filter-count">
               {filteredCount.toLocaleString()}건

@@ -218,6 +218,8 @@ export function usePersonalOrder() {
   const [showReleaseStopOnly, setShowReleaseStopOnly] = useState(false)
   const [showNoInvoiceOnly, setShowNoInvoiceOnly] = useState(false)
   const [showReorderOnly, setShowReorderOnly] = useState(false)
+  // 📌 노트 필터: 고객주문 비고(note) 데이터가 있는 행만 보기
+  const [showNoteOnly, setShowNoteOnly] = useState(false)
   // 🛒 카트 필터: status='ORDER' 카트에 담긴(미주문) 행만 보기
   const [showCartOnly, setShowCartOnly] = useState(false)
   // 상태 점(green/red/gray) 필터 — 멀티 선택(OR). 빈 Set = 필터 없음
@@ -550,6 +552,7 @@ export function usePersonalOrder() {
     setShowReleaseStopOnly(false)
     setShowNoInvoiceOnly(false)
     setShowReorderOnly(false)
+    setShowNoteOnly(false)
     setSelectedStatuses(new Set())
   }, [])
 
@@ -580,6 +583,12 @@ export function usePersonalOrder() {
   // ── 재주문 필터 토글 (2차 이상) ──────────────────────────────
   const toggleReorderOnly = useCallback(() => {
     setShowReorderOnly((prev) => !prev)
+    setCurrentPage(1)
+  }, [])
+
+  // ── 📌 노트 필터 토글 (비고 데이터 있는 행) ──────────────────
+  const toggleNoteOnly = useCallback(() => {
+    setShowNoteOnly((prev) => !prev)
     setCurrentPage(1)
   }, [])
 
@@ -684,12 +693,21 @@ export function usePersonalOrder() {
       })
     }
 
+    // 📌 노트 필터 (비고 데이터 있는 행)
+    if (showNoteOnly) {
+      result = result.filter((row) => {
+        if (!row.order_id) return false
+        const key = makeFulfillmentKey(row.order_id, row.vendor_item_id)
+        return noteMap.has(key)
+      })
+    }
+
     return result.sort((a, b) => {
       const dateA = a.ordered_at ? new Date(a.ordered_at).getTime() : 0
       const dateB = b.ordered_at ? new Date(b.ordered_at).getTime() : 0
       return dateA - dateB
     })
-  }, [items, selectedTabs, appliedSearch, showUnorderedOnly, showCartOnly, showReleaseStopOnly, showNoInvoiceOnly, showReorderOnly, selectedStatuses, invoiceOrderIds, trackingMap, aggMap, multiKeys, orderItemsMap, reorderCountMap, cartKeySet])
+  }, [items, selectedTabs, appliedSearch, showUnorderedOnly, showCartOnly, showReleaseStopOnly, showNoInvoiceOnly, showReorderOnly, showNoteOnly, selectedStatuses, invoiceOrderIds, trackingMap, aggMap, multiKeys, orderItemsMap, reorderCountMap, cartKeySet, noteMap])
 
   // ── [엑셀 다운] 핸들러 (쿠팡 DeliveryList 양식) ────────────────
   const handleExcelDownload = useCallback(() => {
@@ -1456,6 +1474,7 @@ export function usePersonalOrder() {
     showReleaseStopOnly,
     showNoInvoiceOnly,
     showReorderOnly,
+    showNoteOnly,
     selectedStatuses,
     invoiceOrderIds,
     selectedDrawerItem,
@@ -1517,6 +1536,7 @@ export function usePersonalOrder() {
     toggleReleaseStopOnly,
     toggleNoInvoiceOnly,
     toggleReorderOnly,
+    toggleNoteOnly,
     toggleStatusFilter,
 
     // fulfillment 헬퍼

@@ -195,8 +195,8 @@ export function usePurchaseManagement() {
   /* ── 창고 재고 (barcode → si_stocks.qty 합산) ──────────── */
   const [warehouseQtyMap, setWarehouseQtyMap] = useState<Map<string, number>>(new Map())
 
-  /* ── 필터 (주문(input) / 입고 / 반출 / NO 바코드) ─ */
-  type FilterKey = 'input' | 'in_qty' | 'out_qty' | 'no_barcode'
+  /* ── 필터 (주문(input) / 입고 / 반출 / NO 바코드 / 📌 노트) ─ */
+  type FilterKey = 'input' | 'in_qty' | 'out_qty' | 'no_barcode' | 'note'
   const [activeFilter, setActiveFilter] = useState<FilterKey | null>(null)
 
   /* ── 상태 필터 (활성/비활성/전체) — 기본 'active'(비활성 숨김) ─ */
@@ -266,6 +266,10 @@ export function usePurchaseManagement() {
     // NO 바코드 필터: barcode 가 비어있는(null/'') 행만
     else if (activeFilter === 'no_barcode') {
       result = result.filter((item) => !item.barcode || item.barcode.trim() === '')
+    }
+    // 📌 노트 필터: note(메모) 데이터가 있는 행만
+    else if (activeFilter === 'note') {
+      result = result.filter((item) => !!item.note && item.note.trim() !== '')
     }
 
     // ── STEP B: 검색어 (다중 검색 지원) ─────────────────────────
