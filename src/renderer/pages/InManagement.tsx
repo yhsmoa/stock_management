@@ -632,7 +632,7 @@ const InManagement: React.FC = () => {
     <div style={inManagementStyles.container}>
       {/* 헤더와 버튼 영역 */}
       <div style={inManagementStyles.headerRow}>
-        <h1 style={inManagementStyles.header}>입고 관리</h1>
+        <h1 style={inManagementStyles.header}>입고 작업</h1>
         <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
           {/* 위치 고정/해제 토글 버튼 */}
           <Button

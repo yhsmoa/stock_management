@@ -38,7 +38,13 @@ const MENU_ITEMS: MenuItem[] = [
     ],
   },
   { type: 'link', path: '/inventory',     icon: '📦', label: '재고관리' },
-  { type: 'link', path: '/in-management', icon: '📥', label: '입고 관리' },
+  {
+    type: 'group', icon: '📥', label: '입고관리',
+    children: [
+      { path: '/in-management',  label: '입고작업' },
+      { path: '/coupang-return', label: 'Q반품' },
+    ],
+  },
   {
     type: 'group', icon: '🚚', label: '출고관리',
     children: [
@@ -46,7 +52,7 @@ const MENU_ITEMS: MenuItem[] = [
       { path: '/rocket-shipment',  label: '로켓출고' },
     ],
   },
-  { type: 'link', path: '/coupang-return', icon: '↩️', label: 'Q 반품' },
+  { type: 'link', path: '/analysis-management', icon: '📊', label: '분석관리' },
 ]
 
 // ── 현재 path 가 어느 그룹의 자식인지 찾기 ───────────────────────
