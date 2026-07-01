@@ -195,13 +195,13 @@ export function usePurchaseManagement() {
   /* ── 창고 재고 (barcode → si_stocks.qty 합산) ──────────── */
   const [warehouseQtyMap, setWarehouseQtyMap] = useState<Map<string, number>>(new Map())
 
-  /* ── 필터 (주문(input) / 입고 / 반출 / NO 바코드 / 📌 노트) ─ */
-  type FilterKey = 'input' | 'in_qty' | 'out_qty' | 'no_barcode' | 'note'
+  /* ── 필터 (입력(input) / 주문(order_qty) / 입고 / 반출 / NO 바코드 / 📌 노트) ─ */
+  type FilterKey = 'input' | 'order' | 'in_qty' | 'out_qty' | 'no_barcode' | 'note'
   const [activeFilter, setActiveFilter] = useState<FilterKey | null>(null)
 
-  /* ── 상태 필터 (활성/비활성/전체) — 기본 'active'(비활성 숨김) ─ */
+  /* ── 상태 필터 (활성/비활성/전체) — 기본 'all'(전체) ─ */
   type StatusFilter = 'active' | 'inactive' | 'all'
-  const [statusFilter, setStatusFilterRaw] = useState<StatusFilter>('active')
+  const [statusFilter, setStatusFilterRaw] = useState<StatusFilter>('all')
   const setStatusFilter = useCallback((v: StatusFilter) => {
     setStatusFilterRaw(v)
     setCurrentPage(1)
@@ -255,13 +255,17 @@ export function usePurchaseManagement() {
       result = result.filter((item) => item.item_status === 'NOT_AVAILABLE')
     }
 
-    // ── STEP A: 필터 토글 (input/in_qty/out_qty/no_barcode) ──────
+    // ── STEP A: 필터 토글 (input/in_qty/out_qty/order/no_barcode) ──────
     if (activeFilter === 'input' || activeFilter === 'in_qty' || activeFilter === 'out_qty') {
       const col = activeFilter
       result = result.filter((item) => {
         const v = item[col]
         return v != null && v > 0
       })
+    }
+    // 주문 필터: order_qty(주문 열) 가 1 이상인 행
+    else if (activeFilter === 'order') {
+      result = result.filter((item) => item.order_qty != null && item.order_qty > 0)
     }
     // NO 바코드 필터: barcode 가 비어있는(null/'') 행만
     else if (activeFilter === 'no_barcode') {

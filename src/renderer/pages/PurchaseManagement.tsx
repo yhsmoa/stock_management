@@ -642,11 +642,18 @@ const PurchaseManagement: React.FC = () => {
           {/* ── 구분자 ─────────────────────────────────────── */}
           <span className="purchase-separator">|</span>
 
-          {/* ── 입력 컬럼 기반 필터 (input / in_qty / out_qty) ─ */}
+          {/* ── 입력 컬럼 기반 필터 (입력 / 주문 / 입고 / 반출) ─ */}
           <button
             className={`purchase-filter-btn${activeFilter === 'input' ? ' active' : ''}`}
             onClick={() => handleFilterToggle('input')}
-            title="입력(주문) 수량이 1 이상인 행"
+            title="입력(input) 수량이 1 이상인 행"
+          >
+            입력
+          </button>
+          <button
+            className={`purchase-filter-btn${activeFilter === 'order' ? ' active' : ''}`}
+            onClick={() => handleFilterToggle('order')}
+            title="주문(order_qty) 수량이 1 이상인 행"
           >
             주문
           </button>
