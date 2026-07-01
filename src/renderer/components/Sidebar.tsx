@@ -24,6 +24,13 @@ type MenuItem =
 const MENU_ITEMS: MenuItem[] = [
   { type: 'link', path: '/', icon: '🏠', label: '홈 / 공지사항' },
   {
+    type: 'group', icon: '💬', label: 'CS관리',
+    children: [
+      { path: '/cs/customer-inquiry', label: '고객문의' },
+      { path: '/cs/coupang-inquiry',  label: '쿠팡문의' },
+    ],
+  },
+  {
     type: 'group', icon: '🛒', label: '쿠팡관리',
     children: [
       { path: '/personal-order',      label: '개인주문' },

@@ -29,8 +29,10 @@ import {
   fetchShipmentsWithin,
   fetchShipmentDetails,
   makeFulfillmentKey,
+  deriveFulfillmentStatus,
   EMPTY_AGG,
   type FulfillmentAgg,
+  type FulfillmentStatus,
   type OrderItemDetail,
   type ShipmentPickerOption,
   type ShipmentDetailRow,
@@ -87,7 +89,8 @@ export const COLUMNS = [
 ] as const
 
 // ── 상태 점 설정 ──────────────────────────────────────────────────
-export type StatusType = 'shipped' | 'green' | 'red' | 'gray' | 'multi' | 'cart' | 'none'
+// 상태 판정 로직은 orderFulfillmentService.deriveFulfillmentStatus 로 공유
+export type StatusType = FulfillmentStatus
 
 export const STATUS_DOT_LABELS: Record<StatusType, string> = {
   shipped: '출고완료',
@@ -312,22 +315,13 @@ export function usePersonalOrder() {
   //     multiKeys 포함 → multi (set_seq 중복 = 이력 확인 필요)
   //     매칭 없음       → none  (미주문)
   //     그 외           → 기존 red / green / gray 분기
-  const getRowStatus = useCallback((row: PersonalOrderRow): StatusType => {
-    if (!row.order_id) return 'none'
-    const key = makeFulfillmentKey(row.order_id, row.vendor_item_id)
-    if (multiKeys.has(key)) return 'multi'
-    const itemsForKey = orderItemsMap.get(key)
-    // ft_order_items 매칭 없음 → ORDER 카트에 있으면 '카트(🛒)', 아니면 '미주문'
-    if (!itemsForKey || itemsForKey.length === 0) {
-      return cartKeySet.has(key) ? 'cart' : 'none'
-    }
-    const agg = aggMap.get(key) ?? EMPTY_AGG
-    const qty = row.shipping_count ?? 0
-    if (qty > 0 && agg.cancel >= qty) return 'red'
-    if (qty > 0 && agg.shipped >= qty) return 'shipped'  // 전량 출고
-    if (agg.packed > 0) return 'green'
-    return 'gray'
-  }, [aggMap, multiKeys, orderItemsMap, cartKeySet])
+  const getRowStatus = useCallback(
+    (row: PersonalOrderRow): StatusType =>
+      deriveFulfillmentStatus(row.order_id, row.vendor_item_id, row.shipping_count ?? 0, {
+        aggMap, multiKeys, orderItemsMap, cartKeys: cartKeySet,
+      }),
+    [aggMap, multiKeys, orderItemsMap, cartKeySet],
+  )
 
   // ── fulfillment 데이터 로드 ─────────────────────────────────────
   const loadFulfillmentData = useCallback(async (orderRows: PersonalOrderRow[]) => {

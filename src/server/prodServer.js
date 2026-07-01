@@ -283,6 +283,113 @@ app.put('/api/coupang/vendor-item-sale', async (req, res) => {
   }
 })
 
+// ── GET /api/coupang/online-inquiries — 상품별 고객문의 조회 (CS) ──
+// answeredType(ALL/ANSWERED/NOANSWER) 필수, 기간은 7일 이내 제한.
+// 30일 조회는 클라이언트(csService)에서 7일×5회 분할 후 병합.
+app.get('/api/coupang/online-inquiries', async (req, res) => {
+  try {
+    const keys = extractCoupangKeys(req)
+    if (!keys) return res.status(401).json({ success: false, error: '쿠팡 API 키가 요청에 포함되지 않았습니다.' })
+
+    const { answeredType, inquiryStartAt, inquiryEndAt } = req.query
+    const pageNum = req.query.pageNum || '1'
+    const pageSize = req.query.pageSize || '50'
+    if (!answeredType || !inquiryStartAt || !inquiryEndAt) {
+      return res.status(400).json({ success: false, error: 'answeredType, inquiryStartAt, inquiryEndAt 파라미터 필수' })
+    }
+
+    const apiPath = `/v2/providers/openapi/apis/api/v5/vendors/${keys.vendorCode}/onlineInquiries`
+    // vendorId 는 path/query 양쪽 요구 (쿠팡 onlineInquiries 스펙)
+    const params = { vendorId: keys.vendorCode, answeredType, inquiryStartAt, inquiryEndAt, pageNum, pageSize }
+
+    const result = await callCoupangAPI('GET', apiPath, params, keys.accessKey, keys.secretKey, null, keys.vendorCode)
+    res.json({ success: true, data: result })
+  } catch (error) {
+    console.error('[prod-server] online-inquiries 오류:', error.message)
+    res.status(500).json({ success: false, error: error.message })
+  }
+})
+
+// ── GET /api/coupang/ordersheet-by-order?orderId= — 발주서 단건(주문번호) 조회 ──
+// 고객문의(CS) 주문정보 표시용. 응답 data[] = shipmentBox 목록 (orderItems 포함).
+app.get('/api/coupang/ordersheet-by-order', async (req, res) => {
+  try {
+    const keys = extractCoupangKeys(req)
+    if (!keys) return res.status(401).json({ success: false, error: '쿠팡 API 키가 요청에 포함되지 않았습니다.' })
+
+    const { orderId } = req.query
+    if (!orderId) return res.status(400).json({ success: false, error: 'orderId 파라미터 필수' })
+
+    const apiPath = `/v2/providers/openapi/apis/api/v4/vendors/${keys.vendorCode}/${orderId}/ordersheets`
+    const result = await callCoupangAPI('GET', apiPath, null, keys.accessKey, keys.secretKey, null, keys.vendorCode)
+    res.json({ success: true, data: result })
+  } catch (error) {
+    console.error('[prod-server] ordersheet-by-order 오류:', error.message)
+    res.status(500).json({ success: false, error: error.message })
+  }
+})
+
+// ── POST /api/coupang/online-inquiry-reply — 상품별 고객문의 답변 ──
+// body: { inquiryId, content, replyBy }. content 줄바꿈은 \n (CR 금지).
+app.post('/api/coupang/online-inquiry-reply', async (req, res) => {
+  try {
+    const keys = extractCoupangKeys(req)
+    if (!keys) return res.status(401).json({ success: false, error: '쿠팡 API 키가 요청에 포함되지 않았습니다.' })
+
+    const { inquiryId, content, replyBy } = req.body
+    if (!inquiryId || !content || !replyBy) {
+      return res.status(400).json({ success: false, error: 'inquiryId, content, replyBy 필수' })
+    }
+
+    const apiPath = `/v2/providers/openapi/apis/api/v4/vendors/${keys.vendorCode}/onlineInquiries/${inquiryId}/replies`
+    const result = await callCoupangAPI(
+      'POST', apiPath, null,
+      keys.accessKey, keys.secretKey,
+      { content, vendorId: keys.vendorCode, replyBy },
+      keys.vendorCode,
+    )
+    res.json({ success: true, data: result })
+  } catch (error) {
+    console.error('[prod-server] online-inquiry-reply 오류:', error.message)
+    res.status(500).json({ success: false, error: error.message })
+  }
+})
+
+// ── POST /api/coupang/order-cancel — 주문 상품 취소 처리 ──
+// body: { orderId, vendorItemIds[], receiptCounts[], bigCancelCode, middleCancelCode, userId }
+app.post('/api/coupang/order-cancel', async (req, res) => {
+  try {
+    const keys = extractCoupangKeys(req)
+    if (!keys) return res.status(401).json({ success: false, error: '쿠팡 API 키가 요청에 포함되지 않았습니다.' })
+
+    const { orderId, vendorItemIds, receiptCounts, bigCancelCode, middleCancelCode, cancelReason, userId } = req.body
+    if (
+      !orderId ||
+      !Array.isArray(vendorItemIds) || vendorItemIds.length === 0 ||
+      !Array.isArray(receiptCounts) || receiptCounts.length !== vendorItemIds.length ||
+      !bigCancelCode || !middleCancelCode || !userId
+    ) {
+      return res.status(400).json({ success: false, error: 'orderId, vendorItemIds[], receiptCounts[](길이일치), bigCancelCode, middleCancelCode, userId 필수' })
+    }
+
+    const apiPath = `/v2/providers/openapi/apis/api/v5/vendors/${keys.vendorCode}/orders/${orderId}/cancel`
+    const cancelBody = {
+      orderId, vendorId: keys.vendorCode, vendorItemIds, receiptCounts, bigCancelCode, middleCancelCode, userId,
+    }
+    if (cancelReason) cancelBody.cancelReason = cancelReason // 고객 안내용 직접 입력 사유
+    const result = await callCoupangAPI(
+      'POST', apiPath, null,
+      keys.accessKey, keys.secretKey,
+      cancelBody,
+      keys.vendorCode,
+    )
+    res.json({ success: true, data: result })
+  } catch (error) {
+    console.error('[prod-server] order-cancel 오류:', error.message)
+    res.status(500).json({ success: false, error: error.message })
+  }
+})
+
 // ══════════════════════════════════════════════════════════════════
 // 정적 파일 서빙 + SPA fallback
 // ══════════════════════════════════════════════════════════════════

@@ -15,6 +15,8 @@ import PurchaseManagement from './pages/PurchaseManagement'
 import PersonalOrder from './pages/PersonalOrder'
 import ItemInfo from './pages/ItemInfo'
 import AnalysisManagement from './pages/AnalysisManagement'
+import CustomerInquiry from './pages/CustomerInquiry'
+import CoupangInquiry from './pages/CoupangInquiry'
 
 const App: React.FC = () => {
   return (
@@ -33,6 +35,8 @@ const App: React.FC = () => {
           }
         >
           <Route path="/" element={<Index />} />
+          <Route path="/cs/customer-inquiry" element={<CustomerInquiry />} />
+          <Route path="/cs/coupang-inquiry" element={<CoupangInquiry />} />
           <Route path="/coupang" element={<CoupangManagement />} />
           <Route path="/personal-order" element={<PersonalOrder />} />
           <Route path="/purchase-management" element={<PurchaseManagement />} />

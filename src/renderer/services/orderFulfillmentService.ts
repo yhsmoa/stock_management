@@ -45,6 +45,49 @@ export function makeFulfillmentKey(orderId: string, optionId: string | null | un
   return `${orderId}|${optionId ?? ''}`
 }
 
+// ── fulfillment 상태 (개인주문 '상태' 열 = 색 점) ─────────────────
+export type FulfillmentStatus = 'shipped' | 'green' | 'red' | 'gray' | 'multi' | 'cart' | 'none'
+
+/**
+ * 주문행의 fulfillment 상태(색 점) 판정 — 순수 함수
+ * - 개인주문 '상태' 열(usePersonalOrder.getRowStatus)과 고객문의 페이지가 공유.
+ *   양쪽 표시가 어긋나지 않도록 로직을 이 함수 한 곳에 둔다.
+ * - 판정 순서: multi → (카트/미주문) → 전량취소(red) → 전량출고(shipped)
+ *              → 포장(green) → 미발송(gray)
+ *
+ * @param orderId       쿠팡 주문번호 (없으면 'none')
+ * @param vendorItemId  옵션 ID (복합 키 구성)
+ * @param qty           주문 수량 (shippingCount) — 취소/출고 완료 판정 기준
+ * @param maps          fetchFulfillmentData + fetchOrderCartKeys 결과
+ */
+export function deriveFulfillmentStatus(
+  orderId: string | null | undefined,
+  vendorItemId: string | null | undefined,
+  qty: number,
+  maps: {
+    aggMap: Map<string, FulfillmentAgg>
+    multiKeys: Set<string>
+    orderItemsMap: Map<string, OrderItemDetail[]>
+    cartKeys: Set<string>
+  },
+): FulfillmentStatus {
+  if (!orderId) return 'none'
+  const key = makeFulfillmentKey(orderId, vendorItemId)
+  if (maps.multiKeys.has(key)) return 'multi'
+
+  const itemsForKey = maps.orderItemsMap.get(key)
+  // ft_order_items 매칭 없음 → ORDER 카트에 있으면 '카트', 아니면 '미주문'
+  if (!itemsForKey || itemsForKey.length === 0) {
+    return maps.cartKeys.has(key) ? 'cart' : 'none'
+  }
+
+  const agg = maps.aggMap.get(key) ?? EMPTY_AGG
+  if (qty > 0 && agg.cancel >= qty) return 'red'      // 전량취소
+  if (qty > 0 && agg.shipped >= qty) return 'shipped' // 전량출고
+  if (agg.packed > 0) return 'green'                  // 포장완료
+  return 'gray'                                       // 미발송
+}
+
 /** FulfillmentDrawer 이력 행 */
 export interface FulfillmentRow {
   id: string

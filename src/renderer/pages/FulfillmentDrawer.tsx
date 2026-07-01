@@ -25,6 +25,7 @@ interface Props {
   noteResetKey: string       // 선택 행 식별 키 (변경 시 입력 draft 리셋)
   onSaveNote: (note: string) => void
   onClose: () => void
+  showNote?: boolean         // 비고(note) 입력 표시 여부 (기본 true). CS 등 다른 맥락에서 숨김용
 }
 
 // ── 타입 배지 설정 ────────────────────────────────────────────────
@@ -48,7 +49,7 @@ function formatDateTime(iso: string): string {
 // ── 컴포넌트 ──────────────────────────────────────────────────────
 const FulfillmentDrawer: React.FC<Props> = ({
   open, itemIds, itemName, optionName, orderNo, itemNo, productNo,
-  note, noteResetKey, onSaveNote, onClose,
+  note, noteResetKey, onSaveNote, onClose, showNote = true,
 }) => {
   const [rows, setRows] = useState<FulfillmentRow[]>([])
   const [isLoading, setIsLoading] = useState(false)
@@ -243,16 +244,18 @@ const FulfillmentDrawer: React.FC<Props> = ({
         )}
 
         {/* ── 비고(note) 입력 — 제일 하단. 포커스 벗어나면 저장 ── */}
-        <div className="po-drawer-note">
-          <label className="po-drawer-note-label">📌 비고</label>
-          <textarea
-            className="po-drawer-note-input"
-            value={noteDraft}
-            placeholder="고객주문 비고 입력 (입력 후 포커스를 벗어나면 저장)"
-            onChange={(e) => setNoteDraft(e.target.value)}
-            onBlur={() => { if (noteDraft !== note) onSaveNote(noteDraft) }}
-          />
-        </div>
+        {showNote && (
+          <div className="po-drawer-note">
+            <label className="po-drawer-note-label">📌 비고</label>
+            <textarea
+              className="po-drawer-note-input"
+              value={noteDraft}
+              placeholder="고객주문 비고 입력 (입력 후 포커스를 벗어나면 저장)"
+              onChange={(e) => setNoteDraft(e.target.value)}
+              onBlur={() => { if (noteDraft !== note) onSaveNote(noteDraft) }}
+            />
+          </div>
+        )}
       </aside>
     </>
   )
