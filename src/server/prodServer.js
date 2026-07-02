@@ -391,6 +391,94 @@ app.post('/api/coupang/order-cancel', async (req, res) => {
 })
 
 // ══════════════════════════════════════════════════════════════════
+// 쿠팡 고객센터 문의 (쿠팡문의) — callCenterInquiries
+// ══════════════════════════════════════════════════════════════════
+
+// ── GET /api/coupang/cc-inquiries — 문의 조회 (리스트) ──
+app.get('/api/coupang/cc-inquiries', async (req, res) => {
+  try {
+    const keys = extractCoupangKeys(req)
+    if (!keys) return res.status(401).json({ success: false, error: '쿠팡 API 키가 요청에 포함되지 않았습니다.' })
+
+    const { partnerCounselingStatus, inquiryStartAt, inquiryEndAt } = req.query
+    const pageNum = req.query.pageNum || '1'
+    const pageSize = req.query.pageSize || '30'
+    if (!partnerCounselingStatus || !inquiryStartAt || !inquiryEndAt) {
+      return res.status(400).json({ success: false, error: 'partnerCounselingStatus, inquiryStartAt, inquiryEndAt 파라미터 필수' })
+    }
+
+    const apiPath = `/v2/providers/openapi/apis/api/v5/vendors/${keys.vendorCode}/callCenterInquiries`
+    const params = { vendorId: keys.vendorCode, partnerCounselingStatus, inquiryStartAt, inquiryEndAt, pageNum, pageSize }
+    const result = await callCoupangAPI('GET', apiPath, params, keys.accessKey, keys.secretKey, null, keys.vendorCode)
+    res.json({ success: true, data: result })
+  } catch (error) {
+    console.error('[prod-server] cc-inquiries 오류:', error.message)
+    res.status(500).json({ success: false, error: error.message })
+  }
+})
+
+// ── GET /api/coupang/cc-inquiry-detail?inquiryId= — 단건 조회 (경로에 vendorId 없음) ──
+app.get('/api/coupang/cc-inquiry-detail', async (req, res) => {
+  try {
+    const keys = extractCoupangKeys(req)
+    if (!keys) return res.status(401).json({ success: false, error: '쿠팡 API 키가 요청에 포함되지 않았습니다.' })
+
+    const inquiryId = req.query.inquiryId
+    if (!inquiryId) return res.status(400).json({ success: false, error: 'inquiryId 파라미터 필수' })
+
+    const apiPath = `/v2/providers/openapi/apis/api/v5/vendors/callCenterInquiries/${inquiryId}`
+    const result = await callCoupangAPI('GET', apiPath, null, keys.accessKey, keys.secretKey, null, keys.vendorCode)
+    res.json({ success: true, data: result })
+  } catch (error) {
+    console.error('[prod-server] cc-inquiry-detail 오류:', error.message)
+    res.status(500).json({ success: false, error: error.message })
+  }
+})
+
+// ── POST /api/coupang/cc-inquiry-reply — 문의 답변 ──
+app.post('/api/coupang/cc-inquiry-reply', async (req, res) => {
+  try {
+    const keys = extractCoupangKeys(req)
+    if (!keys) return res.status(401).json({ success: false, error: '쿠팡 API 키가 요청에 포함되지 않았습니다.' })
+
+    const { inquiryId, content, replyBy, parentAnswerId } = req.body
+    if (!inquiryId || !content || !replyBy || !parentAnswerId) {
+      return res.status(400).json({ success: false, error: 'inquiryId, content, replyBy, parentAnswerId 필수' })
+    }
+    const apiPath = `/v2/providers/openapi/apis/api/v4/vendors/${keys.vendorCode}/callCenterInquiries/${inquiryId}/replies`
+    const result = await callCoupangAPI(
+      'POST', apiPath, null,
+      keys.accessKey, keys.secretKey,
+      { vendorId: keys.vendorCode, inquiryId: String(inquiryId), content, replyBy, parentAnswerId: String(parentAnswerId) },
+      keys.vendorCode,
+    )
+    res.json({ success: true, data: result })
+  } catch (error) {
+    console.error('[prod-server] cc-inquiry-reply 오류:', error.message)
+    res.status(500).json({ success: false, error: error.message })
+  }
+})
+
+// ── POST /api/coupang/cc-inquiry-confirm — 문의 확인 (TRANSFER) ──
+app.post('/api/coupang/cc-inquiry-confirm', async (req, res) => {
+  try {
+    const keys = extractCoupangKeys(req)
+    if (!keys) return res.status(401).json({ success: false, error: '쿠팡 API 키가 요청에 포함되지 않았습니다.' })
+
+    const { inquiryId, confirmBy } = req.body
+    if (!inquiryId || !confirmBy) {
+      return res.status(400).json({ success: false, error: 'inquiryId, confirmBy 필수' })
+    }
+    const apiPath = `/v2/providers/openapi/apis/api/v4/vendors/${keys.vendorCode}/callCenterInquiries/${inquiryId}/confirms`
+    const result = await callCoupangAPI('POST', apiPath, null, keys.accessKey, keys.secretKey, { confirmBy }, keys.vendorCode)
+    res.json({ success: true, data: result })
+  } catch (error) {
+    console.error('[prod-server] cc-inquiry-confirm 오류:', error.message)
+    res.status(500).json({ success: false, error: error.message })
+  }
+})
+
+// ══════════════════════════════════════════════════════════════════
 // 정적 파일 서빙 + SPA fallback
 // ══════════════════════════════════════════════════════════════════
 

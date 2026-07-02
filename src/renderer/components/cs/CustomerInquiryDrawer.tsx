@@ -187,33 +187,12 @@ const CustomerInquiryDrawer: React.FC<Props> = ({
             </p>
           </div>
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
-            {mode === 'reply' && (
-              <button
-                onClick={handleSubmit}
-                disabled={!canSubmit}
-                style={{
-                  padding: '7px 16px',
-                  border: 'none',
-                  borderRadius: theme.radius.sm,
-                  background: canSubmit ? theme.colors.primary : theme.colors.border,
-                  color: '#fff',
-                  fontSize: theme.fontSize.sm,
-                  fontWeight: 600,
-                  cursor: canSubmit ? 'pointer' : 'default',
-                  whiteSpace: 'nowrap',
-                }}
-              >
-                {submitting ? '전송 중...' : '답변하기'}
-              </button>
-            )}
-            <button
-              onClick={onClose}
-              style={{ background: 'none', border: 'none', fontSize: 18, color: theme.colors.textMuted, cursor: 'pointer' }}
-            >
-              ✕
-            </button>
-          </div>
+          <button
+            onClick={onClose}
+            style={{ background: 'none', border: 'none', fontSize: 18, color: theme.colors.textMuted, cursor: 'pointer', flexShrink: 0 }}
+          >
+            ✕
+          </button>
         </div>
 
         {/* ── Body ── */}
@@ -233,6 +212,29 @@ const CustomerInquiryDrawer: React.FC<Props> = ({
             <HistoryBody loading={historyLoading} items={historyItems} currentInquiryId={inquiry?.inquiryId} />
           )}
         </div>
+
+        {/* ── Footer: 답변하기 (최하단) ── */}
+        {mode === 'reply' && (
+          <div style={{ flexShrink: 0, padding: '14px 22px', borderTop: `1px solid ${theme.colors.borderLight}` }}>
+            <button
+              onClick={handleSubmit}
+              disabled={!!doneMsg || !canSubmit}
+              style={{
+                width: '100%',
+                padding: '11px 16px',
+                border: 'none',
+                borderRadius: theme.radius.sm,
+                background: doneMsg ? theme.colors.success : canSubmit ? theme.colors.primary : theme.colors.border,
+                color: '#fff',
+                fontSize: theme.fontSize.base,
+                fontWeight: 700,
+                cursor: doneMsg || !canSubmit ? 'default' : 'pointer',
+              }}
+            >
+              {doneMsg ? '✓ 답변완료' : submitting ? '전송 중...' : '답변하기'}
+            </button>
+          </div>
+        )}
       </aside>
     </>
   )

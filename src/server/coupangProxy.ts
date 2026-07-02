@@ -558,6 +558,131 @@ export function coupangProxyPlugin(): Plugin {
         }
       })
 
+      // ══════════════════════════════════════════════════════════════
+      // 쿠팡 고객센터 문의 (쿠팡문의) — callCenterInquiries
+      // ══════════════════════════════════════════════════════════════
+
+      // ── GET /api/coupang/cc-inquiries — 쿠팡 고객센터 문의 조회 (리스트) ──
+      // partnerCounselingStatus(NONE/ANSWER/NO_ANSWER/TRANSFER) + 7일 기간
+      server.middlewares.use('/api/coupang/cc-inquiries', async (req: any, res: any) => {
+        try {
+          const keys = extractCoupangKeys(req)
+          if (!keys) {
+            sendJson(res, 401, { success: false, error: '쿠팡 API 키가 요청에 포함되지 않았습니다.' })
+            return
+          }
+
+          const url = new URL(req.url || '/', `http://${req.headers.host}`)
+          const partnerCounselingStatus = url.searchParams.get('partnerCounselingStatus')
+          const inquiryStartAt = url.searchParams.get('inquiryStartAt')
+          const inquiryEndAt = url.searchParams.get('inquiryEndAt')
+          const pageNum = url.searchParams.get('pageNum') || '1'
+          const pageSize = url.searchParams.get('pageSize') || '30'
+
+          if (!partnerCounselingStatus || !inquiryStartAt || !inquiryEndAt) {
+            sendJson(res, 400, { success: false, error: 'partnerCounselingStatus, inquiryStartAt, inquiryEndAt 파라미터 필수' })
+            return
+          }
+
+          const apiPath = `/v2/providers/openapi/apis/api/v5/vendors/${keys.vendorCode}/callCenterInquiries`
+          const params: Record<string, string> = {
+            vendorId: keys.vendorCode,
+            partnerCounselingStatus,
+            inquiryStartAt,
+            inquiryEndAt,
+            pageNum,
+            pageSize,
+          }
+          const result = await callCoupangAPI('GET', apiPath, params, keys.accessKey, keys.secretKey, undefined, keys.vendorCode)
+          sendJson(res, 200, { success: true, data: result })
+        } catch (error: any) {
+          console.error('[coupang-proxy] cc-inquiries 오류:', error.message)
+          sendJson(res, 500, { success: false, error: error.message })
+        }
+      })
+
+      // ── GET /api/coupang/cc-inquiry-detail?inquiryId= — 단건 조회 ──
+      // 경로에 vendorId 없음 (쿠팡 스펙). parentAnswerId 확보용.
+      server.middlewares.use('/api/coupang/cc-inquiry-detail', async (req: any, res: any) => {
+        try {
+          const keys = extractCoupangKeys(req)
+          if (!keys) {
+            sendJson(res, 401, { success: false, error: '쿠팡 API 키가 요청에 포함되지 않았습니다.' })
+            return
+          }
+          const url = new URL(req.url || '/', `http://${req.headers.host}`)
+          const inquiryId = url.searchParams.get('inquiryId')
+          if (!inquiryId) {
+            sendJson(res, 400, { success: false, error: 'inquiryId 파라미터 필수' })
+            return
+          }
+          const apiPath = `/v2/providers/openapi/apis/api/v5/vendors/callCenterInquiries/${inquiryId}`
+          const result = await callCoupangAPI('GET', apiPath, null, keys.accessKey, keys.secretKey, undefined, keys.vendorCode)
+          sendJson(res, 200, { success: true, data: result })
+        } catch (error: any) {
+          console.error('[coupang-proxy] cc-inquiry-detail 오류:', error.message)
+          sendJson(res, 500, { success: false, error: error.message })
+        }
+      })
+
+      // ── POST /api/coupang/cc-inquiry-reply — 문의 답변 ──
+      // body: { inquiryId, content, replyBy, parentAnswerId }
+      server.middlewares.use('/api/coupang/cc-inquiry-reply', async (req: any, res: any) => {
+        try {
+          const keys = extractCoupangKeys(req)
+          if (!keys) {
+            sendJson(res, 401, { success: false, error: '쿠팡 API 키가 요청에 포함되지 않았습니다.' })
+            return
+          }
+          const body = await parseBody(req)
+          const { inquiryId, content, replyBy, parentAnswerId } = body
+          if (!inquiryId || !content || !replyBy || !parentAnswerId) {
+            sendJson(res, 400, { success: false, error: 'inquiryId, content, replyBy, parentAnswerId 필수' })
+            return
+          }
+          const apiPath = `/v2/providers/openapi/apis/api/v4/vendors/${keys.vendorCode}/callCenterInquiries/${inquiryId}/replies`
+          const result = await callCoupangAPI(
+            'POST', apiPath, null,
+            keys.accessKey, keys.secretKey,
+            { vendorId: keys.vendorCode, inquiryId: String(inquiryId), content, replyBy, parentAnswerId: String(parentAnswerId) },
+            keys.vendorCode,
+          )
+          sendJson(res, 200, { success: true, data: result })
+        } catch (error: any) {
+          console.error('[coupang-proxy] cc-inquiry-reply 오류:', error.message)
+          sendJson(res, 500, { success: false, error: error.message })
+        }
+      })
+
+      // ── POST /api/coupang/cc-inquiry-confirm — 문의 확인 (TRANSFER 건) ──
+      // body: { inquiryId, confirmBy }
+      server.middlewares.use('/api/coupang/cc-inquiry-confirm', async (req: any, res: any) => {
+        try {
+          const keys = extractCoupangKeys(req)
+          if (!keys) {
+            sendJson(res, 401, { success: false, error: '쿠팡 API 키가 요청에 포함되지 않았습니다.' })
+            return
+          }
+          const body = await parseBody(req)
+          const { inquiryId, confirmBy } = body
+          if (!inquiryId || !confirmBy) {
+            sendJson(res, 400, { success: false, error: 'inquiryId, confirmBy 필수' })
+            return
+          }
+          const apiPath = `/v2/providers/openapi/apis/api/v4/vendors/${keys.vendorCode}/callCenterInquiries/${inquiryId}/confirms`
+          const result = await callCoupangAPI(
+            'POST', apiPath, null,
+            keys.accessKey, keys.secretKey,
+            { confirmBy },
+            keys.vendorCode,
+          )
+          sendJson(res, 200, { success: true, data: result })
+        } catch (error: any) {
+          console.error('[coupang-proxy] cc-inquiry-confirm 오류:', error.message)
+          sendJson(res, 500, { success: false, error: error.message })
+        }
+      })
+
       console.log('[coupang-proxy] 쿠팡 API 프록시 미들웨어 등록 완료')
     },
   }

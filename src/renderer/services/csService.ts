@@ -79,11 +79,16 @@ function getCoupangHeaders(): Record<string, string> {
 // 날짜 유틸
 // ══════════════════════════════════════════════════════════════════
 
-/** N일 전 날짜를 yyyy-MM-dd 형식으로 반환 (0 = 오늘) */
+/**
+ * N일 전 날짜를 yyyy-MM-dd(KST) 형식으로 반환 (0 = 오늘)
+ * - 쿠팡 문의 일시는 KST 기준. 브라우저 타임존/UTC 변환으로 인해
+ *   KST 새벽(00~09시)에 '오늘'이 하루 밀리는 문제를 방지하기 위해
+ *   UTC+9 로 보정한 뒤 날짜를 계산한다.
+ */
 function daysAgo(n: number): string {
-  const d = new Date()
-  d.setDate(d.getDate() - n)
-  return d.toISOString().slice(0, 10)
+  const kst = new Date(Date.now() + 9 * 60 * 60 * 1000)
+  kst.setUTCDate(kst.getUTCDate() - n)
+  return kst.toISOString().slice(0, 10)
 }
 
 /** 최근 30일을 7일 단위 5구간으로 분할 (양끝 포함) */
