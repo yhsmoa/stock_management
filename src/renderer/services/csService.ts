@@ -229,6 +229,7 @@ export interface OrderLineInfo {
   optionName: string              // 옵션명 (sellerProductItemName)
   shippingCount: number           // 수량
   amount: number                  // 금액 (orderPrice 우선)
+  orderedAt: string | null        // 주문일시
   estimatedShippingDate: string | null // 출고예정일
   receiverName: string            // 수취인명
   status: string                  // 배송상태 코드 (ACCEPT/INSTRUCT/...)
@@ -303,6 +304,7 @@ export async function fetchOrderDetail(orderId: string): Promise<OrderDetail | n
         const receiverName: string = box?.receiver?.name ?? ''
         const status: string = box?.status ?? ''
         const invoiceNumber: string = box?.invoiceNumber ?? ''
+        const orderedAt: string | null = box?.orderedAt || null
         const orderItems: any[] = Array.isArray(box?.orderItems) ? box.orderItems : []
         for (const item of orderItems) {
           lines.push({
@@ -311,6 +313,7 @@ export async function fetchOrderDetail(orderId: string): Promise<OrderDetail | n
             optionName: item?.sellerProductItemName ?? '',
             shippingCount: item?.shippingCount ?? 0,
             amount: priceUnits(item?.orderPrice) || priceUnits(item?.salesPrice),
+            orderedAt,
             estimatedShippingDate: item?.estimatedShippingDate || null,
             receiverName,
             status,

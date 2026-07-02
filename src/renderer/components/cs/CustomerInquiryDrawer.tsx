@@ -9,6 +9,7 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { theme } from '../../styles/theme'
 import type { OnlineInquiry, OrderDetail } from '../../services/csService'
+import LinkedText from '../common/LinkedText'
 
 // ── 답변 템플릿 (편집 가능) ────────────────────────────────────────
 const REPLY_TEMPLATES: { label: string; text: string }[] = [
@@ -259,7 +260,7 @@ const ReplyBody: React.FC<{
     <div style={{ marginBottom: 18 }}>
       <div style={sectionLabel}>문의 내용</div>
       <div style={{ ...boxStyle, whiteSpace: 'pre-wrap' }}>
-        {inquiry?.content || '-'}
+        {inquiry?.content ? <LinkedText text={inquiry.content} /> : '-'}
         <div style={{ fontSize: theme.fontSize.xs, color: theme.colors.textMuted, marginTop: 6 }}>
           {fmtDateTime(inquiry?.inquiryAt ?? '')}
         </div>
@@ -281,7 +282,7 @@ const ReplyBody: React.FC<{
               marginBottom: 8,
             }}
           >
-            {a.content}
+            <LinkedText text={a.content} />
             <div style={{ fontSize: theme.fontSize.xs, color: theme.colors.textMuted, marginTop: 6 }}>
               {fmtDateTime(a.at)}
             </div>
@@ -415,7 +416,7 @@ const HistoryBody: React.FC<{
               </span>
             </div>
             <div style={{ fontSize: theme.fontSize.sm, color: theme.colors.textPrimary, whiteSpace: 'pre-wrap' }}>
-              {inq.content}
+              <LinkedText text={inq.content} />
             </div>
             {(inq.commentDtoList ?? []).map((c) => (
               <div
@@ -430,7 +431,7 @@ const HistoryBody: React.FC<{
                   whiteSpace: 'pre-wrap',
                 }}
               >
-                ↳ {c.content}
+                ↳ <LinkedText text={c.content} />
                 <div style={{ color: theme.colors.textMuted, marginTop: 4 }}>{fmtDateTime(c.inquiryCommentAt)}</div>
               </div>
             ))}

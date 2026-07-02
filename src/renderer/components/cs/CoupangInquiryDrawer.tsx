@@ -14,12 +14,15 @@ import {
   extractParentAnswerId,
   type CallCenterInquiry,
 } from '../../services/ccInquiryService'
+import LinkedText from '../common/LinkedText'
 
 // ── 답변 템플릿 ────────────────────────────────────────────────────
 const REPLY_TEMPLATES: { label: string; text: string }[] = [
   { label: '배송지연 안내', text: '안녕하세요, 고객님.\n주문하신 상품이 입고 지연으로 배송이 다소 지연되고 있습니다.\n빠른 시일 내에 발송해 드리겠습니다. 양해 부탁드립니다.' },
   { label: '출고예정 안내', text: '안녕하세요, 고객님.\n주문하신 상품은 출고 예정일에 맞춰 순차 발송될 예정입니다.\n조금만 기다려 주시면 감사하겠습니다.' },
   { label: '취소 안내', text: '안녕하세요, 고객님.\n요청하신 주문 취소 처리 도와드리겠습니다.\n확인 후 신속히 처리해 드리겠습니다.' },
+  { label: '반품-회수진행', text: '해당 주문건 현재 회수중에 있으며 기사님 방문 시 회수할 수 있도록 준비해주시면 감사드리겠습니다.' },
+  { label: '반품-입고완료', text: '해당 주문건 현재 입고되었으며 순차적으로 처리될 예정입니다.' },
 ]
 
 type DoneState = '답변완료' | '확인완료' | null
@@ -184,7 +187,7 @@ const CoupangInquiryDrawer: React.FC<Props> = ({
           {/* 문의 내용 */}
           <div style={sectionLabel}>문의 내용</div>
           <div style={{ ...boxStyle, whiteSpace: 'pre-wrap' }}>
-            {shown?.content || '-'}
+            {shown?.content ? <LinkedText text={shown.content} /> : '-'}
             <div style={{ fontSize: theme.fontSize.xs, color: theme.colors.textMuted, marginTop: 6 }}>
               {fmt(shown?.inquiryAt ?? '')}
               {shown?.buyerPhone ? ` · ${shown.buyerPhone}` : ''}
@@ -202,7 +205,7 @@ const CoupangInquiryDrawer: React.FC<Props> = ({
                   <div style={{ fontSize: theme.fontSize.xs, color: theme.colors.textMuted, marginBottom: 4 }}>
                     {r.answerType === 'vendor' ? '판매자' : '쿠팡상담'} · {fmt(r.replyAt)}
                   </div>
-                  {r.content}
+                  <LinkedText text={r.content} />
                 </div>
               ))}
             </div>

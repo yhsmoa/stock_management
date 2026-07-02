@@ -211,7 +211,6 @@ const OrderInfoBlock: React.FC<{
         {' · '}{line.receiverName || '-'}
         {' · '}{line.shippingCount}개
         {' · '}{line.amount.toLocaleString()}원
-        {' · 출고예정 '}{formatDate(line.estimatedShippingDate)}
         {' · 송장 '}{line.invoiceNumber || '-'}
         {' · 배송상태 '}{line.statusLabel || '-'}
         {status && status !== 'none' && (
@@ -618,6 +617,8 @@ const CustomerInquiry: React.FC = () => {
                 const orderId = String(r.orderIds?.[0] ?? '')
                 // 캐시 상태: 미보유 → undefined(로딩), 보유 → OrderDetail|null
                 const detail = orderId ? orderCacheRef.current.get(orderId) : null
+                // 주문일/출고예정일 표시용 라인 (해당 옵션)
+                const orderLine = detail ? pickLine(detail, String(r.vendorItemId ?? '')) : null
                 return (
                   <tr key={r.inquiryId} style={theme.table.tr}>
                     {/* 등록일시 */}
@@ -658,8 +659,16 @@ const CustomerInquiry: React.FC = () => {
                       <div>상품문의</div>
                       <div style={{ fontSize: theme.fontSize.xs, color: theme.colors.textMuted }}>({r.inquiryId})</div>
                     </td>
-                    {/* 주문번호 */}
-                    <td style={{ ...theme.table.td, color: theme.colors.primary }}>{formatOrderIds(r.orderIds)}</td>
+                    {/* 주문번호 + 주문일/출고예정일 */}
+                    <td style={theme.table.td}>
+                      <div style={{ color: theme.colors.primary }}>{formatOrderIds(r.orderIds)}</div>
+                      {orderLine && (
+                        <div style={{ fontSize: theme.fontSize.xs, color: theme.colors.textMuted, marginTop: 3, lineHeight: 1.6 }}>
+                          <div>주문 {formatDate(orderLine.orderedAt)}</div>
+                          <div>예정 {formatDate(orderLine.estimatedShippingDate)}</div>
+                        </div>
+                      )}
+                    </td>
                     {/* 답변여부 — 취소하기 / 이전문의 / 답변하기 */}
                     <td style={{ ...theme.table.td, textAlign: 'center' }}>
                       <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
