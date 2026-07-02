@@ -56,7 +56,7 @@ const MENU_ITEMS: MenuItem[] = [
     type: 'group', icon: '🚚', label: '출고관리',
     children: [
       { path: '/shipment-list',    label: '출고리스트' },
-      { path: '/rocket-shipment',  label: '로켓출고' },
+      { path: '/rocket-shipment',  label: '로켓그로스 출고' },
     ],
   },
   { type: 'link', path: '/analysis-management', icon: '📊', label: '분석관리' },
