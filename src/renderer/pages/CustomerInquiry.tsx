@@ -13,7 +13,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { theme } from '../styles/theme'
 import {
   fetchOnlineInquiries30d,
-  fetchOrderDetailsMap,
+  fetchCsOrderDetailsMap,
   submitOnlineInquiryReply,
   type OnlineInquiry,
   type OrderDetail,
@@ -85,6 +85,14 @@ function hoursSince(iso: string): number {
   const t = new Date(iso).getTime()
   if (Number.isNaN(t)) return Infinity
   return (Date.now() - t) / (1000 * 60 * 60)
+}
+
+/** 로그인 사용자 ID (coupang_personal_orders 격리 키) */
+function getUserId(): string {
+  try {
+    const raw = localStorage.getItem('user')
+    return raw ? (JSON.parse(raw)?.id ?? '') : ''
+  } catch { return '' }
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -288,7 +296,7 @@ const CustomerInquiry: React.FC = () => {
       // 1) 주문 상세 (캐시 미보유분만 조회)
       const missing = orderIds.filter((id) => !orderCacheRef.current.has(id))
       if (missing.length > 0) {
-        const fetched = await fetchOrderDetailsMap(missing)
+        const fetched = await fetchCsOrderDetailsMap(missing, getUserId())
         if (cancelled) return
         for (const [id, d] of fetched) orderCacheRef.current.set(id, d)
         setEnrichVersion((v) => v + 1)

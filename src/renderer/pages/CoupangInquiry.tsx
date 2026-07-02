@@ -16,12 +16,20 @@ import {
   confirmCallCenterInquiry,
   type CallCenterInquiry,
 } from '../services/ccInquiryService'
-import { fetchOrderDetailsMap, type OrderDetail } from '../services/csService'
+import { fetchCsOrderDetailsMap, type OrderDetail } from '../services/csService'
 import OrderInfoLine from '../components/cs/OrderInfoLine'
 import CoupangInquiryDrawer from '../components/cs/CoupangInquiryDrawer'
 
 // ── 상수 ──────────────────────────────────────────────────────────
 const PAGE_SIZE = 20
+
+// ── 로그인 사용자 ID (coupang_personal_orders 격리 키) ──────────────
+function getUserId(): string {
+  try {
+    const raw = localStorage.getItem('user')
+    return raw ? (JSON.parse(raw)?.id ?? '') : ''
+  } catch { return '' }
+}
 
 /** 행 조치 (상태로 판정) */
 type RowAction = 'reply' | 'confirm' | 'done'
@@ -160,7 +168,7 @@ const CoupangInquiry: React.FC = () => {
       // 주문 상세 (캐시 미보유분만 조회)
       const missing = orderIds.filter((id) => !orderCacheRef.current.has(id))
       if (missing.length === 0) return
-      const fetched = await fetchOrderDetailsMap(missing)
+      const fetched = await fetchCsOrderDetailsMap(missing, getUserId())
       if (cancelled) return
       for (const [id, d] of fetched) orderCacheRef.current.set(id, d)
       setEnrichVersion((v) => v + 1)

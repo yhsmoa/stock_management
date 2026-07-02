@@ -8,6 +8,7 @@
 
 import type { AuthUser } from '../types/auth'
 import { STATUS_MAP } from './personalOrderService'
+import { supabase } from './supabase'
 
 // ── 상수 ──────────────────────────────────────────────────────────
 const INQUIRY_PAGE_SIZE = 50   // 쿠팡 onlineInquiries 최대 페이지 크기
@@ -355,6 +356,90 @@ export async function fetchOrderDetailsMap(
   })
   await runWithConcurrency(tasks, DETAIL_CONCURRENCY)
   return map
+}
+
+// ══════════════════════════════════════════════════════════════════
+// 개인주문(coupang_personal_orders) 로컬 조회 → OrderDetail
+//   - CS 주문건은 대부분 개인주문(판매자배송). 취소/반품된 주문은 쿠팡 발주서
+//     API가 400("취소 또는 반품")으로 거부하지만, 앱이 동기화해 둔 개인주문
+//     테이블에는 데이터가 남아있어 여기서 조회한다.
+//   - order_id 로 매칭, 없는 주문만 쿠팡 발주서 API로 폴백.
+// ══════════════════════════════════════════════════════════════════
+
+/** coupang_personal_orders 행 → OrderLineInfo */
+function personalRowToLine(row: any): OrderLineInfo {
+  const status: string = row.status ?? ''
+  return {
+    vendorItemId: String(row.vendor_item_id ?? ''),
+    sellerProductName: row.item_name ?? '',   // 등록상품명
+    optionName: row.option_name ?? '',         // 옵션명
+    shippingCount: row.shipping_count ?? 0,
+    amount: row.order_price_units || row.sales_price_units || 0,
+    orderedAt: row.ordered_at ?? null,
+    estimatedShippingDate: row.estimated_shipping_date ?? null,
+    receiverName: row.receiver_name ?? '',
+    status,
+    statusLabel: STATUS_MAP[status] ?? status,
+    invoiceNumber: row.invoice_number ?? '',
+  }
+}
+
+/** 개인주문 테이블에서 주문번호별 상세 조회 (order_id 100개 단위 배치) */
+export async function fetchPersonalOrderDetailsMap(
+  orderIds: string[],
+  userId: string,
+): Promise<Map<string, OrderDetail>> {
+  const map = new Map<string, OrderDetail>()
+  const ids = Array.from(new Set(orderIds.filter(Boolean)))
+  if (ids.length === 0 || !userId) return map
+
+  const grouped = new Map<string, OrderLineInfo[]>()
+  const BATCH = 100
+  for (let i = 0; i < ids.length; i += BATCH) {
+    const chunk = ids.slice(i, i + BATCH)
+    const { data, error } = await supabase
+      .from('coupang_personal_orders')
+      .select('order_id, vendor_item_id, item_name, option_name, shipping_count, sales_price_units, order_price_units, ordered_at, estimated_shipping_date, receiver_name, invoice_number, status')
+      .eq('user_id', userId)
+      .in('order_id', chunk)
+    if (error) {
+      console.warn('[fetchPersonalOrderDetailsMap] 조회 실패:', error.message)
+      continue
+    }
+    for (const row of (data ?? []) as any[]) {
+      const oid = String(row.order_id)
+      const arr = grouped.get(oid) ?? []
+      arr.push(personalRowToLine(row))
+      grouped.set(oid, arr)
+    }
+  }
+  for (const [oid, lines] of grouped) map.set(oid, { orderId: oid, lines })
+  return map
+}
+
+/**
+ * CS 페이지용 주문정보 조회 — 개인주문(로컬) 우선, 없으면 쿠팡 발주서 API
+ * @returns Map<orderId, OrderDetail | null>
+ */
+export async function fetchCsOrderDetailsMap(
+  orderIds: string[],
+  userId: string,
+): Promise<Map<string, OrderDetail | null>> {
+  const result = new Map<string, OrderDetail | null>()
+  const ids = Array.from(new Set(orderIds.filter(Boolean)))
+  if (ids.length === 0) return result
+
+  // 1) 로컬 개인주문 (취소/반품 포함 — 발주서 API가 거부하는 건도 커버)
+  const local = userId ? await fetchPersonalOrderDetailsMap(ids, userId) : new Map<string, OrderDetail>()
+  for (const [id, d] of local) result.set(id, d)
+
+  // 2) 로컬에 없는 주문만 쿠팡 발주서 API 폴백
+  const missing = ids.filter((id) => !result.has(id))
+  if (missing.length > 0) {
+    const remote = await fetchOrderDetailsMap(missing)
+    for (const [id, d] of remote) result.set(id, d)
+  }
+  return result
 }
 
 // ══════════════════════════════════════════════════════════════════
