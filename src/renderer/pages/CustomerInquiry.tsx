@@ -27,7 +27,7 @@ import {
   makeFulfillmentKey,
   type FulfillmentStatus,
 } from '../services/orderFulfillmentService'
-import { STATUS_DOT_LABELS } from './usePersonalOrder'
+import OrderInfoLine, { pickLine } from '../components/cs/OrderInfoLine'
 import CustomerInquiryDrawer, { type Answer } from '../components/cs/CustomerInquiryDrawer'
 import CancelOrderDrawer from '../components/cs/CancelOrderDrawer'
 import FulfillmentDrawer from './FulfillmentDrawer'
@@ -52,17 +52,6 @@ const TABS: { key: TabKey; label: string }[] = [
   { key: 'NOANSWER', label: '미답변' },
   { key: 'ANSWERED', label: '답변완료' },
 ]
-
-// ── fulfillment 상태 색 (PersonalOrder.css .po-status-dot 과 동일) ──
-const STATUS_DOT_COLORS: Record<FulfillmentStatus, string> = {
-  shipped: '#22C55E', // 출고완료
-  green:   '#FB923C', // 포장완료(주황)
-  red:     '#EF4444', // 전량취소
-  gray:    '#D1D5DB', // 미발송
-  multi:   '#A855F7', // 이력 확인 필요
-  cart:    '',        // 카트 → 🛒
-  none:    '',        // 미주문 → 미표시
-}
 
 // ══════════════════════════════════════════════════════════════════
 // 표시 유틸
@@ -120,119 +109,6 @@ const StatusCard: React.FC<{ label: string; count: number }> = ({ label, count }
     </span>
   </div>
 )
-
-// ══════════════════════════════════════════════════════════════════
-// fulfillment 상태 점 + 상태명 (개인주문 '상태' 열과 동일)
-// ══════════════════════════════════════════════════════════════════
-
-const StatusDot: React.FC<{ status: FulfillmentStatus }> = ({ status }) => {
-  if (status === 'none') return null
-  const label = STATUS_DOT_LABELS[status]
-  if (status === 'cart') {
-    return <span style={{ whiteSpace: 'nowrap' }}>🛒 {label}</span>
-  }
-  return (
-    <span style={{ whiteSpace: 'nowrap' }}>
-      <span
-        style={{
-          display: 'inline-block',
-          width: 8,
-          height: 8,
-          borderRadius: '50%',
-          backgroundColor: STATUS_DOT_COLORS[status],
-          marginRight: 4,
-          verticalAlign: 'middle',
-        }}
-      />
-      {label}
-    </span>
-  )
-}
-
-// ══════════════════════════════════════════════════════════════════
-// 주문정보 셀 — 문의내용 위에 표시
-// ══════════════════════════════════════════════════════════════════
-
-/** 주문 상세의 해당 옵션(vendorItemId) 라인을 선택 (없으면 첫 라인) */
-function pickLine(detail: OrderDetail, vendorItemId: string) {
-  return detail.lines.find((l) => l.vendorItemId === vendorItemId) ?? detail.lines[0] ?? null
-}
-
-const OrderInfoBlock: React.FC<{
-  inquiry: OnlineInquiry
-  detail: OrderDetail | null | undefined // undefined = 로딩중, null = 주문없음/실패
-  status: FulfillmentStatus | undefined
-  onStatusClick?: () => void // 상태 클릭 → fulfillment 이력 드로어
-}> = ({ inquiry, detail, status, onStatusClick }) => {
-  const orderId = String(inquiry.orderIds?.[0] ?? '')
-
-  // 주문번호 없음 → 기존 상품ID 표기로 폴백
-  if (!orderId) {
-    return <div style={{ color: theme.colors.primary, marginBottom: 2 }}>상품 {inquiry.productId}</div>
-  }
-  // 로딩중
-  if (detail === undefined) {
-    return <div style={{ color: theme.colors.textMuted, marginBottom: 2 }}>주문정보 불러오는 중...</div>
-  }
-  // 조회 실패 / 주문 없음
-  if (detail === null) {
-    return (
-      <div style={{ color: theme.colors.textMuted, marginBottom: 2 }}>
-        주문정보 없음 (상품 {inquiry.productId})
-      </div>
-    )
-  }
-
-  const line = pickLine(detail, String(inquiry.vendorItemId ?? ''))
-  if (!line) {
-    return (
-      <div style={{ color: theme.colors.textMuted, marginBottom: 2 }}>
-        주문정보 없음 (상품 {inquiry.productId})
-      </div>
-    )
-  }
-
-  return (
-    <div
-      style={{
-        marginBottom: 6,
-        paddingBottom: 6,
-        borderBottom: `1px dashed ${theme.colors.border}`,
-        fontSize: theme.fontSize.xs,
-        lineHeight: 1.7,
-      }}
-    >
-      {/* 상품명 + 옵션명 (동일 색) + 수취인 ~ 출고완료: 전부 한 줄 */}
-      <span style={{ color: theme.colors.primary, fontWeight: 600 }}>
-        {line.sellerProductName || `상품 ${inquiry.productId}`}
-        {line.optionName && ` · ${line.optionName}`}
-      </span>
-      <span style={{ color: theme.colors.textSecondary }}>
-        {' · '}{line.receiverName || '-'}
-        {' · '}{line.shippingCount}개
-        {' · '}{line.amount.toLocaleString()}원
-        {' · 송장 '}{line.invoiceNumber || '-'}
-        {' · 배송상태 '}{line.statusLabel || '-'}
-        {status && status !== 'none' && (
-          <>
-            {' · '}
-            {onStatusClick ? (
-              <span
-                onClick={onStatusClick}
-                title="fulfillment 이력 보기"
-                style={{ cursor: 'pointer', textDecoration: 'underline dotted', textUnderlineOffset: 3 }}
-              >
-                <StatusDot status={status} />
-              </span>
-            ) : (
-              <StatusDot status={status} />
-            )}
-          </>
-        )}
-      </span>
-    </div>
-  )
-}
 
 // ══════════════════════════════════════════════════════════════════
 // 컴포넌트
@@ -628,9 +504,11 @@ const CustomerInquiry: React.FC = () => {
                     </td>
                     {/* 문의내용 (주문정보 + 질문 + 답변) */}
                     <td style={theme.table.td}>
-                      <OrderInfoBlock
-                        inquiry={r}
+                      <OrderInfoLine
+                        orderId={orderId}
+                        vendorItemId={String(r.vendorItemId ?? '')}
                         detail={detail}
+                        fallbackName={`상품 ${r.productId}`}
                         status={statusMap.get(r.inquiryId)}
                         onStatusClick={
                           itemInfoMap.has(r.inquiryId) ? () => openFulfillment(r.inquiryId) : undefined

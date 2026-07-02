@@ -8,7 +8,7 @@
    - 페이지네이션 20개
    ================================================================ */
 
-import React, { useCallback, useEffect, useMemo, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { theme } from '../styles/theme'
 import {
   fetchCallCenterInquiries30d,
@@ -16,6 +16,8 @@ import {
   confirmCallCenterInquiry,
   type CallCenterInquiry,
 } from '../services/ccInquiryService'
+import { fetchOrderDetailsMap, type OrderDetail } from '../services/csService'
+import OrderInfoLine from '../components/cs/OrderInfoLine'
 import CoupangInquiryDrawer from '../components/cs/CoupangInquiryDrawer'
 
 // ── 상수 ──────────────────────────────────────────────────────────
@@ -38,6 +40,18 @@ function formatInquiryAt(iso: string): { date: string; time: string } {
   if (!iso) return { date: '-', time: '' }
   const [d, t] = iso.split('T')
   return { date: (d ?? '').replace(/-/g, '.'), time: (t ?? '').slice(0, 8) }
+}
+
+/** 주문번호 문자열 (없으면 '') */
+function orderIdOf(inq: CallCenterInquiry): string {
+  return inq.orderId != null ? String(inq.orderId) : ''
+}
+
+/** vendorItemId 문자열 (배열이면 첫 값) */
+function vendorItemIdOf(inq: CallCenterInquiry): string {
+  const v = inq.vendorItemId
+  if (Array.isArray(v)) return v[0] != null ? String(v[0]) : ''
+  return v != null ? String(v) : ''
 }
 
 /**
@@ -65,6 +79,11 @@ const CoupangInquiry: React.FC = () => {
 
   const [drawer, setDrawer] = useState<{ mode: 'reply' | 'confirm'; inquiry: CallCenterInquiry } | null>(null)
   const [handled, setHandled] = useState<Map<number, '답변완료' | '확인완료'>>(new Map())
+
+  // ── 주문정보 보강 (주문번호 → 등록상품명·옵션명·수취인·개수·금액·송장·배송상태) ──
+  // orderId → OrderDetail | null 캐시 (탭/페이지 전환 간 재사용)
+  const orderCacheRef = useRef<Map<string, OrderDetail | null>>(new Map())
+  const [, setEnrichVersion] = useState(0) // 캐시 갱신 시 리렌더 트리거
 
   const replyByDefault = useMemo(() => {
     try {
@@ -126,6 +145,31 @@ const CoupangInquiry: React.FC = () => {
     await confirmCallCenterInquiry(inq.inquiryId, confirmBy)
     setHandled((prev) => new Map(prev).set(inq.inquiryId, '확인완료'))
   }, [drawer])
+
+  // ── 현재 페이지 행의 주문정보 보강 (주문번호 → 주문 상세 조회) ──
+  useEffect(() => {
+    if (pageRows.length === 0) return
+    let cancelled = false
+
+    ;(async () => {
+      const orderIds = Array.from(
+        new Set(pageRows.map((r) => orderIdOf(r)).filter(Boolean)),
+      )
+      if (orderIds.length === 0) return
+
+      // 주문 상세 (캐시 미보유분만 조회)
+      const missing = orderIds.filter((id) => !orderCacheRef.current.has(id))
+      if (missing.length === 0) return
+      const fetched = await fetchOrderDetailsMap(missing)
+      if (cancelled) return
+      for (const [id, d] of fetched) orderCacheRef.current.set(id, d)
+      setEnrichVersion((v) => v + 1)
+    })()
+
+    return () => {
+      cancelled = true
+    }
+  }, [pageRows])
 
   // ══════════════════════════════════════════════════════════════
   return (
@@ -198,7 +242,12 @@ const CoupangInquiry: React.FC = () => {
                       <div style={{ fontSize: theme.fontSize.xs, color: theme.colors.textMuted }}>{time}</div>
                     </td>
                     <td style={theme.table.td}>
-                      {r.itemName && <div style={{ color: theme.colors.primary, fontWeight: 600, marginBottom: 2 }}>{r.itemName}</div>}
+                      <OrderInfoLine
+                        orderId={orderIdOf(r)}
+                        vendorItemId={vendorItemIdOf(r)}
+                        detail={orderIdOf(r) ? orderCacheRef.current.get(orderIdOf(r)) : null}
+                        fallbackName={r.itemName || '상품정보 없음'}
+                      />
                       {r.receiptCategory && <div style={{ fontSize: theme.fontSize.xs, color: theme.colors.textMuted, marginBottom: 2 }}>{r.receiptCategory}</div>}
                       <div style={{ color: theme.colors.textPrimary }}>{r.content}</div>
                     </td>
