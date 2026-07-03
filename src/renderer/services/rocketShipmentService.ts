@@ -12,11 +12,16 @@
 import * as XLSX from 'xlsx'
 import { supabase } from './supabase'
 
-// ── 엑셀 컬럼 인덱스 (출고준비.xlsx / 0-based) ─────────────────────
-//   A(0)=박스번호(위치), D(3)=바코드, J(9)=출고개수(입고수량)
-const COL_BOX = 0
-const COL_BARCODE = 3
-const COL_QTY = 9
+// ── 엑셀 헤더명 (0행 기준 컬럼 탐색) ───────────────────────────────
+//   파일 버전에 따라 '옵션id' 열 유무로 컬럼 위치가 밀리므로(예: 바코드가
+//   D열↔E열, 출고개수가 J열↔K열), 고정 인덱스가 아니라 헤더명으로 찾는다.
+const HEADER_BOX = '박스번호'      // → 위치
+const HEADER_BARCODE = '바코드'    // → 바코드
+const HEADER_QTY = '출고개수'      // → 입고수량
+// 헤더 탐색 실패 시 폴백 인덱스 (구 파일 레이아웃)
+const FALLBACK_BOX = 0
+const FALLBACK_BARCODE = 3
+const FALLBACK_QTY = 9
 
 // .in() 배치 크기 (URL 길이/응답 1000행 안전)
 const IN_CHUNK = 500
@@ -46,20 +51,32 @@ export interface RocketShipmentRow {
 
 /**
  * 출고준비 엑셀(aoa) → ParsedOutboundRow[]
- * - 0행 헤더, 1행부터 데이터
- * - 바코드(D)가 비어있는 행은 스킵
+ * - 0행 헤더에서 박스번호/바코드/출고개수 컬럼을 이름으로 탐색 (레이아웃 무관)
+ * - 1행부터 데이터, 바코드가 비어있는 행은 스킵
  */
 export function parseOutboundExcel(rows: any[][]): ParsedOutboundRow[] {
+  if (rows.length < 2) return []
+
+  // ── 헤더명으로 컬럼 인덱스 탐색 (미발견 시 폴백 인덱스) ──
+  const header = (rows[0] ?? []).map((h) => String(h ?? '').trim())
+  const colOf = (name: string, fallback: number) => {
+    const i = header.indexOf(name)
+    return i >= 0 ? i : fallback
+  }
+  const boxCol = colOf(HEADER_BOX, FALLBACK_BOX)
+  const barcodeCol = colOf(HEADER_BARCODE, FALLBACK_BARCODE)
+  const qtyCol = colOf(HEADER_QTY, FALLBACK_QTY)
+
   const result: ParsedOutboundRow[] = []
   for (let i = 1; i < rows.length; i++) {
     const row = rows[i]
     if (!row || row.length === 0) continue
-    const barcode = String(row[COL_BARCODE] ?? '').trim()
+    const barcode = String(row[barcodeCol] ?? '').trim()
     if (!barcode) continue
     result.push({
-      location: String(row[COL_BOX] ?? '').trim(),
+      location: String(row[boxCol] ?? '').trim(),
       barcode,
-      quantity: Number(row[COL_QTY] ?? 0) || 0,
+      quantity: Number(row[qtyCol] ?? 0) || 0,
     })
   }
   return result
