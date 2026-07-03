@@ -10,6 +10,7 @@ import {
   parseOutboundExcel,
   enrichOutboundRows,
   buildGrowthInboundWorkbook,
+  expectedSize,
   SIZES,
   type SizeTab,
   type RocketShipmentRow,
@@ -91,21 +92,21 @@ export function useRocketShipment() {
     }
   }, [])
 
-  // ── 현재 탭 필터 (쿠팡사이즈 === tab). 원본 인덱스 유지 ────────
+  // ── 현재 탭 필터 (위치의 박스코드 → 사이즈. A=Small/B=Medium/C=Large,
+  //    P·X 등은 어느 탭에도 안 걸림). 원본 인덱스 유지 ────────
   const filtered = useMemo(
     () =>
       rows
         .map((row, idx) => ({ row, idx }))
-        .filter(({ row }) => (row.coupangSize || '').trim().toLowerCase() === tab.toLowerCase()),
+        .filter(({ row }) => expectedSize(row.location) === tab),
     [rows, tab],
   )
 
-  // ── 탭별 건수 (배지) ──────────────────────────────────────────
+  // ── 탭별 건수 (배지) — 박스코드 기준 ─────────────────────────
   const tabCounts = useMemo(() => {
     const c: Record<SizeTab, number> = { Small: 0, Medium: 0, Large: 0 }
     for (const r of rows) {
-      const s = (r.coupangSize || '').trim()
-      const key = SIZES.find((sz) => sz.toLowerCase() === s.toLowerCase())
+      const key = SIZES.find((sz) => sz === expectedSize(r.location))
       if (key) c[key]++
     }
     return c
