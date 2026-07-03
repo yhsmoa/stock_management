@@ -15,6 +15,7 @@ import {
   type SizeTab,
   type RocketShipmentRow,
 } from '../services/rocketShipmentService'
+import { parseShipmentSizeExcel, saveShipmentSize } from '../services/purchaseService'
 
 // ── 테이블 컬럼 정의 (위치·등록id·옵션id·바코드·상품명·옵션명·입고수량·쿠팡사이즈) ──
 export const COLUMNS = [
@@ -51,6 +52,10 @@ export function useRocketShipment() {
   // 선택된 행 (rows 원본 인덱스 집합)
   const [selected, setSelected] = useState<Set<number>>(new Set())
   const [generating, setGenerating] = useState(false)
+
+  // ── 쉽먼트 사이즈 xlsx (사입관리와 동일: si_coupang_shipment_size upsert) ──
+  const [shipmentSizeUploading, setShipmentSizeUploading] = useState(false)
+  const shipmentSizeInputRef = useRef<HTMLInputElement>(null)
 
   // ── xlsx 등록: 파일 읽기 → 파싱 → 조인 → 테이블 반영 ──────────
   const handleXlsxUpload = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -89,6 +94,53 @@ export function useRocketShipment() {
       setRows([])
     } finally {
       setLoading(false)
+    }
+  }, [])
+
+  // ── 쉽먼트 사이즈 xlsx 업로드 (사입관리 handleShipmentSizeExcelUpload 동일 로직) ──
+  const handleShipmentSizeUpload = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    e.target.value = ''
+
+    const userId = getUserId()
+    if (!userId) {
+      alert('로그인 정보를 확인해 주세요.')
+      return
+    }
+
+    setShipmentSizeUploading(true)
+    try {
+      // 파일 읽기 → 시트 검증/파싱 → 배치 upsert
+      const binaryStr = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader()
+        reader.onload = (ev) => resolve(ev.target?.result as string)
+        reader.onerror = () => reject(new Error('파일 읽기 실패'))
+        reader.readAsBinaryString(file)
+      })
+      const workbook = XLSX.read(binaryStr, { type: 'binary' })
+      const { items, skippedRows } = parseShipmentSizeExcel(workbook, userId)
+
+      if (items.length === 0 && skippedRows.length === 0) {
+        alert('업로드할 데이터가 없습니다. 엑셀 파일을 확인해주세요.')
+        return
+      }
+
+      const { success, errors } = await saveShipmentSize(items, userId)
+
+      let message = `쉽먼트 사이즈 업로드 완료!\n성공: ${success.toLocaleString()}건, 실패: ${errors.toLocaleString()}건`
+      if (skippedRows.length > 0) {
+        const SKIP_PREVIEW = 50
+        const preview = skippedRows.slice(0, SKIP_PREVIEW).join(', ')
+        const suffix = skippedRows.length > SKIP_PREVIEW ? ` ...외 ${skippedRows.length - SKIP_PREVIEW}건` : ''
+        message += `\n\noption_id 누락으로 스킵된 행:\n${preview}행${suffix}`
+      }
+      alert(message)
+    } catch (err: any) {
+      console.error('[쉽먼트 사이즈 xlsx] 실패:', err)
+      alert(`쉽먼트 사이즈 업로드 중 오류가 발생했습니다.\n${err?.message ?? ''}`)
+    } finally {
+      setShipmentSizeUploading(false)
     }
   }, [])
 
@@ -165,6 +217,10 @@ export function useRocketShipment() {
     fileName,
     fileInputRef,
     handleXlsxUpload,
+    // 쉽먼트 사이즈 xlsx
+    shipmentSizeUploading,
+    shipmentSizeInputRef,
+    handleShipmentSizeUpload,
     // 탭
     tab,
     changeTab,

@@ -21,6 +21,9 @@ const RocketShipment: React.FC = () => {
     fileName,
     fileInputRef,
     handleXlsxUpload,
+    shipmentSizeUploading,
+    shipmentSizeInputRef,
+    handleShipmentSizeUpload,
     tab,
     changeTab,
     tabCounts,
@@ -36,8 +39,19 @@ const RocketShipment: React.FC = () => {
 
   return (
     <div className="rs-container">
-      {/* ── 상단(우측): xlsx 등록 · 그로스 입고 xlsx 생성 ──────── */}
+      {/* ── 상단(우측): 쉽먼트 사이즈 xlsx · xlsx 등록 · 그로스 입고 xlsx 생성 ── */}
       <div className="rs-top-actions">
+        <label className={`rs-btn${shipmentSizeUploading ? ' rs-btn-disabled' : ''}`}>
+          {shipmentSizeUploading ? '업로드 중...' : '쉽먼트 사이즈 xlsx'}
+          <input
+            ref={shipmentSizeInputRef}
+            type="file"
+            accept=".xlsx,.xls"
+            style={{ display: 'none' }}
+            disabled={shipmentSizeUploading}
+            onChange={handleShipmentSizeUpload}
+          />
+        </label>
         <label className={`rs-btn${loading ? ' rs-btn-disabled' : ''}`}>
           {loading ? '등록 중...' : 'xlsx 등록'}
           <input
