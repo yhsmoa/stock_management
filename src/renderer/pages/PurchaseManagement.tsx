@@ -3,7 +3,7 @@
    - 로직은 usePurchaseManagement 훅에서 관리
    ================================================================ */
 
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import './PurchaseManagement.css'
 import { usePurchaseManagement, COLUMNS, PAGE_SIZE_OPTIONS, type EditableField } from './usePurchaseManagement'
 import type { RgItem } from '../types/purchase'
@@ -227,6 +227,26 @@ const PurchaseManagement: React.FC = () => {
     document.addEventListener('keydown', onKey)
     return () => document.removeEventListener('keydown', onKey)
   }, [isTableFullscreen])
+
+  // ── Ctrl/Cmd + S → [저장] 실행 ───────────────────────────────
+  //   브라우저 기본 저장 다이얼로그를 막고, 저장 버튼과 동일 조건일 때만 실행.
+  //   최신 상태를 ref 로 참조해 리스너는 1회만 등록.
+  const saveShortcutRef = useRef<() => void>(() => {})
+  saveShortcutRef.current = () => {
+    if (!saving && (pendingEdits.size > 0 || pendingNotes.size > 0)) {
+      handleSaveInputs()
+    }
+  }
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
+        e.preventDefault()
+        saveShortcutRef.current()
+      }
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [])
 
   // ── 편집 가능 셀 공통 렌더러 (input / in_qty / out_qty) ─────
   const renderEditableCell = (item: RgItem, field: EditableField, value: number | null) => {
