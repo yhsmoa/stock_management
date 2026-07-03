@@ -7,9 +7,10 @@
    - 메인 콘텐츠를 push 하지 않는 floating overlay
    ================================================================ */
 
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useMemo } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { theme } from '../styles/theme'
+import type { AuthUser } from '../types/auth'
 
 // ── 상수 ──────────────────────────────────────────────────────────
 const RAIL_WIDTH = 40
@@ -86,6 +87,18 @@ const Sidebar: React.FC = () => {
     localStorage.removeItem('user')
     navigate('/login')
   }
+
+  // ── 현재 로그인 사용자 (표시용) ───────────────────────────────
+  const displayName = useMemo(() => {
+    try {
+      const raw = localStorage.getItem('user')
+      if (!raw) return ''
+      const u = JSON.parse(raw) as AuthUser
+      return u.name || u.username || ''
+    } catch {
+      return ''
+    }
+  }, [])
 
   const [expanded, setExpanded] = useState(false)
   // 펼쳐진 그룹 집합 (그룹 label key). 초기값: 현재 path 의 부모 그룹
@@ -217,6 +230,16 @@ const Sidebar: React.FC = () => {
         {MENU_ITEMS.map(renderItem)}
       </nav>
 
+      {/* ── 바닥: 현재 사용자 표시 ─────────────────────────────── */}
+      <div style={getUserInfoStyle(expanded)} title={displayName || '사용자'}>
+        <span style={iconStyle}>👤</span>
+        {expanded && (
+          <span style={{ ...labelStyle, color: theme.colors.sidebarSubText }}>
+            {displayName || '사용자'}
+          </span>
+        )}
+      </div>
+
       {/* ── 바닥: 로그아웃 ─────────────────────────────────────── */}
       <button
         onClick={handleLogout}
@@ -269,18 +292,34 @@ function getLinkStyle(expanded: boolean, isActive: boolean): React.CSSProperties
   }
 }
 
+// ── 현재 사용자 표시 (로그아웃 바로 위, 상단 구분선) ──────────────
+function getUserInfoStyle(expanded: boolean): React.CSSProperties {
+  return {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '6px',
+    padding: expanded ? '8px 10px 4px' : '8px 0 4px',
+    marginTop: '8px',
+    justifyContent: expanded ? 'flex-start' : 'center',
+    borderTop: '1px solid rgba(255, 255, 255, 0.1)',
+    color: theme.colors.sidebarSubText,
+    userSelect: 'none',
+    flexShrink: 0,
+    whiteSpace: 'nowrap',
+    overflow: 'hidden',
+  }
+}
+
 function getLogoutStyle(expanded: boolean): React.CSSProperties {
   return {
     display: 'flex',
     alignItems: 'center',
     gap: '6px',
     padding: expanded ? '8px 10px' : '8px 0',
-    marginTop: '8px',
     justifyContent: expanded ? 'flex-start' : 'center',
     color: theme.colors.sidebarText,
     background: 'transparent',
     border: 'none',
-    borderTop: '1px solid rgba(255, 255, 255, 0.1)',
     width: '100%',
     borderRadius: theme.radius.sm,
     cursor: 'pointer',
