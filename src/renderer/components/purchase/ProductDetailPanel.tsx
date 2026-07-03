@@ -651,6 +651,29 @@ const ProductDetailPanel: React.FC<ProductDetailPanelProps> = ({
                       <span style={styles.badgeValue}>{b.value || '-'}</span>
                     </div>
                   ))}
+
+                  {/* ── 쿠팡 상품 페이지 바로가기 (바코드 아래) ────── */}
+                  {sellerProductId && vendorItemId && (
+                    <a
+                      href={`https://www.coupang.com/vp/products/${sellerProductId}?vendorItemId=${vendorItemId}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      style={{
+                        marginTop: 4,
+                        fontSize: theme.fontSize.xs,
+                        color: theme.colors.primary,
+                        textDecoration: 'none',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: 4,
+                        cursor: 'pointer',
+                        width: 'fit-content',
+                      }}
+                      title="쿠팡 상품 페이지 새 탭으로 열기"
+                    >
+                      🔗 쿠팡 상품 페이지
+                    </a>
+                  )}
                 </div>
               </div>
 
