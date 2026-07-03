@@ -150,7 +150,7 @@ function buildDeliveryAoA(
 ): (string | number)[][] {
   const body = rows.map((r, i) => [
     i + 1, r.shipment_box_id, r.order_id, r.delivery_company_name, r.invoice_number,
-    r.split_shipping === 'Y' ? 'Y' : '분리배송불가', r.planned_shipping_date ?? '',
+    r.split_shipping || 'N', r.planned_shipping_date ?? '',
     r.estimated_shipping_date ?? '',
     r.in_transit_date_time ? formatDateTime(r.in_transit_date_time) : '',
     r.ordered_at ? formatDateTime(r.ordered_at) : '',

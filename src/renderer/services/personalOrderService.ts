@@ -436,7 +436,14 @@ export function mapOrderToRows(
         paid_at: order.paidAt || null,
         delivered_date: order.deliveredDate || null,
         parcel_print_message: order.parcelPrintMessage ?? '',
-        split_shipping: order.splitShipping ? 'Y' : 'N',
+        // 분리배송 표기(쿠팡 DeliveryList 'F열')는 두 API 필드로 결정:
+        //   splitShipping=true          → 'Y'          (실제 분리배송 처리)
+        //   ableSplitShipping=false     → '분리배송불가'  (분리배송 불가 = 대개 단일상품)
+        //   그 외                        → 'N'          (가능하나 미처리)
+        // ※ 상품 개수 등으로 임의 계산하지 않고 API 값을 그대로 사용.
+        split_shipping: order.splitShipping
+          ? 'Y'
+          : (order.ableSplitShipping === false ? '분리배송불가' : 'N'),
         shipment_type: order.shipmentType ?? '',
         refer: order.refer ?? '',
         canceled: item.canceled ?? false,
