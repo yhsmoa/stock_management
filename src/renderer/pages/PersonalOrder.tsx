@@ -447,9 +447,10 @@ const PersonalOrder: React.FC = () => {
                           )
                         }
 
-                        // ── 합배송 (주문 라인수: 1개면 표시 없음, 2개↑면 회색 배지 숫자) ──
+                        // ── 합배송 (배지 숫자: 1개면 회색, 2개↑면 주황) ──
                         if (col.key === 'combined_shipping') {
                           const cnt = row.order_id ? (orderItemCountMap.get(row.order_id) ?? 1) : 1
+                          const combined = cnt > 1
                           return (
                             <td
                               key={col.key}
@@ -457,23 +458,21 @@ const PersonalOrder: React.FC = () => {
                               className={focusedClass.trim() || undefined}
                               onClick={onCellClick}
                             >
-                              {cnt > 1 && (
-                                <span
-                                  title={`합배송 ${cnt}건`}
-                                  style={{
-                                    display: 'inline-block',
-                                    minWidth: 18,
-                                    padding: '1px 6px',
-                                    borderRadius: 9999,
-                                    background: '#FED7AA',
-                                    color: '#9A3412',
-                                    fontSize: 11,
-                                    fontWeight: 600,
-                                  }}
-                                >
-                                  {cnt}
-                                </span>
-                              )}
+                              <span
+                                title={combined ? `합배송 ${cnt}건` : '단일 주문'}
+                                style={{
+                                  display: 'inline-block',
+                                  minWidth: 18,
+                                  padding: '1px 6px',
+                                  borderRadius: 9999,
+                                  background: combined ? '#FED7AA' : '#E5E7EB',
+                                  color: combined ? '#9A3412' : '#6B7280',
+                                  fontSize: 11,
+                                  fontWeight: 600,
+                                }}
+                              >
+                                {cnt}
+                              </span>
                             </td>
                           )
                         }
