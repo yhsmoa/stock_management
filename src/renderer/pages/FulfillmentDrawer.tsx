@@ -21,6 +21,8 @@ interface Props {
   orderNo: string | null
   itemNo: string | null
   productNo: string | null
+  sellerProductId?: string | null  // 등록id (상품명 바로 아래 표시)
+  vendorItemId?: string | null     // 옵션id (상품명 바로 아래 표시)
   note: string               // 현재 비고 값
   noteResetKey: string       // 선택 행 식별 키 (변경 시 입력 draft 리셋)
   onSaveNote: (note: string) => void
@@ -49,6 +51,7 @@ function formatDateTime(iso: string): string {
 // ── 컴포넌트 ──────────────────────────────────────────────────────
 const FulfillmentDrawer: React.FC<Props> = ({
   open, itemIds, itemName, optionName, orderNo, itemNo, productNo,
+  sellerProductId, vendorItemId,
   note, noteResetKey, onSaveNote, onClose, showNote = true,
 }) => {
   const [rows, setRows] = useState<FulfillmentRow[]>([])
@@ -143,6 +146,11 @@ const FulfillmentDrawer: React.FC<Props> = ({
             <p className="po-drawer-product">
               {[itemName, optionName].filter(Boolean).join(', ') || '상품 정보 없음'}
             </p>
+            {(sellerProductId || vendorItemId) && (
+              <p className="po-drawer-meta" style={{ marginBottom: 2 }}>
+                등록id {sellerProductId || '-'} · 옵션id {vendorItemId || '-'}
+              </p>
+            )}
             <p className="po-drawer-meta">
               {orderNo ?? '-'}
               {hasInvoice && (

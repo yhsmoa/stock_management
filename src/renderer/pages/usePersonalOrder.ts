@@ -13,7 +13,7 @@ import {
   fetchPersonalOrders,
   acknowledgeOrders,
   updateOrderStatusToInstruct,
-  upsertTrackingNumbers,
+  updatePendingInvoiceNumbers,
   fetchTrackingNumbers,
   cleanupStaleTracking,
   fetchOrderNotes,
@@ -48,6 +48,8 @@ import {
   printMultipleInvoices,
   fetchInvoiceOrderIds,
   deleteInvoicesByOrderIds,
+  type ParsedInvoicePage,
+  type InvoiceUploadSummary,
 } from '../services/invoiceService'
 import { sendPersonalOrdersPre } from '../services/orderSendService'
 import type { ProgressStep } from '../components/common/ProgressModal'
@@ -71,10 +73,10 @@ export type OrderStatusTab = (typeof ORDER_STATUS_TABS)[number]
 
 /** 테이블 컬럼 정의 */
 export const COLUMNS = [
-  { key: 'order_id',       label: '주문번호',  width: '70px'  },
-  { key: 'seller_product_id', label: '등록id', width: '70px'  },
-  { key: 'vendor_item_id', label: '옵션id',    width: '70px'  },
+  { key: 'order_id',       label: '주문번호',   width: '70px'  },
   { key: 'barcode',        label: '바코드',    width: '70px'  },
+  { key: 'combined_shipping', label: '합배송',  width: '56px'  },
+  { key: 'invoice_no',     label: '운송장번호', width: '100px' },
   { key: 'product_info',   label: '상품정보',  width: '268px' },
   { key: 'receiver_name',  label: '수취인',    width: '80px'  },
   { key: 'shipping_count', label: '수량',      width: '50px'  },
@@ -196,6 +198,8 @@ export interface DrawerItemState {
   orderNo: string | null        // 표시/송장용 (ft_order_items.order_no)
   itemNo: string | null
   productNo: string | null
+  sellerProductId: string | null // 등록id (드로어 상품명 아래 표시)
+  vendorItemId: string | null    // 옵션id (드로어 상품명 아래 표시)
   noteOrderNo: string | null    // 비고 키 = 화면 order_id
   noteOptionId: string | null   // 비고 키 = 화면 vendor_item_id
 }
@@ -232,9 +236,14 @@ export function usePersonalOrder() {
   const [invoiceOrderIds, setInvoiceOrderIds] = useState<Set<string>>(new Set())
 
   // ── 송장 xlsx 운송장 번호 (si_personal_order_tracking) ────
-  const invoiceXlsxInputRef = useRef<HTMLInputElement>(null)
-  const [invoiceXlsxUploading, setInvoiceXlsxUploading] = useState(false)
   const [trackingMap, setTrackingMap] = useState<Map<string, string>>(new Map())
+
+  // ── 송장 통합 업로드(엑셀+PDF) 모달 상태 ──────────────────
+  const [invoiceUploadModalOpen, setInvoiceUploadModalOpen] = useState(false)
+  const [invoiceUploading, setInvoiceUploading] = useState(false)
+  const [invoiceUpdating, setInvoiceUpdating] = useState(false)
+  // PDF 파싱은 비용이 크므로 동일 File 재파싱을 피하기 위한 캐시 (분석/업로드 공용)
+  const parsedPdfCacheRef = useRef<{ file: File | null; pages: ParsedInvoicePage[] }>({ file: null, pages: [] })
 
   // ── fulfillment 상태 (키: `${order_id}|${option_id}`) ─────────
   const [aggMap, setAggMap] = useState<Map<string, FulfillmentAgg>>(new Map())
@@ -669,7 +678,8 @@ export function usePersonalOrder() {
           !!row.order_id
           && !invoiceOrderIds.has(row.order_id)
           && !trackingMap.has(row.order_id)
-          && !row.invoice_number,
+          && !row.invoice_number
+          && !row.pending_invoice_number,
       )
     }
 
@@ -702,6 +712,17 @@ export function usePersonalOrder() {
       return dateA - dateB
     })
   }, [items, selectedTabs, appliedSearch, showUnorderedOnly, showCartOnly, showReleaseStopOnly, showNoInvoiceOnly, showReorderOnly, showNoteOnly, selectedStatuses, invoiceOrderIds, trackingMap, aggMap, multiKeys, orderItemsMap, reorderCountMap, cartKeySet, noteMap])
+
+  // ── 합배송: 주문번호별 라인(상품) 개수 (전체 items 기준) ──────────
+  //   1개면 단일주문, 2개 이상이면 합배송(여러 상품 한 주문)
+  const orderItemCountMap = useMemo(() => {
+    const m = new Map<string, number>()
+    for (const r of items) {
+      if (!r.order_id) continue
+      m.set(r.order_id, (m.get(r.order_id) ?? 0) + 1)
+    }
+    return m
+  }, [items])
 
   // ── [엑셀 다운] 핸들러 (쿠팡 DeliveryList 양식) ────────────────
   const handleExcelDownload = useCallback(() => {
@@ -877,6 +898,8 @@ export function usePersonalOrder() {
       orderNo: first?.order_no ?? row.order_id,
       itemNo: first?.item_no ?? null,
       productNo: first?.product_no ?? null,
+      sellerProductId: row.seller_product_id || null,
+      vendorItemId: row.vendor_item_id || null,
       noteOrderNo: row.order_id,
       noteOptionId: row.vendor_item_id,
     })
@@ -1126,217 +1149,245 @@ export function usePersonalOrder() {
     }
   }, [items, getUserInfo, updateStep, closeProgress])
 
-  // ── [송장 연결] 핸들러 ────────────────────────────────────────────
-  const [invoiceLinking, setInvoiceLinking] = useState(false)
+  // ══════════════════════════════════════════════════════════════════
+  // 송장 통합 업로드 (엑셀 운송장번호 + PDF 라벨) — 동시 등록
+  // ══════════════════════════════════════════════════════════════════
 
-  const handleInvoiceLink = useCallback(async (file: File) => {
+  // ── 엑셀 행 파싱: C열(주문번호) → E열(운송장번호), F열 'N' = 저장 제외 ──
+  const readInvoiceXlsx = useCallback(async (file: File): Promise<Map<string, string>> => {
+    const binaryStr = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader()
+      reader.onload = (ev) => resolve(ev.target?.result as string)
+      reader.onerror = () => reject(new Error('엑셀 파일 읽기 실패'))
+      reader.readAsBinaryString(file)
+    })
+    const workbook = XLSX.read(binaryStr, { type: 'binary' })
+    const worksheet = workbook.Sheets[workbook.SheetNames[0]]
+    const rows = XLSX.utils.sheet_to_json(worksheet, { header: 1 }) as any[][]
+
+    const map = new Map<string, string>()   // order_id → invoice_number (유효 행 전체)
+    for (const row of rows) {
+      if (!row) continue
+      const orderId = row[2] != null ? String(row[2]).trim() : ''
+      const invoiceNum = row[4] != null ? String(row[4]).trim() : ''
+      const skipFlag = row[5] != null ? String(row[5]).trim().toUpperCase() : ''
+      if (!orderId || !invoiceNum || skipFlag === 'N') continue
+      map.set(orderId, invoiceNum)
+    }
+    return map
+  }, [])
+
+  // ── PDF 파싱 (동일 File 재파싱 방지 캐시) ──────────────────────
+  const parsePdfCached = useCallback(async (file: File): Promise<ParsedInvoicePage[]> => {
+    if (parsedPdfCacheRef.current.file === file) return parsedPdfCacheRef.current.pages
+    const pages = await parsePdfInvoices(file)
+    parsedPdfCacheRef.current = { file, pages }
+    return pages
+  }, [])
+
+  // ── 업로드 계획 수립 (분석 미리보기 + 실제 업로드 공용) ────────
+  //   요약(summary) + 엑셀 등록 대상(registerMap) + 업로드 대상 PDF(matchedPages)
+  const buildInvoicePlan = useCallback(async (
+    xlsxFile: File,
+    pdfFile: File,
+  ): Promise<{ summary: InvoiceUploadSummary; registerMap: Map<string, string>; matchedPages: ParsedInvoicePage[] }> => {
+    // (1) 엑셀 파싱 → 유효 운송장 맵
+    const xlsxMap = await readInvoiceXlsx(xlsxFile)
+    const excelTotal = xlsxMap.size
+
+    const orderIdSet = new Set(items.map((r) => r.order_id).filter(Boolean))
+    const pendingSet = new Set(items.filter((r) => r.pending_invoice_number).map((r) => r.order_id))
+    const releaseStopSet = new Set(items.filter((r) => r.release_stop).map((r) => r.order_id))
+    const isCombined = (oid: string) => (orderItemCountMap.get(oid) ?? 1) > 1
+
+    // (2) 엑셀 운송장 등록 대상 — 주문 존재 + 합배송 아님
+    const registerMap = new Map<string, string>()
+    for (const [oid, inv] of xlsxMap) {
+      if (!orderIdSet.has(oid)) continue
+      if (isCombined(oid)) continue
+      registerMap.set(oid, inv)
+    }
+
+    // (3) PDF 파싱 → 업로드 대상 판정
+    //     조건: 주문 존재 + 합배송 아님 + 출고중지 아님 + 운송장번호 존재(xlsx/기존)
+    const pages = await parsePdfCached(pdfFile)
+    const hasTracking = (oid: string) =>
+      xlsxMap.has(oid) || trackingMap.has(oid) || pendingSet.has(oid) || invoiceOrderIds.has(oid)
+
+    const matchedPages: ParsedInvoicePage[] = []
+    let combinedSkip = 0
+    let cancelSkip = 0
+    const failures: { orderId: string; reason: string }[] = []
+
+    for (const p of pages) {
+      if (!orderIdSet.has(p.orderId)) { failures.push({ orderId: p.orderId, reason: '주문 없음' }); continue }
+      if (isCombined(p.orderId)) { combinedSkip++; continue }
+      if (releaseStopSet.has(p.orderId)) { cancelSkip++; continue }
+      if (!hasTracking(p.orderId)) { failures.push({ orderId: p.orderId, reason: '운송장번호 없음' }); continue }
+      matchedPages.push(p)
+    }
+
+    const summary: InvoiceUploadSummary = {
+      excelTotal,
+      excelRegister: registerMap.size,
+      pdfTotal: pages.length,
+      pdfMatch: matchedPages.length,
+      combinedSkip,
+      cancelSkip,
+      failures,
+    }
+    return { summary, registerMap, matchedPages }
+  }, [items, orderItemCountMap, trackingMap, invoiceOrderIds, readInvoiceXlsx, parsePdfCached])
+
+  // ── 모달 요약 분석 (파일 2개 준비되면 자동 호출) ──────────────
+  const analyzeInvoiceFiles = useCallback(async (xlsxFile: File, pdfFile: File): Promise<InvoiceUploadSummary> => {
+    const { summary } = await buildInvoicePlan(xlsxFile, pdfFile)
+    return summary
+  }, [buildInvoicePlan])
+
+  // ── [업로드] 실행 — 엑셀 운송장 등록 + PDF Storage 업로드 ──────
+  const handleInvoiceUpload = useCallback(async (xlsxFile: File, pdfFile: File) => {
     const { userId } = getUserInfo()
     if (!userId) {
       alert('로그인 정보를 확인해 주세요.')
       return
     }
 
-    // ── 진행 모달 초기화 ──────────────────────────────────────
-    setProgressTitle('송장 연결')
+    setProgressTitle('송장 업로드')
     setProgressSteps([
-      { label: 'PDF 페이지 파싱 (주문번호 추출)', state: 'pending' },
-      { label: '주문 데이터와 매칭', state: 'pending' },
-      { label: 'Supabase Storage 업로드', state: 'pending' },
-      { label: '배송완료 송장 정리', state: 'pending' },
+      { label: '파일 분석 (엑셀·PDF 매칭)', state: 'pending' },
+      { label: '엑셀 운송장번호 등록', state: 'pending' },
+      { label: 'PDF Storage 업로드', state: 'pending' },
     ])
-    setProgressStatus(file.name)
+    setProgressStatus(`${xlsxFile.name} · ${pdfFile.name}`)
     setProgressOpen(true)
-    setInvoiceLinking(true)
+    setInvoiceUploading(true)
 
     try {
-      // STEP 1: PDF 파싱
+      // STEP 1: 분석
       updateStep(0, 'active')
-      const pages = await parsePdfInvoices(file)
-      if (pages.length === 0) {
+      const { summary, registerMap, matchedPages } = await buildInvoicePlan(xlsxFile, pdfFile)
+      if (registerMap.size === 0 && matchedPages.length === 0) {
         updateStep(0, 'error')
-        alert('PDF에서 주문번호를 추출할 수 없습니다.')
+        alert('등록할 항목이 없습니다.')
         closeProgress()
         return
       }
-      updateStep(0, 'done', `${pages.length}페이지`)
+      updateStep(0, 'done', `엑셀 ${registerMap.size} · PDF ${matchedPages.length}`)
 
-      // STEP 2: 매칭
-      updateStep(1, 'active')
-      const orderIdSet = new Set(items.map((r) => r.order_id))
-      // xlsx 운송장 등록 또는 기존 PDF가 있는 주문만 업로드
-      const matched = pages.filter(
-        (p) => orderIdSet.has(p.orderId)
-          && (trackingMap.has(p.orderId) || invoiceOrderIds.has(p.orderId)),
-      )
-      const unmatched = pages.filter(
-        (p) => !orderIdSet.has(p.orderId)
-          || (!trackingMap.has(p.orderId) && !invoiceOrderIds.has(p.orderId)),
-      )
-
-      if (matched.length === 0) {
-        updateStep(1, 'error')
-        alert(
-          `매칭된 주문이 없습니다.\n` +
-          `추출된 주문번호 ${pages.length}건 중 현재 주문 데이터와 일치하는 건이 없습니다.`,
+      // STEP 2: 엑셀 운송장번호 등록 (pending_invoice_number)
+      updateStep(1, 'active', `0/${registerMap.size}`)
+      let regResult = { success: 0, errors: 0 }
+      if (registerMap.size > 0) {
+        regResult = await updatePendingInvoiceNumbers(userId, registerMap)
+        setItems((prev) =>
+          prev.map((row) =>
+            row.order_id && registerMap.has(row.order_id)
+              ? { ...row, pending_invoice_number: registerMap.get(row.order_id)! }
+              : row,
+          ),
         )
-        closeProgress()
-        return
       }
-      updateStep(1, 'done', `${matched.length}/${pages.length}건`)
+      updateStep(1, 'done', `${regResult.success}건`)
 
-      // STEP 3: Storage 업로드
-      updateStep(2, 'active', `0/${matched.length}`)
-      const result = await splitAndUploadPages(file, matched, userId)
-      updateStep(2, 'done', `${result.success}/${matched.length}`)
-
-      // 업로드된 order_id 를 invoiceOrderIds 에 즉시 반영 (📝 표시 제거)
-      if (result.success > 0) {
-        setInvoiceOrderIds((prev) => {
-          const next = new Set(prev)
-          for (const p of matched) next.add(p.orderId)
-          return next
-        })
-      }
-
-      // STEP 4: 배송완료 송장 정리 — 준비중/배송지시 없이 배송완료만 남은 주문의 파일 삭제
-      updateStep(3, 'active')
-      const ACTIVE_STATUSES = new Set(['INSTRUCT', 'DEPARTURE'])
-      const TERMINAL_STATUS = 'FINAL_DELIVERY'
-
-      // order_id → 현재 주문의 status Set (동일 order_id 여러 행 고려)
-      const orderStatuses = new Map<string, Set<string>>()
-      for (const row of items) {
-        if (!row.order_id) continue
-        const s = orderStatuses.get(row.order_id) ?? new Set<string>()
-        s.add(row.status)
-        orderStatuses.set(row.order_id, s)
-      }
-
-      // 삭제 대상 추출:
-      //   - 활성 상태(상품준비중/배송지시) 없음
-      //   - 배송완료 포함
-      //   - Storage 파일 존재(invoiceOrderIds) — 불필요한 remove 호출 방지
-      // 업로드 직후 반영된 Set 기준으로 판단
-      const nowInvoiceSet = new Set(invoiceOrderIds)
-      for (const p of matched) nowInvoiceSet.add(p.orderId)
-
-      const deleteOrderIds: string[] = []
-      for (const [orderId, statuses] of orderStatuses) {
-        const hasActive = [...statuses].some((st) => ACTIVE_STATUSES.has(st))
-        const hasTerminal = statuses.has(TERMINAL_STATUS)
-        if (!hasActive && hasTerminal && nowInvoiceSet.has(orderId)) {
-          deleteOrderIds.push(orderId)
-        }
-      }
-
-      let cleanupResult: { deleted: number; errors: string[] } = { deleted: 0, errors: [] }
-      if (deleteOrderIds.length > 0) {
-        cleanupResult = await deleteInvoicesByOrderIds(userId, deleteOrderIds)
-        if (cleanupResult.deleted > 0) {
-          // 로컬 Set 에서도 제거 (📝 표시 갱신)
+      // STEP 3: PDF Storage 업로드 (order_id 별 분리 저장)
+      updateStep(2, 'active', `0/${matchedPages.length}`)
+      let upResult = { success: 0, failed: 0, errors: [] as string[] }
+      if (matchedPages.length > 0) {
+        upResult = await splitAndUploadPages(pdfFile, matchedPages, userId)
+        if (upResult.success > 0) {
           setInvoiceOrderIds((prev) => {
             const next = new Set(prev)
-            for (const id of deleteOrderIds) next.delete(id)
+            for (const p of matchedPages) next.add(p.orderId)
             return next
           })
         }
       }
-      updateStep(3, 'done', `${cleanupResult.deleted}건 정리`)
+      updateStep(2, 'done', `${upResult.success}건`)
 
       setProgressStatus(
-        `완료 — 업로드 ${result.success}, 매칭 실패 ${unmatched.length}, 정리 ${cleanupResult.deleted}` +
-        (result.failed > 0 ? `, 업로드 실패 ${result.failed}` : ''),
+        `완료 — 엑셀 ${regResult.success}, PDF ${upResult.success}` +
+        (summary.combinedSkip > 0 ? `, 합배송 ${summary.combinedSkip}` : '') +
+        (summary.cancelSkip > 0 ? `, 출고중지 ${summary.cancelSkip}` : '') +
+        (summary.failures.length > 0 ? `, 실패 ${summary.failures.length}` : '') +
+        (upResult.failed > 0 ? `, 업로드실패 ${upResult.failed}` : ''),
       )
+      setInvoiceUploadModalOpen(false)
       setTimeout(() => closeProgress(), 1500)
     } catch (err: any) {
-      console.error('[송장 연결] 실패:', err)
+      console.error('[송장 업로드] 실패:', err)
       setProgressSteps((prev) =>
         prev.map((s) => (s.state === 'active' ? { ...s, state: 'error' } : s)),
       )
       setProgressStatus(`실패: ${err.message}`)
-      alert(`송장 연결 실패: ${err.message}`)
+      alert(`송장 업로드 실패: ${err.message}`)
     } finally {
-      setInvoiceLinking(false)
+      setInvoiceUploading(false)
     }
-  }, [items, invoiceOrderIds, trackingMap, getUserInfo, updateStep, closeProgress])
+  }, [getUserInfo, buildInvoicePlan, updateStep, closeProgress])
 
-  // ── [송장 xlsx] 핸들러 — 엑셀 운송장 번호 업로드 ──────────────────
-  const handleInvoiceXlsxUpload = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    if (!file) return
-
+  // ══════════════════════════════════════════════════════════════════
+  // 송장 업데이트 — 출고중지 + 배송완료 정리 (storage 라벨 삭제)
+  //   · 출고중지(release_stop) 주문: 더 이상 출고하지 않으므로 라벨 삭제
+  //   · 배송완료만 남은 주문(활성 상태 없음): 라벨 보관 불필요
+  // ══════════════════════════════════════════════════════════════════
+  const handleInvoiceUpdate = useCallback(async () => {
     const { userId } = getUserInfo()
     if (!userId) {
       alert('로그인 정보를 확인해 주세요.')
       return
     }
 
-    setInvoiceXlsxUploading(true)
-    try {
-      // STEP 1: 파일 읽기
-      const binaryStr = await new Promise<string>((resolve, reject) => {
-        const reader = new FileReader()
-        reader.onload = (ev) => resolve(ev.target?.result as string)
-        reader.onerror = () => reject(new Error('파일 읽기 실패'))
-        reader.readAsBinaryString(file)
-      })
-      const workbook = XLSX.read(binaryStr, { type: 'binary' })
-      const worksheet = workbook.Sheets[workbook.SheetNames[0]]
-      const rows = XLSX.utils.sheet_to_json(worksheet, { header: 1 }) as any[][]
+    const ACTIVE_STATUSES = new Set(['INSTRUCT', 'DEPARTURE'])
+    const TERMINAL_STATUS = 'FINAL_DELIVERY'
 
-      // STEP 2: 파싱 — C열(index 2) = 주문번호, E열(index 4) = 운송장번호
-      const orderIdSet = new Set(items.map((r) => r.order_id).filter(Boolean))
-      const parsed: { user_id: string; order_id: string; invoice_number: string }[] = []
-      let unmatchedCount = 0
-
-      for (let i = 0; i < rows.length; i++) {
-        const row = rows[i]
-        if (!row) continue
-
-        const orderId = row[2] != null ? String(row[2]).trim() : ''
-        const invoiceNum = row[4] != null ? String(row[4]).trim() : ''
-        const skipFlag = row[5] != null ? String(row[5]).trim().toUpperCase() : ''
-
-        if (!orderId || !invoiceNum) continue
-        if (skipFlag === 'N') continue // F열 "N" → 저장 불필요
-
-        if (orderIdSet.has(orderId)) {
-          parsed.push({ user_id: userId, order_id: orderId, invoice_number: invoiceNum })
-        } else {
-          unmatchedCount++
-        }
-      }
-
-      if (parsed.length === 0) {
-        alert(`매칭 가능한 데이터가 없습니다.${unmatchedCount > 0 ? `\n(미매칭: ${unmatchedCount}건)` : ''}`)
-        return
-      }
-
-      // STEP 3: DB 저장
-      const { success, errors } = await upsertTrackingNumbers(parsed)
-
-      // STEP 4: 로컬 상태 갱신
-      setTrackingMap((prev) => {
-        const next = new Map(prev)
-        for (const r of parsed) {
-          next.set(r.order_id, r.invoice_number)
-        }
-        return next
-      })
-
-      alert(
-        `송장 xlsx 업로드 완료!\n` +
-        `매칭 저장: ${success}건${errors > 0 ? `, 실패: ${errors}건` : ''}` +
-        `${unmatchedCount > 0 ? `\n미매칭(주문번호 없음): ${unmatchedCount}건` : ''}`,
-      )
-    } catch (err: any) {
-      console.error('[송장 xlsx] 실패:', err)
-      alert(`송장 xlsx 업로드 중 오류가 발생했습니다.\n${err.message || ''}`)
-    } finally {
-      setInvoiceXlsxUploading(false)
-      if (invoiceXlsxInputRef.current) invoiceXlsxInputRef.current.value = ''
+    // order_id → status Set, 출고중지 order 집합
+    const orderStatuses = new Map<string, Set<string>>()
+    const releaseStopOrders = new Set<string>()
+    for (const row of items) {
+      if (!row.order_id) continue
+      const s = orderStatuses.get(row.order_id) ?? new Set<string>()
+      s.add(row.status)
+      orderStatuses.set(row.order_id, s)
+      if (row.release_stop) releaseStopOrders.add(row.order_id)
     }
-  }, [items, getUserInfo])
+
+    // 삭제 대상 = (출고중지 ∪ 배송완료-only) ∩ storage 파일 존재
+    const deleteSet = new Set<string>()
+    for (const oid of releaseStopOrders) {
+      if (invoiceOrderIds.has(oid)) deleteSet.add(oid)
+    }
+    for (const [oid, statuses] of orderStatuses) {
+      const hasActive = [...statuses].some((st) => ACTIVE_STATUSES.has(st))
+      const hasTerminal = statuses.has(TERMINAL_STATUS)
+      if (!hasActive && hasTerminal && invoiceOrderIds.has(oid)) deleteSet.add(oid)
+    }
+
+    if (deleteSet.size === 0) {
+      alert('삭제할 송장 파일이 없습니다.\n(출고중지·배송완료 정리 대상 없음)')
+      return
+    }
+    if (!window.confirm(`송장 파일 ${deleteSet.size}건을 삭제합니다.\n(출고중지·배송완료 정리 대상)\n계속하시겠습니까?`)) return
+
+    setInvoiceUpdating(true)
+    try {
+      const deleteIds = Array.from(deleteSet)
+      const { deleted, errors } = await deleteInvoicesByOrderIds(userId, deleteIds)
+      if (deleted > 0) {
+        setInvoiceOrderIds((prev) => {
+          const next = new Set(prev)
+          for (const id of deleteIds) next.delete(id)
+          return next
+        })
+      }
+      alert(`송장 업데이트 완료 — ${deleted}건 삭제${errors.length > 0 ? `\n오류 ${errors.length}건` : ''}`)
+    } catch (err: any) {
+      console.error('[송장 업데이트] 실패:', err)
+      alert(`송장 업데이트 실패: ${err.message}`)
+    } finally {
+      setInvoiceUpdating(false)
+    }
+  }, [items, invoiceOrderIds, getUserInfo])
 
   // ── [송장 인쇄] 핸들러 (체크된 주문 일괄 인쇄) ───────────────────
   const [invoicePrinting, setInvoicePrinting] = useState(false)
@@ -1515,12 +1566,16 @@ export function usePersonalOrder() {
     handleRowClick,
     handleBarcodeLink,
     barcodeLoading,
-    handleInvoiceLink,
-    invoiceLinking,
-    handleInvoiceXlsxUpload,
-    invoiceXlsxUploading,
-    invoiceXlsxInputRef,
     trackingMap,
+    // 송장 통합 업로드 모달
+    invoiceUploadModalOpen,
+    setInvoiceUploadModalOpen,
+    invoiceUploading,
+    analyzeInvoiceFiles,
+    handleInvoiceUpload,
+    // 송장 업데이트 (출고중지·배송완료 정리)
+    handleInvoiceUpdate,
+    invoiceUpdating,
     handleInvoicePrint,
     invoicePrinting,
     handleSelectAll,
@@ -1537,5 +1592,6 @@ export function usePersonalOrder() {
     getAgg,
     getRowStatus,
     reorderCountMap,
+    orderItemCountMap,
   }
 }

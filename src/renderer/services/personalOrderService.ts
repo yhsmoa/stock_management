@@ -77,6 +77,9 @@ export interface PersonalOrderRow {
   order_price_units: number
   delivery_company_name: string
   invoice_number: string
+  // 이용자가 송장 xlsx로 등록한 운송장번호 (API invoice_number 가 비었을 때 표시).
+  // 새로 추가된 컬럼 — [업데이트] 재삽입 시 별도 보존 로직으로 유지.
+  pending_invoice_number?: string | null
   estimated_shipping_date: string | null
   planned_shipping_date: string | null
   in_transit_date_time: string | null
@@ -538,33 +541,65 @@ export async function updateOrderStatusToInstruct(
 // Supabase CRUD
 // ══════════════════════════════════════════════════════════════════
 
-/** 기존 데이터 삭제 후 배치 INSERT */
+/**
+ * 개인주문 동기화 — Upsert + Prune (reconcile)
+ * - 유니크 제약 (user_id, shipment_box_id, vendor_item_id) 기준 upsert:
+ *   받아온 것 중 신규는 삽입, 기존은 갱신. payload 에 id·pending_invoice_number 가
+ *   없으므로 id 는 유지/자동생성되고 pending(사용자 등록 운송장번호)은 보존된다.
+ * - Prune: 이번에 안 온 기존 행만 삭제 → 누적 없음, 전체 교체보다 write 최소.
+ * - ⚠️ payload 에 id 를 넣지 않는 것이 핵심(넣으면 batch upsert 에서 null-id 위험).
+ */
 export async function savePersonalOrders(
   rows: PersonalOrderRow[],
   userId: string,
 ): Promise<{ success: boolean; count: number; error?: string }> {
+  const keyOf = (r: { shipment_box_id: string; vendor_item_id: string }) =>
+    `${r.shipment_box_id}|${r.vendor_item_id}`
+
   try {
-    // ── 기존 데이터 삭제 (user_id 기준) ──────────────────────────
-    const { error: deleteError } = await supabase
-      .from('coupang_personal_orders')
-      .delete()
-      .eq('user_id', userId)
+    // ── 1. Upsert (onConflict = 유니크 제약). rows 에 id/pending 없음 → 자동 처리 ──
+    const newKeys = new Set<string>()
+    for (const r of rows) newKeys.add(keyOf(r))
 
-    if (deleteError) throw deleteError
-
-    // ── 배치 INSERT ─────────────────────────────────────────────
-    let insertedCount = 0
+    let count = 0
     for (let i = 0; i < rows.length; i += SUPABASE_BATCH_SIZE) {
       const batch = rows.slice(i, i + SUPABASE_BATCH_SIZE)
-      const { error: insertError } = await supabase
+      const { error } = await supabase
         .from('coupang_personal_orders')
-        .insert(batch)
-
-      if (insertError) throw insertError
-      insertedCount += batch.length
+        .upsert(batch, { onConflict: 'user_id,shipment_box_id,vendor_item_id' })
+      if (error) throw error
+      count += batch.length
     }
 
-    return { success: true, count: insertedCount }
+    // ── 2. Prune: 현재 DB 행 중 이번에 안 온 것만 삭제 (id 로 삭제) ──────
+    const idsToDelete: string[] = []
+    {
+      let from = 0
+      while (true) {
+        const { data, error } = await supabase
+          .from('coupang_personal_orders')
+          .select('id, shipment_box_id, vendor_item_id')
+          .eq('user_id', userId)
+          .range(from, from + 999)
+        if (error) throw error
+        if (!data || data.length === 0) break
+        for (const r of data as any[]) {
+          if (!newKeys.has(keyOf(r))) idsToDelete.push(r.id)
+        }
+        if (data.length < 1000) break
+        from += 1000
+      }
+    }
+    for (let i = 0; i < idsToDelete.length; i += SUPABASE_BATCH_SIZE) {
+      const batch = idsToDelete.slice(i, i + SUPABASE_BATCH_SIZE)
+      const { error } = await supabase
+        .from('coupang_personal_orders')
+        .delete()
+        .in('id', batch)
+      if (error) console.error('[personalOrderService] prune 삭제 오류:', error.message)
+    }
+
+    return { success: true, count }
   } catch (err: any) {
     console.error('[personalOrderService] 저장 실패:', err.message)
     return { success: false, count: 0, error: err.message }
@@ -603,6 +638,41 @@ export async function fetchPersonalOrders(
   }
 
   return allData
+}
+
+// ══════════════════════════════════════════════════════════════════
+// pending_invoice_number (이용자 등록 운송장번호) — coupang_personal_orders 컬럼
+// - 송장 xlsx 업로드 시 order_id 기준으로 UPDATE
+// - [업데이트] 삭제+재삽입 시 값이 사라지지 않도록 보존용 조회/재적용 제공
+// ══════════════════════════════════════════════════════════════════
+
+/** order_id → pending_invoice_number 일괄 UPDATE (동시성 제한) */
+export async function updatePendingInvoiceNumbers(
+  userId: string,
+  map: Map<string, string>,
+): Promise<{ success: number; errors: number }> {
+  let success = 0
+  let errors = 0
+  const entries = Array.from(map.entries())
+  const CONCURRENCY = 10
+
+  for (let i = 0; i < entries.length; i += CONCURRENCY) {
+    const chunk = entries.slice(i, i + CONCURRENCY)
+    const results = await Promise.all(
+      chunk.map(async ([orderId, invoiceNumber]) => {
+        const { error } = await supabase
+          .from('coupang_personal_orders')
+          .update({ pending_invoice_number: invoiceNumber })
+          .eq('user_id', userId)
+          .eq('order_id', orderId)
+        if (error) console.error('[pending 송장] update 오류:', orderId, error.message)
+        return !error
+      }),
+    )
+    for (const ok of results) ok ? success++ : errors++
+  }
+
+  return { success, errors }
 }
 
 // ══════════════════════════════════════════════════════════════════

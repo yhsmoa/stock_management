@@ -3,7 +3,7 @@
    - 로직은 usePersonalOrder 훅에서 관리
    ================================================================ */
 
-import React, { useRef, useState, useEffect } from 'react'
+import React, { useState, useEffect } from 'react'
 import './PersonalOrder.css'
 import FulfillmentDrawer from './FulfillmentDrawer'
 import ProgressModal from '../components/common/ProgressModal'
@@ -18,6 +18,7 @@ import {
 import { makeFulfillmentKey } from '../services/orderFulfillmentService'
 import CartNameInputModal from '../components/personal-order/CartNameInputModal'
 import InboundShipmentModal from '../components/personal-order/InboundShipmentModal'
+import InvoiceUploadModal from '../components/personal-order/InvoiceUploadModal'
 import DropdownMenu, { DropdownItem } from '../components/common/DropdownMenu'
 
 const PersonalOrder: React.FC = () => {
@@ -39,7 +40,6 @@ const PersonalOrder: React.FC = () => {
     showReorderOnly,
     showNoteOnly,
     selectedStatuses,
-    invoiceOrderIds,
     selectedDrawerItem,
     setSelectedDrawerItem,
     noteMap,
@@ -72,12 +72,15 @@ const PersonalOrder: React.FC = () => {
     handleSearchSubmit,
     handleBarcodeLink,
     barcodeLoading,
-    handleInvoiceLink,
-    invoiceLinking,
-    handleInvoiceXlsxUpload,
-    invoiceXlsxUploading,
-    invoiceXlsxInputRef,
-    trackingMap,
+    // 송장 통합 업로드 모달
+    invoiceUploadModalOpen,
+    setInvoiceUploadModalOpen,
+    invoiceUploading,
+    analyzeInvoiceFiles,
+    handleInvoiceUpload,
+    // 송장 업데이트 (출고중지·배송완료 정리)
+    handleInvoiceUpdate,
+    invoiceUpdating,
     handleInvoicePrint,
     invoicePrinting,
     // 진행 모달
@@ -97,10 +100,8 @@ const PersonalOrder: React.FC = () => {
     getAgg,
     getRowStatus,
     reorderCountMap,
+    orderItemCountMap,
   } = usePersonalOrder()
-
-  // ── 송장 연결 파일 input ref ────────────────────────────────────
-  const invoiceInputRef = useRef<HTMLInputElement>(null)
 
   // ── 셀 선택(엑셀 UX): 1클릭 → 셀 활성, Ctrl+C → 텍스트 복사 ─────
   const [focusedCell, setFocusedCell] = useState<{ rowKey: string; colKey: string } | null>(null)
@@ -155,26 +156,6 @@ const PersonalOrder: React.FC = () => {
   return (
     <div className="po-container">
 
-      {/* ── 숨김 파일 input (송장 xlsx / pdf) — 드롭다운 항목에서 트리거 ── */}
-      <input
-        ref={invoiceXlsxInputRef}
-        type="file"
-        accept=".xlsx,.xls"
-        style={{ display: 'none' }}
-        onChange={handleInvoiceXlsxUpload}
-      />
-      <input
-        ref={invoiceInputRef}
-        type="file"
-        accept=".pdf"
-        style={{ display: 'none' }}
-        onChange={(e) => {
-          const file = e.target.files?.[0]
-          if (file) handleInvoiceLink(file)
-          e.target.value = ''
-        }}
-      />
-
       {/* ── 상단: 좌측 배송 메뉴 + 업데이트/바코드 | 우측 송장·엑셀·주문 ── */}
       <div className="po-top-actions">
         <div className="po-toolbar-left">
@@ -216,19 +197,13 @@ const PersonalOrder: React.FC = () => {
         </div>
 
         <div className="po-toolbar-right">
-          {/* ── [송장]: xlsx 업로드 / pdf 업로드 / 출력 ── */}
+          {/* ── [송장]: 통합 업로드(엑셀+PDF) / 출력 / 업데이트 ── */}
           <DropdownMenu label="송장" align="right">
             <DropdownItem
-              onClick={() => invoiceXlsxInputRef.current?.click()}
-              disabled={invoiceXlsxUploading}
+              onClick={() => setInvoiceUploadModalOpen(true)}
+              disabled={invoiceUploading}
             >
-              {invoiceXlsxUploading ? '업로드 중...' : '송장 xlsx 업로드'}
-            </DropdownItem>
-            <DropdownItem
-              onClick={() => invoiceInputRef.current?.click()}
-              disabled={invoiceLinking}
-            >
-              {invoiceLinking ? '연결 중...' : '송장 pdf 업로드'}
+              {invoiceUploading ? '업로드 중...' : '송장 업로드'}
             </DropdownItem>
             <DropdownItem
               onClick={handleInvoicePrint}
@@ -237,6 +212,12 @@ const PersonalOrder: React.FC = () => {
               {invoicePrinting
                 ? '인쇄 준비 중...'
                 : `송장 출력${selectedIds.size > 0 ? ` (${selectedIds.size})` : ''}`}
+            </DropdownItem>
+            <DropdownItem
+              onClick={handleInvoiceUpdate}
+              disabled={invoiceUpdating}
+            >
+              {invoiceUpdating ? '정리 중...' : '✨ 송장 업데이트'}
             </DropdownItem>
           </DropdownMenu>
 
@@ -445,6 +426,58 @@ const PersonalOrder: React.FC = () => {
                           'data-col-key': col.key,
                         }
 
+                        // ── 운송장번호 (invoice_number → pending_invoice_number(주황) → '-') ──
+                        if (col.key === 'invoice_no') {
+                          const inv = (row.invoice_number ?? '').trim()
+                          const pending = (row.pending_invoice_number ?? '').trim()
+                          return (
+                            <td
+                              key={col.key}
+                              {...cellDataAttrs}
+                              className={focusedClass.trim() || undefined}
+                              title={inv || pending || '-'}
+                              onClick={onCellClick}
+                            >
+                              {inv
+                                ? inv
+                                : pending
+                                  ? <span style={{ color: '#C2410C', fontWeight: 600 }}>{pending}</span>
+                                  : '-'}
+                            </td>
+                          )
+                        }
+
+                        // ── 합배송 (주문 라인수: 1개면 표시 없음, 2개↑면 회색 배지 숫자) ──
+                        if (col.key === 'combined_shipping') {
+                          const cnt = row.order_id ? (orderItemCountMap.get(row.order_id) ?? 1) : 1
+                          return (
+                            <td
+                              key={col.key}
+                              {...cellDataAttrs}
+                              className={focusedClass.trim() || undefined}
+                              onClick={onCellClick}
+                            >
+                              {cnt > 1 && (
+                                <span
+                                  title={`합배송 ${cnt}건`}
+                                  style={{
+                                    display: 'inline-block',
+                                    minWidth: 18,
+                                    padding: '1px 6px',
+                                    borderRadius: 9999,
+                                    background: '#FED7AA',
+                                    color: '#9A3412',
+                                    fontSize: 11,
+                                    fontWeight: 600,
+                                  }}
+                                >
+                                  {cnt}
+                                </span>
+                              )}
+                            </td>
+                          )
+                        }
+
                         // ── fulfillment 컬럼 ──
                         if (col.key === 'ff_status') {
                           return (
@@ -525,11 +558,6 @@ const PersonalOrder: React.FC = () => {
                             ? makeFulfillmentKey(row.order_id, row.vendor_item_id)
                             : ''
                           const reorderCount = ffKey ? (reorderCountMap.get(ffKey) ?? 1) : 1
-                          const needInvoice =
-                            !!row.order_id
-                            && !invoiceOrderIds.has(row.order_id)
-                            && !trackingMap.has(row.order_id)
-                            && !row.invoice_number
                           const hasNote = !!ffKey && noteMap.has(ffKey)
                           const alloc = inboundActive ? inboundAllocMap.get(rowKey) : undefined
                           const baseTitle = getCellValue(row, col.key)
@@ -538,7 +566,6 @@ const PersonalOrder: React.FC = () => {
                           if (hasNote) titleParts.push('[비고]')
                           if (row.release_stop) titleParts.push('[출고중지요청]')
                           if (reorderCount >= 2) titleParts.push(`[${reorderCount}차]`)
-                          if (needInvoice) titleParts.push('[송장 미연결]')
                           titleParts.push(baseTitle)
 
                           return (
@@ -593,15 +620,6 @@ const PersonalOrder: React.FC = () => {
                                   title={`${reorderCount}차 주문`}
                                 >
                                   {reorderCount}차
-                                </span>
-                              )}
-                              {needInvoice && (
-                                <span
-                                  style={{ marginLeft: 4 }}
-                                  title="송장 미연결"
-                                  aria-label="송장 미연결"
-                                >
-                                  📝
                                 </span>
                               )}
                               {alloc?.matched && (
@@ -701,6 +719,8 @@ const PersonalOrder: React.FC = () => {
         orderNo={selectedDrawerItem?.orderNo ?? null}
         itemNo={selectedDrawerItem?.itemNo ?? null}
         productNo={selectedDrawerItem?.productNo ?? null}
+        sellerProductId={selectedDrawerItem?.sellerProductId ?? null}
+        vendorItemId={selectedDrawerItem?.vendorItemId ?? null}
         note={
           selectedDrawerItem?.noteOrderNo
             ? (noteMap.get(makeFulfillmentKey(selectedDrawerItem.noteOrderNo, selectedDrawerItem.noteOptionId)) ?? '')
@@ -738,6 +758,15 @@ const PersonalOrder: React.FC = () => {
         onClose={() => setOrderSendModalOpen(false)}
         onSubmit={handleConfirmOrderSend}
         loading={orderSending}
+      />
+
+      {/* ── 송장 통합 업로드 — 엑셀 + PDF 모달 ───────────────── */}
+      <InvoiceUploadModal
+        isOpen={invoiceUploadModalOpen}
+        uploading={invoiceUploading}
+        onClose={() => setInvoiceUploadModalOpen(false)}
+        onAnalyze={analyzeInvoiceFiles}
+        onSubmit={handleInvoiceUpload}
       />
     </div>
   )

@@ -31,6 +31,20 @@ export interface UploadResult {
   errors: string[]
 }
 
+/**
+ * 통합 송장 업로드(엑셀+PDF) 분석 결과 요약.
+ * - 실제 저장 전 미리보기(모달 요약)와 업로드 후 결과 표시에 공용으로 사용.
+ */
+export interface InvoiceUploadSummary {
+  excelTotal: number     // 엑셀에서 읽은 유효 운송장 행 수 (주문번호+운송장번호, skip 아님)
+  excelRegister: number  // 현재 주문과 매칭되어 운송장번호가 등록될 건수
+  pdfTotal: number       // PDF 총 페이지 수
+  pdfMatch: number       // storage 에 업로드될 PDF 건수
+  combinedSkip: number   // 합배송(주문 라인 2개↑)으로 제외된 PDF 건수
+  cancelSkip: number     // 출고중지(release_stop)로 제외된 PDF 건수
+  failures: { orderId: string; reason: string }[]  // 실패건 + 사유
+}
+
 // ══════════════════════════════════════════════════════════════════
 // PDF 파싱 — 페이지별 운송장번호/주문번호 추출
 // ══════════════════════════════════════════════════════════════════
