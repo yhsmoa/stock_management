@@ -180,24 +180,31 @@ const PersonalOrder: React.FC = () => {
             })}
           </DropdownMenu>
 
-          <button
-            className="po-btn"
-            onClick={handleUpdate}
-            disabled={updating}
-          >
-            {updating ? '업데이트 중...' : '업데이트'}
-          </button>
-          <button
-            className="po-btn"
-            onClick={handleBarcodeLink}
-            disabled={barcodeLoading}
-          >
-            {barcodeLoading ? '매칭 중...' : '바코드 연결'}
-          </button>
+          {/* ── [업데이트]: 주문 업데이트 / 바코드 연결 / 송장 업데이트 ── */}
+          <DropdownMenu label="업데이트">
+            <DropdownItem
+              onClick={handleUpdate}
+              disabled={updating}
+            >
+              {updating ? '업데이트 중...' : '주문 업데이트'}
+            </DropdownItem>
+            <DropdownItem
+              onClick={handleBarcodeLink}
+              disabled={barcodeLoading}
+            >
+              {barcodeLoading ? '매칭 중...' : '바코드 연결'}
+            </DropdownItem>
+            <DropdownItem
+              onClick={handleInvoiceUpdate}
+              disabled={invoiceUpdating}
+            >
+              {invoiceUpdating ? '정리 중...' : '✨ 송장 업데이트'}
+            </DropdownItem>
+          </DropdownMenu>
         </div>
 
         <div className="po-toolbar-right">
-          {/* ── [송장]: 통합 업로드(엑셀+PDF) / 출력 / 업데이트 ── */}
+          {/* ── [송장]: 통합 업로드(엑셀+PDF) / 출력 ── */}
           <DropdownMenu label="송장" align="right">
             <DropdownItem
               onClick={() => setInvoiceUploadModalOpen(true)}
@@ -212,12 +219,6 @@ const PersonalOrder: React.FC = () => {
               {invoicePrinting
                 ? '인쇄 준비 중...'
                 : `송장 출력${selectedIds.size > 0 ? ` (${selectedIds.size})` : ''}`}
-            </DropdownItem>
-            <DropdownItem
-              onClick={handleInvoiceUpdate}
-              disabled={invoiceUpdating}
-            >
-              {invoiceUpdating ? '정리 중...' : '✨ 송장 업데이트'}
             </DropdownItem>
           </DropdownMenu>
 
