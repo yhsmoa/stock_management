@@ -224,11 +224,34 @@ const GROWTH_EXAMPLE_ROW: (string | number)[] = ['예시 및 설명','스누피 
 // 숨김 열 (1-based, 원본 <cols hidden> 그대로)
 const GROWTH_HIDDEN_COLS_1BASED = new Set([4,5,9,10,11,12,13,14,15,16,17,18,19,20,21,24,25,26,27,31,32,33,34,35])
 
-/** 선택 행 → 그로스 입고 워크북 생성 */
+/**
+ * 중복 상품 합산 — 같은 상품(바코드 기준)이 여러 위치(location)에 나뉘어 있으면
+ * 출력 양식에는 위치가 빠지므로 동일 행이 중복된다. 바코드로 묶어 입고수량을 합산한다.
+ * - 바코드가 비면 옵션id, 그것도 없으면 병합하지 않음(고유 키).
+ * - 첫 등장 순서 보존, 나머지 필드는 첫 행 값 유지(동일 상품이면 값이 같다).
+ */
+function mergeByProduct(rows: RocketShipmentRow[]): RocketShipmentRow[] {
+  const map = new Map<string, RocketShipmentRow>()
+  const merged: RocketShipmentRow[] = []
+  rows.forEach((r, i) => {
+    const key = r.barcode?.trim() || r.optionId?.trim() || `__row_${i}`
+    const found = map.get(key)
+    if (found) {
+      found.quantity += r.quantity
+    } else {
+      const copy = { ...r }
+      map.set(key, copy)
+      merged.push(copy)
+    }
+  })
+  return merged
+}
+
+/** 선택 행 → 그로스 입고 워크북 생성 (중복 상품은 수량 합산) */
 export function buildGrowthInboundWorkbook(rows: RocketShipmentRow[]): XLSX.WorkBook {
   const ncols = GROWTH_HEADER_ROW.length // 35
 
-  const dataRows: (string | number)[][] = rows.map((r, i) => {
+  const dataRows: (string | number)[][] = mergeByProduct(rows).map((r, i) => {
     const arr: (string | number)[] = new Array(ncols).fill('')
     arr[0] = i + 1              // No.
     arr[1] = r.itemName         // 등록상품명
