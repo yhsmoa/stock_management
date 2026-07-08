@@ -450,6 +450,49 @@ export class StockService {
   }
 
   /**
+   * 바코드 기준 총재고 Map 조회 (barcode → 모든 로케이션 qty 합산)
+   * - 같은 barcode 가 (location + barcode) 단위로 여러 행에 흩어져 있으므로 합산 필요
+   * - barcode, qty 만 select 하고 1000행 배치 페이지네이션으로 전체 처리
+   */
+  static async getStockQtyByBarcode(userId: string): Promise<Map<string, number>> {
+    const map = new Map<string, number>()
+    if (!userId) return map
+
+    try {
+      let from = 0
+      const batchSize = 1000
+
+      while (true) {
+        const { data, error } = await supabase
+          .from('si_stocks')
+          .select('barcode, qty')
+          .eq('user_id', userId)
+          .range(from, from + batchSize - 1)
+
+        if (error) {
+          console.error('바코드별 재고 조회 오류:', error)
+          break
+        }
+        if (!data || data.length === 0) break
+
+        for (const s of data as { barcode: string | null; qty: number | null }[]) {
+          const bc = (s.barcode ?? '').trim()
+          if (!bc) continue
+          map.set(bc, (map.get(bc) ?? 0) + (s.qty ?? 0))
+        }
+
+        if (data.length < batchSize) break
+        from += batchSize
+      }
+
+      return map
+    } catch (error) {
+      console.error('바코드별 재고 조회 실패:', error)
+      return map
+    }
+  }
+
+  /**
    * 재고 일괄 삽입 (500건씩 배치)
    */
   static async batchCreateStocks(stocks: Omit<Stock, 'id'>[]): Promise<{ created: number; errors: number }> {

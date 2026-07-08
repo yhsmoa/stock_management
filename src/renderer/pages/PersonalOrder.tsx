@@ -72,6 +72,7 @@ const PersonalOrder: React.FC = () => {
     handleSearchSubmit,
     handleBarcodeLink,
     barcodeLoading,
+    stockMap,
     // 송장 통합 업로드 모달
     invoiceUploadModalOpen,
     setInvoiceUploadModalOpen,
@@ -474,6 +475,26 @@ const PersonalOrder: React.FC = () => {
                               >
                                 {cnt}
                               </span>
+                            </td>
+                          )
+                        }
+
+                        // ── 재고 (바코드 기준 총재고, inventory 페이지 기준) ──
+                        //   1 이상일 때만 파란색 숫자, 0 또는 바코드 없으면 빈칸
+                        if (col.key === 'stock') {
+                          const bc = (row.barcode ?? '').trim()
+                          const qty = bc ? (stockMap.get(bc) ?? 0) : 0
+                          return (
+                            <td
+                              key={col.key}
+                              {...cellDataAttrs}
+                              className={focusedClass.trim() || undefined}
+                              title={qty > 0 ? `재고 ${qty}` : undefined}
+                              onClick={onCellClick}
+                            >
+                              {qty > 0 && (
+                                <span style={{ color: '#2563EB', fontWeight: 600 }}>{qty}</span>
+                              )}
                             </td>
                           )
                         }

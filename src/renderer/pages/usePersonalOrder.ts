@@ -52,6 +52,7 @@ import {
   type InvoiceUploadSummary,
 } from '../services/invoiceService'
 import { sendPersonalOrdersPre } from '../services/orderSendService'
+import { StockService } from '../services/stockService'
 import type { ProgressStep } from '../components/common/ProgressModal'
 import type { AuthUser } from '../types/auth'
 
@@ -83,6 +84,7 @@ export const COLUMNS = [
   { key: 'status_label',   label: '주문상태',  width: '70px'  },
   { key: 'estimated_shipping_date', label: '출고예정', width: '60px' },
   { key: 'ordered_at_label', label: '주문일', width: '60px' },
+  { key: 'stock',          label: '재고',      width: '44px'  },
   { key: 'ff_status',      label: '상태',      width: '36px'  },
   { key: 'ff_arrival',     label: '입고',      width: '36px'  },
   { key: 'ff_packed',      label: '포장',      width: '36px'  },
@@ -238,6 +240,9 @@ export function usePersonalOrder() {
   // ── 송장 xlsx 운송장 번호 (si_personal_order_tracking) ────
   const [trackingMap, setTrackingMap] = useState<Map<string, string>>(new Map())
 
+  // ── 재고 (si_stocks) — barcode → 총수량(모든 로케이션 합산) ────
+  const [stockMap, setStockMap] = useState<Map<string, number>>(new Map())
+
   // ── 송장 통합 업로드(엑셀+PDF) 모달 상태 ──────────────────
   const [invoiceUploadModalOpen, setInvoiceUploadModalOpen] = useState(false)
   const [invoiceUploading, setInvoiceUploading] = useState(false)
@@ -368,17 +373,19 @@ export function usePersonalOrder() {
       if (!userId) return
       setLoading(true)
       try {
-        // DB 주문 조회 + Storage 송장 파일 목록 + xlsx 운송장 번호 (병렬)
-        const [data, invIds, trkMap, notes] = await Promise.all([
+        // DB 주문 조회 + Storage 송장 파일 목록 + xlsx 운송장 번호 + 재고 (병렬)
+        const [data, invIds, trkMap, notes, stkMap] = await Promise.all([
           fetchPersonalOrders(userId),
           fetchInvoiceOrderIds(userId),
           fetchTrackingNumbers(userId),
           fetchOrderNotes(userId),
+          StockService.getStockQtyByBarcode(userId),
         ])
         setItems(data)
         setInvoiceOrderIds(invIds)
         setTrackingMap(trkMap)
         setNoteMap(notes)
+        setStockMap(stkMap)
         await loadFulfillmentData(data)
       } catch (err) {
         console.error('데이터 로드 실패:', err)
@@ -1567,6 +1574,7 @@ export function usePersonalOrder() {
     handleBarcodeLink,
     barcodeLoading,
     trackingMap,
+    stockMap,
     // 송장 통합 업로드 모달
     invoiceUploadModalOpen,
     setInvoiceUploadModalOpen,
