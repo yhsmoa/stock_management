@@ -27,7 +27,11 @@ function getCoupangHeaders(): Record<string, string> {
 }
 
 // ══════════════════════════════════════════════════════════════════
-// 취소 사유 (WING '반품 접수' 모달 기준)
+// 취소 사유 (CANCEL_ORDER_PROCESSING API — bigCancelCode / middleCancelCode)
+//   - 판매자사유(VENDOR): 확인된 코드. big='CANERR', middle=CCTTER/CCPNER/CCPRER
+//   - 고객사유(CUSTOMER): VOC reasonCode 기반 **추정값** (실테스트 검증 필요).
+//       big='CANERR' 고정 가정 + middle=VOC reasonCode(CHANGEMIND 등).
+//       쿠팡이 거부하면 취소가 안 될 뿐(잘못 취소되진 않음) → 응답 오류로 코드 보정.
 // ══════════════════════════════════════════════════════════════════
 
 /** 귀책 구분 */
@@ -38,48 +42,34 @@ export const FAULT_LABELS: Record<FaultType, string> = {
   CUSTOMER: '고객사유',
 }
 
-/** 귀책별 사유 라벨 목록 (WING 화면과 동일 순서) */
-export const CANCEL_REASONS: Record<FaultType, string[]> = {
-  CUSTOMER: ['단순 변심', '잘못 주문', '배송일정 불만', '상품 불만', '가격 불만'],
+/** 취소 사유 옵션 — UI 라벨 + 전송 코드(big/middle) */
+export interface CancelReasonOption {
+  label: string   // UI 표시 라벨
+  big: string     // bigCancelCode
+  middle: string  // middleCancelCode
+}
+
+export const CANCEL_REASONS: Record<FaultType, CancelReasonOption[]> = {
+  // ── 판매자사유 (확인된 코드) ──
   VENDOR: [
-    '상품오출고', '상품 누락', '배송 지연', '택배사 미발송', '상품 파손',
-    '상품 불량', '상품 품절', '잘못된 가격 기재', '잘못된 상품명 기재', '잘못된 상품정보 기재',
+    { label: '재고 문제 (품절)',              big: 'CANERR', middle: 'CCTTER' },
+    { label: '배송지 오류 (제휴사이트 주소)', big: 'CANERR', middle: 'CCPNER' },
+    { label: '가격 오류 (양사 가격)',         big: 'CANERR', middle: 'CCPRER' },
+  ],
+  // ── 고객사유 (VOC reasonCode 기반 추정 — 실테스트로 검증) ──
+  CUSTOMER: [
+    { label: '단순 변심',     big: 'CANERR', middle: 'CHANGEMIND' },
+    { label: '잘못 주문',     big: 'CANERR', middle: 'WRONGOPT' },
+    { label: '배송일정 불만', big: 'CANERR', middle: 'DELIVERYLATER' },
+    { label: '상품 불만',     big: 'CANERR', middle: 'DONTLIKESIZECOLOR' },
+    { label: '가격 불만',     big: 'CANERR', middle: 'CHEAPER' },
   ],
 }
 
-/**
- * 사유 라벨 → 쿠팡 취소 코드 (bigCancelCode / middleCancelCode)
- *
- * ⚠️ 실제 코드값 미확인 상태. 쿠팡 문서의 '취소 사유 코드 표' 또는
- *    WING에서 취소 접수 시 개발자도구(Network)로 전송되는 요청의
- *    bigCancelCode/middleCancelCode 를 확인해 아래를 채우면 전송이 활성화됩니다.
- *    (코드가 비어있는 사유는 CancelOrderDrawer에서 전송 버튼이 비활성화됨)
- */
-export const CANCEL_REASON_CODES: Record<string, { big: string; middle: string }> = {
-  // ── 고객사유 ──
-  '단순 변심':       { big: '', middle: '' },
-  '잘못 주문':       { big: '', middle: '' },
-  '배송일정 불만':   { big: '', middle: '' },
-  '상품 불만':       { big: '', middle: '' },
-  '가격 불만':       { big: '', middle: '' },
-  // ── 판매자사유 ──
-  '상품오출고':          { big: '', middle: '' },
-  '상품 누락':           { big: '', middle: '' },
-  '배송 지연':           { big: '', middle: '' },
-  '택배사 미발송':       { big: '', middle: '' },
-  '상품 파손':           { big: '', middle: '' },
-  '상품 불량':           { big: '', middle: '' },
-  '상품 품절':           { big: '', middle: '' },
-  '잘못된 가격 기재':    { big: '', middle: '' },
-  '잘못된 상품명 기재':  { big: '', middle: '' },
-  '잘못된 상품정보 기재':{ big: '', middle: '' },
-}
-
-/** 해당 사유의 코드가 채워져 있는지 (전송 가능 여부 판정용) */
-export function hasReasonCode(reason: string): boolean {
-  const c = CANCEL_REASON_CODES[reason]
-  return !!c && !!c.big && !!c.middle
-}
+/** 유효한 (big|middle) 조합 집합 (전송 전 검증용) */
+const VALID_CODE_PAIRS = new Set(
+  [...CANCEL_REASONS.VENDOR, ...CANCEL_REASONS.CUSTOMER].map((o) => `${o.big}|${o.middle}`),
+)
 
 // ══════════════════════════════════════════════════════════════════
 // 취소 처리 호출
@@ -99,16 +89,16 @@ export interface CancelResult {
 export async function cancelOrder(params: {
   orderId: number
   items: CancelItem[]
-  reason: string           // 사유 라벨 (CANCEL_REASON_CODES 키)
-  cancelReason: string     // 고객 안내용 직접 입력 사유 (텍스트)
-  userId: string           // WING ID
+  bigCancelCode: string     // 취소 대분류 코드
+  middleCancelCode: string  // 취소 소분류 코드
+  cancelReason: string      // 고객 안내용 직접 입력 사유 (텍스트)
+  userId: string            // WING ID
 }): Promise<CancelResult> {
-  const { orderId, items, reason, cancelReason, userId } = params
+  const { orderId, items, bigCancelCode, middleCancelCode, cancelReason, userId } = params
 
   if (items.length === 0) throw new Error('취소할 상품을 선택하세요.')
-  const codes = CANCEL_REASON_CODES[reason]
-  if (!codes || !codes.big || !codes.middle) {
-    throw new Error(`'${reason}' 사유 코드가 설정되지 않았습니다. (관리자 확인 필요)`)
+  if (!bigCancelCode || !middleCancelCode || !VALID_CODE_PAIRS.has(`${bigCancelCode}|${middleCancelCode}`)) {
+    throw new Error('취소 사유를 선택하세요.')
   }
   if (!userId.trim()) throw new Error('응답자(WING) ID를 입력하세요.')
 
@@ -124,8 +114,8 @@ export async function cancelOrder(params: {
       orderId,
       vendorItemIds,
       receiptCounts,
-      bigCancelCode: codes.big,
-      middleCancelCode: codes.middle,
+      bigCancelCode,
+      middleCancelCode,
       cancelReason: reasonText,
       userId: userId.trim(),
     }),

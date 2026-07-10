@@ -1,10 +1,12 @@
 /* ================================================================
    주문 취소 드로어 (CancelOrderDrawer) — 재사용 컴포넌트
    - props 로 orderId 만 받으면 주문 상세를 조회해 취소 UI 표시
-   - 취소 대상 상품 체크 + 수량 → 귀책(판매자/고객) → 귀책별 사유 →
+   - 취소 대상 상품 체크 + 수량 → 귀책(판매자/고객) + 사유 →
      상단 우측 '취소하기' 로 전송 (orderCancelService.cancelOrder)
    - 운송장 없음(상품준비중) 건은 즉시 취소, 있으면 출고중지로 접수됨
-   - WING '반품 접수' 모달의 사유 목록을 그대로 사용
+   - CANCEL_ORDER_PROCESSING API: bigCancelCode='CANERR' 고정.
+     판매자사유 middle=CCTTER/CCPNER/CCPRER(확인됨),
+     고객사유 middle=VOC reasonCode(CHANGEMIND 등, 실테스트 검증 중).
    ================================================================ */
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
@@ -12,7 +14,6 @@ import { theme } from '../../styles/theme'
 import { fetchOrderDetail, type OrderDetail } from '../../services/csService'
 import {
   cancelOrder,
-  hasReasonCode,
   CANCEL_REASONS,
   FAULT_LABELS,
   type FaultType,
@@ -55,7 +56,7 @@ const CancelOrderDrawer: React.FC<Props> = ({ open, orderId, onClose, onCancelle
 
   const [sel, setSel] = useState<Map<string, RowSel>>(new Map())
   const [fault, setFault] = useState<FaultType>('CUSTOMER')
-  const [reason, setReason] = useState('')
+  const [middleCode, setMiddleCode] = useState('') // 선택된 취소 소분류 코드
   const [cancelReason, setCancelReason] = useState('') // 고객 안내용 직접 입력 사유
   const [userId, setUserId] = useState(defaultWingId())
 
@@ -71,9 +72,9 @@ const CancelOrderDrawer: React.FC<Props> = ({ open, orderId, onClose, onCancelle
     setLoadError('')
     setDetail(null)
     setSel(new Map())
-    setReason('')
-    setCancelReason('')
     setFault('CUSTOMER')
+    setMiddleCode('')
+    setCancelReason('')
     setError('')
     setDoneMsg('')
     setUserId(defaultWingId())
@@ -102,9 +103,10 @@ const CancelOrderDrawer: React.FC<Props> = ({ open, orderId, onClose, onCancelle
   }, [onClose])
 
   // 귀책 변경 시 사유 초기화
-  useEffect(() => { setReason('') }, [fault])
+  useEffect(() => { setMiddleCode('') }, [fault])
 
   const reasonOptions = CANCEL_REASONS[fault]
+  const selectedReason = reasonOptions.find((o) => o.middle === middleCode) ?? null
 
   // ── 선택된 취소 항목 ────────────────────────────────────────────
   const selectedItems = useMemo(() => {
@@ -122,9 +124,8 @@ const CancelOrderDrawer: React.FC<Props> = ({ open, orderId, onClose, onCancelle
     [detail],
   )
 
-  const codeReady = reason ? hasReasonCode(reason) : false
   const canSubmit =
-    !submitting && selectedItems.length > 0 && !!reason && codeReady && userId.trim().length > 0
+    !submitting && selectedItems.length > 0 && !!selectedReason && userId.trim().length > 0
 
   // ── 행 토글/수량 ────────────────────────────────────────────────
   const toggle = useCallback((vid: string, checked: boolean) => {
@@ -153,10 +154,12 @@ const CancelOrderDrawer: React.FC<Props> = ({ open, orderId, onClose, onCancelle
     setError('')
     setDoneMsg('')
     try {
+      if (!selectedReason) throw new Error('취소 사유를 선택하세요.')
       const result = await cancelOrder({
         orderId: Number(orderId),
         items: selectedItems,
-        reason,
+        bigCancelCode: selectedReason.big,
+        middleCancelCode: selectedReason.middle,
         cancelReason,
         userId,
       })
@@ -302,8 +305,8 @@ const CancelOrderDrawer: React.FC<Props> = ({ open, orderId, onClose, onCancelle
 
               {/* ── 사유 ── */}
               <select
-                value={reason}
-                onChange={(e) => setReason(e.target.value)}
+                value={middleCode}
+                onChange={(e) => setMiddleCode(e.target.value)}
                 style={{
                   width: '100%', padding: '8px 12px', border: `1px solid ${theme.colors.border}`,
                   borderRadius: theme.radius.sm, fontSize: theme.fontSize.sm, marginBottom: 6, background: '#fff',
@@ -311,14 +314,12 @@ const CancelOrderDrawer: React.FC<Props> = ({ open, orderId, onClose, onCancelle
               >
                 <option value="">선택하세요</option>
                 {reasonOptions.map((r) => (
-                  <option key={r} value={r}>{r}</option>
+                  <option key={r.middle} value={r.middle}>{r.label}</option>
                 ))}
               </select>
-              {reason && !codeReady && (
-                <div style={{ color: theme.colors.warning, fontSize: theme.fontSize.xs, marginBottom: 10 }}>
-                  ⚠️ 이 사유의 취소 코드가 아직 설정되지 않아 전송할 수 없습니다. (관리자 확인 필요)
-                </div>
-              )}
+              <div style={{ color: theme.colors.textMuted, fontSize: theme.fontSize.xs, marginBottom: 10 }}>
+                고객사유 코드는 검증 중입니다. 접수가 거부되면 사유 코드를 조정합니다.
+              </div>
 
               {/* ── 취소사유 직접 입력 (고객 안내) ── */}
               <div style={{ ...sectionLabel, marginTop: 10 }}>취소사유 직접 입력 (고객 안내)</div>
