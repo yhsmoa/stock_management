@@ -639,7 +639,7 @@ export async function saveRgItems(
 }
 
 // ══════════════════════════════════════════════════════════════════
-// 재고건강 SKU 엑셀 업로드 (si_rg_item_data)
+// 재고 SKU 엑셀 업로드 (si_rg_item_data)
 // ══════════════════════════════════════════════════════════════════
 
 // ── 필수 헤더 목록 ──────────────────────────────────────────────────
@@ -654,7 +654,7 @@ const REQUIRED_ITEM_DATA_HEADERS = [
 // ── 헤더 검증 ───────────────────────────────────────────────────────
 
 /**
- * 재고건강 SKU 엑셀 헤더 검증
+ * 재고 SKU 엑셀 헤더 검증
  * - Row 0에서 필수 헤더 존재 확인
  */
 export function validateItemDataExcel(headers: any[]): boolean {
@@ -667,7 +667,7 @@ export function validateItemDataExcel(headers: any[]): boolean {
 // ── 엑셀 데이터 파싱 ────────────────────────────────────────────────
 
 /**
- * 재고건강 SKU 엑셀 데이터를 RgItemData 배열로 변환
+ * 재고 SKU 엑셀 데이터를 RgItemData 배열로 변환
  * - Row 0: 헤더, Row 1: 서브헤더(스킵), Row 2~: 데이터
  * - 인덱스 0(No.) 스킵, 인덱스 1~26 매핑
  */

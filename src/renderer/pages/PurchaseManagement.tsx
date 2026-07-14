@@ -984,6 +984,7 @@ const PurchaseManagement: React.FC = () => {
         onClose={() => setDetailPanelOpen(false)}
         item={detailItem}
         itemWinner={detailItem ? getItemData(detailItem)?.item_winner : undefined}
+        displayedProductId={detailItem ? (getItemData(detailItem)?.item_id ?? null) : null}
         onSaveNote={(note) => { if (detailItem?.id) saveDetailNote(detailItem.id, note) }}
       />
 
@@ -992,7 +993,7 @@ const PurchaseManagement: React.FC = () => {
         isOpen={isUploading}
         progress={uploadProgress}
         status={uploadStatus}
-        title="재고건강 SKU 엑셀 업로드 중"
+        title="재고 SKU 엑셀 업로드 중"
       />
 
       {/* ── 주문 조회 조건 모달 ──────────────────────────── */}

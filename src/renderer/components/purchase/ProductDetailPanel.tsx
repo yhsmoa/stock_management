@@ -25,6 +25,9 @@ interface ProductDetailPanelProps {
   onClose: () => void
   item: RgItem | null
   itemWinner?: string | null   // '아이템위너 아님' 등 아이템위너 상태
+  // 노출상품ID(displayedProductId) — 상세 API가 반환하지 않아 재고 SKU(item_id)에서 공급.
+  // 쿠팡 storefront 링크(coupang.com/vp/products/{노출상품ID})에 필요.
+  displayedProductId?: string | number | null
   onSaveNote?: (note: string) => void   // 비고 저장 (포커스 아웃 시)
 }
 
@@ -371,6 +374,7 @@ const ProductDetailPanel: React.FC<ProductDetailPanelProps> = ({
   onClose,
   item,
   itemWinner,
+  displayedProductId,
   onSaveNote,
 }) => {
   /* ── 상태 ─────────────────────────────────────────────────────── */
@@ -477,6 +481,14 @@ const ProductDetailPanel: React.FC<ProductDetailPanelProps> = ({
       setError(null)
       try {
         const data = await fetchRgProductDetail(Number(item.seller_product_id))
+        // [진단] 노출상품ID(productId) 위치 확인용 — 실제 응답 구조 로깅
+        console.log('[ProductDetailPanel][진단] 상세 응답 ID 필드:', {
+          topLevelKeys: data ? Object.keys(data) : null,
+          productId: (data as any)?.productId,
+          sellerProductId: data?.sellerProductId,
+          firstItem: data?.items?.[0],
+          firstItemKeys: data?.items?.[0] ? Object.keys(data.items[0]) : null,
+        })
         setDetail(data)
       } catch (err: any) {
         console.error('[ProductDetailPanel] 상세 조회 실패:', err)
@@ -558,17 +570,16 @@ const ProductDetailPanel: React.FC<ProductDetailPanelProps> = ({
   const rgData = detailItem?.rocketGrowthItemData
   const barcode = detailItem?.barcode ?? rgData?.barcode ?? item.barcode
   const salePrice = detailItem?.salePrice ?? rgData?.priceData?.salePrice ?? item.sale_price
+  // 등록상품ID = sellerProductId (상세 API → DB 폴백)
   const sellerProductId = detail
     ? String(detail.sellerProductId)
     : item.seller_product_id
 
-  // ID 추출: 직접 → rocketGrowthItemData → DB 폴백
-  const rawSpItemId = detailItem
-    ? (detailItem.sellerProductItemId ?? detailItem.rocketGrowthItemData?.sellerProductItemId)
-    : null
-  const sellerProductItemId = rawSpItemId != null
-    ? String(rawSpItemId)
-    : item.seller_product_item_id
+  // 노출상품ID = 상품 조회 API 응답의 productId (권위 소스).
+  //   API 실패로 detail 이 없을 때만 prop(displayedProductId) 폴백.
+  const exposedProductId = detail?.productId != null
+    ? String(detail.productId)
+    : (displayedProductId ? String(displayedProductId) : '')
 
   const rawVendorItemId = detailItem
     ? (detailItem.vendorItemId ?? detailItem.rocketGrowthItemData?.vendorItemId)
@@ -636,8 +647,8 @@ const ProductDetailPanel: React.FC<ProductDetailPanelProps> = ({
                 </div>
                 <div style={styles.idCol}>
                   {[
-                    { label: '노출상품 ID', value: sellerProductId },
-                    { label: '등록상품 ID', value: sellerProductItemId },
+                    { label: '노출상품 ID', value: exposedProductId },
+                    { label: '등록상품 ID', value: sellerProductId },
                     { label: '옵션 ID', value: vendorItemId },
                     { label: '바코드', value: barcode },
                   ].map((b) => (
@@ -652,10 +663,10 @@ const ProductDetailPanel: React.FC<ProductDetailPanelProps> = ({
                     </div>
                   ))}
 
-                  {/* ── 쿠팡 상품 페이지 바로가기 (바코드 아래) ────── */}
-                  {sellerProductId && vendorItemId && (
+                  {/* ── 쿠팡 상품 페이지 바로가기 (노출상품ID 기준) ────── */}
+                  {exposedProductId && vendorItemId && (
                     <a
-                      href={`https://www.coupang.com/vp/products/${sellerProductId}?vendorItemId=${vendorItemId}`}
+                      href={`https://www.coupang.com/vp/products/${exposedProductId}?vendorItemId=${vendorItemId}`}
                       target="_blank"
                       rel="noopener noreferrer"
                       style={{

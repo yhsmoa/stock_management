@@ -137,7 +137,7 @@ export function usePurchaseManagement() {
     setCurrentPage(1)
   }, [])
 
-  /* ── 재고건강 SKU 데이터 (option_id → RgItemData) ────────── */
+  /* ── 재고 SKU 데이터 (option_id → RgItemData) ────────── */
   const [itemDataMap, setItemDataMap] = useState<Map<string, RgItemData>>(new Map())
 
   /* ── 리셋/업데이트 로딩 ──────────────────────────────────── */
@@ -544,7 +544,7 @@ export function usePurchaseManagement() {
       setUploadStatus('헤더 검증 중...')
 
       if (!rows[0] || !validateItemDataExcel(rows[0])) {
-        alert('올바른 재고건강 SKU 엑셀 파일이 아닙니다.\n(Inventory ID, Option ID, SKU ID, Product name, Option name 헤더가 필요합니다)')
+        alert('올바른 재고 SKU 엑셀 파일이 아닙니다.\n(Inventory ID, Option ID, SKU ID, Product name, Option name 헤더가 필요합니다)')
         return
       }
 

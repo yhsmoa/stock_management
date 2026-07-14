@@ -35,7 +35,7 @@ export interface RgItem {
   user_id: string | null
 }
 
-// ── si_rg_item_data 테이블 행 인터페이스 (재고건강 SKU 엑셀) ────────
+// ── si_rg_item_data 테이블 행 인터페이스 (재고 SKU 엑셀) ────────
 export interface RgItemData {
   id?: string
   created_at?: string
@@ -100,6 +100,7 @@ export interface CoupangProductListItem {
 // 로켓그로스 상품은 ID가 직접 또는 rocketGrowthItemData 안에 위치할 수 있음
 export interface CoupangProductDetail {
   sellerProductId: number
+  productId?: number          // 노출상품ID (storefront /vp/products/{productId} 링크용)
   sellerProductName: string
   displayProductName: string
   generalProductName: string
