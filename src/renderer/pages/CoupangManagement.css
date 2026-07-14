@@ -27,17 +27,12 @@
   flex-shrink: 0;
 }
 
-/* Search Section */
+/* Search Section — 개인주문 스타일: 카드 없이 검색바+필터만 */
 .coupang-search-section {
-  background: white;
-  border-radius: 12px;
-  padding: 16px;
-  margin-bottom: 12px;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08), 0 1px 2px rgba(0, 0, 0, 0.04);
-  border: 1px solid #F3F4F6;
   display: flex;
   flex-direction: column;
-  gap: 15px;
+  gap: 12px;
+  margin-bottom: 12px;
   flex-shrink: 0;
 }
 
@@ -48,119 +43,113 @@
 }
 
 .coupang-filter-btn {
-  padding: 8px 20px;
-  border: 1px solid #E5E7EB;
-  background: white;
+  padding: 4px 14px;
+  border: 1px solid #D1D5DB;
+  background: #fff;
   border-radius: 9999px;
   cursor: pointer;
   transition: all 0.2s;
-  font-size: 14px;
+  font-size: 12px;
+  font-weight: 500;
+  color: #374151;
+  line-height: 1.4;
 }
 
 .coupang-filter-btn:hover {
-  background: #F8FAFC;
+  background: #F3F4F6;
+  border-color: #9CA3AF;
 }
 
 .coupang-filter-btn.active {
   background: #4A8CF7;
-  color: white;
+  color: #fff;
   border-color: #4A8CF7;
 }
 
-/* Search Form */
+/* Search Form — 개인주문 스타일 알약 검색바 (select + input + 검색 버튼 인라인) */
 .coupang-search-form {
   display: flex;
-  gap: 10px;
   align-items: center;
-  flex: 1;
+  gap: 8px;
+  align-self: center;
+  width: 100%;
+  max-width: 1440px;
+  border: 1px solid #E5E7EB;
+  border-radius: 9999px;
+  background: #fff;
+  padding: 6px 8px 6px 18px;
 }
 
 .coupang-search-select {
-  padding: 8px 12px;
-  border: 1px solid #E5E7EB;
-  border-radius: 8px;
+  border: none;
+  background: transparent;
   font-size: 14px;
-  background: white;
+  color: #374151;
   cursor: pointer;
+  outline: none;
 }
 
 .coupang-search-input {
   flex: 1;
-  padding: 8px 12px;
-  border: 1px solid #E5E7EB;
-  border-radius: 8px;
-  font-size: 14px;
-}
-
-.coupang-search-input:focus {
-  outline: none;
-  border-color: #4A8CF7;
-}
-
-/* Buttons */
-.coupang-btn {
-  padding: 10px 20px;
+  padding: 16px 8px;
   border: none;
-  border-radius: 8px;
-  font-size: 14px;
+  font-size: 15px;
+  outline: none;
+  min-width: 0;
+  background: transparent;
+}
+
+.coupang-search-input::placeholder {
+  color: #9CA3AF;
+}
+
+/* Buttons — 개인주문 po-btn 스타일 (흰색 아웃라인, 미니멀) */
+.coupang-btn {
+  padding: 4px 14px;
+  border: 1px solid #D1D5DB;
+  border-radius: 6px;
+  font-size: 12px;
   font-weight: 500;
   cursor: pointer;
   transition: all 0.2s;
-}
-
-.coupang-btn-search {
-  background-color: #4A8CF7;
-  color: white;
-}
-
-.coupang-btn-search:hover {
-  background-color: #3A7CE6;
-}
-
-.coupang-btn-upload {
-  background-color: #4A8CF7;
-  color: white;
+  color: #374151;
+  background-color: #fff;
+  line-height: 1.4;
   display: inline-block;
 }
 
-.coupang-btn-upload:hover {
-  background-color: #3A7CE6;
+.coupang-btn:hover:not(:disabled) {
+  background-color: #F3F4F6;
+  border-color: #9CA3AF;
 }
 
-.coupang-btn-export {
-  background-color: #4A8CF7;
-  color: white;
-}
-
-.coupang-btn-export:hover {
-  background-color: #3A7CE6;
-}
-
-/* 분류 일괄 변경 버튼 — 체크박스 선택 시에만 활성화 */
-.coupang-btn-classify {
-  background-color: #6366f1;
-  color: white;
-}
-
-.coupang-btn-classify:hover:not(:disabled) {
-  background-color: #4f46e5;
-}
-
-.coupang-btn-classify:disabled {
-  background-color: #c7d2fe;
-  color: #a5b4fc;
+.coupang-btn:disabled {
+  opacity: 0.5;
   cursor: not-allowed;
 }
 
-/* 엑셀 분류 업로드 버튼 — 틸 컬러로 분류 버튼(인디고)과 구분 */
+/* 색상 변형 제거 — 모두 기본(흰색) po-btn 로 통일 */
+.coupang-btn-search,
+.coupang-btn-upload,
+.coupang-btn-export,
+.coupang-btn-classify,
 .coupang-btn-excel-classify {
-  background-color: #0891b2;
-  color: white;
-  display: inline-block;
+  background-color: #fff;
+  color: #374151;
 }
 
-.coupang-btn-excel-classify:hover {
-  background-color: #0e7490;
+.coupang-btn-search:hover:not(:disabled),
+.coupang-btn-upload:hover:not(:disabled),
+.coupang-btn-export:hover:not(:disabled),
+.coupang-btn-classify:hover:not(:disabled),
+.coupang-btn-excel-classify:hover:not(:disabled) {
+  background-color: #F3F4F6;
+  border-color: #9CA3AF;
+}
+
+.coupang-btn-classify:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 /* 버튼 구분선 */
