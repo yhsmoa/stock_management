@@ -36,7 +36,7 @@ const MENU_ITEMS: MenuItem[] = [
     children: [
       { path: '/personal-order',      label: '개인주문' },
       { path: '/coupang',             label: '상품관리' },
-      { path: '/purchase-management', label: '사입관리' },
+      { path: '/purchase-management', label: '로켓그로스 사입' },
     ],
   },
   {

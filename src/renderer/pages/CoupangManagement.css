@@ -1,14 +1,21 @@
+/* ── 컨테이너 (사입관리 스타일: 전체 높이 flex, 테이블이 화면을 채움) ── */
 .coupang-management-container {
-  padding: 20px;
-  max-width: 1400px;
-  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  /* 테이블 높이 +30%: 컨테이너를 뷰포트보다 크게 잡아 flex 테이블에 실제 공간 부여
+     (부족분은 페이지 스크롤). height:100% 로 고정하면 테이블이 안 커짐. */
+  min-height: calc(100% + 5vh);
+  padding: 0 16px 16px;
 }
 
 .coupang-management-title {
-  font-size: 24px;
-  font-weight: bold;
-  margin-bottom: 20px;
+  font-size: 20px;
+  font-weight: 700;
+  text-align: center;
+  padding: 8px 0;
+  margin: 0;
   color: #1F2937;
+  flex-shrink: 0;
 }
 
 /* Action Buttons Top */
@@ -16,20 +23,22 @@
   display: flex;
   gap: 10px;
   justify-content: flex-end;
-  margin-bottom: 20px;
+  padding: 8px 0 0;
+  flex-shrink: 0;
 }
 
 /* Search Section */
 .coupang-search-section {
   background: white;
   border-radius: 12px;
-  padding: 20px;
-  margin-bottom: 20px;
+  padding: 16px;
+  margin-bottom: 12px;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08), 0 1px 2px rgba(0, 0, 0, 0.04);
   border: 1px solid #F3F4F6;
   display: flex;
   flex-direction: column;
   gap: 15px;
+  flex-shrink: 0;
 }
 
 /* Filter Buttons */
@@ -162,17 +171,23 @@
   margin: 0 4px;
 }
 
-/* Table Section */
+/* Table Section — 남은 공간을 채우는 flex 카드 (사입관리 스타일) */
 .coupang-table-section {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
   background: white;
   border-radius: 12px;
-  padding: 20px;
+  padding: 16px;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08), 0 1px 2px rgba(0, 0, 0, 0.04);
   border: 1px solid #F3F4F6;
+  overflow: hidden;
+  min-height: 0;
 }
 
 .coupang-table-wrapper {
-  overflow-x: auto;
+  flex: 1;
+  overflow: auto;
 }
 
 .coupang-table {
@@ -248,12 +263,13 @@
 
 /* Pagination */
 .coupang-pagination {
-  margin-top: 20px;
+  margin-top: 12px;
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding-top: 20px;
+  padding-top: 12px;
   border-top: 1px solid #F3F4F6;
+  flex-shrink: 0;
 }
 
 .coupang-pagination-info {

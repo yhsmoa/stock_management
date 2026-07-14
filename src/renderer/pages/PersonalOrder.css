@@ -7,7 +7,9 @@
 .po-container {
   display: flex;
   flex-direction: column;
-  height: 100%;
+  /* 테이블 높이 +30%: 컨테이너를 뷰포트보다 크게 잡아 flex 테이블에 실제 공간 부여
+     (부족분은 페이지 스크롤). height:100% 로 고정하면 테이블이 안 커짐. */
+  min-height: calc(100% + 6vh);
   padding: 0 16px 16px;
 }
 
