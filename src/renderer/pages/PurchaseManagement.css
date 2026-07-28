@@ -4,22 +4,24 @@
    ================================================================ */
 
 /* ── 컨테이너 ────────────────────────────────────────────────── */
+/* 미니멀 라이트: 흰색 본문이 콘텐츠 영역을 가득 채우고, 테이블은 내부 스크롤 */
 .purchase-container {
   display: flex;
   flex-direction: column;
-  /* 테이블 높이 +30%: 컨테이너를 뷰포트보다 크게 잡아 flex 테이블에 실제 공간 부여
-     (부족분은 페이지 스크롤). height:100% 로 고정하면 테이블이 안 커짐. */
-  min-height: calc(100% + 4vh);
-  padding: 0 16px 16px;
+  height: 100%;
+  background: #fff;
+  padding: 18px 22px;
+  box-sizing: border-box;
+  overflow: hidden;
 }
 
-/* ── 상단 우측 버튼 영역 (타이틀 위 별도 행) ─────────────────── */
+/* ── 상단: 좌측 타이틀 | 우측 액션 버튼 ─────────────────────── */
 .purchase-top-actions {
   display: flex;
   justify-content: space-between;
   align-items: center;
   gap: 8px;
-  padding: 8px 0 0;
+  padding: 0 0 12px;
   flex-shrink: 0;
 }
 
@@ -29,38 +31,45 @@
   gap: 6px;
 }
 
-/* ── 헤더 (타이틀 가운데) ────────────────────────────────────── */
-.purchase-header {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 8px 0;
-  flex-shrink: 0;
-}
-
 .purchase-title {
-  font-size: 20px;
+  font-size: 22px;
   font-weight: 700;
-  color: #1F2937;
+  color: #111827;
   margin: 0;
+  letter-spacing: -0.01em;
 }
 
+/* ── 버튼 (미니멀 라이트: 테두리 없는 연회색 필) ─────────────── */
 .purchase-btn {
-  padding: 4px 14px;
-  border: 1px solid #D1D5DB;
-  border-radius: 6px;
+  padding: 5px 12px;
+  border: none;
+  border-radius: 9999px;
   font-size: 12px;
   font-weight: 500;
   cursor: pointer;
-  transition: all 0.2s;
+  transition: background 0.15s;
   color: #374151;
-  background-color: #fff;
+  background-color: #F1F2F4;
   line-height: 1.4;
 }
 
 .purchase-btn:hover:not(:disabled) {
-  background-color: #F3F4F6;
-  border-color: #9CA3AF;
+  background-color: #E5E7EB;
+}
+
+/* 상단 액션의 공용 드롭다운 트리거(바코드 연결)도 연회색 필로 통일 */
+.purchase-top-actions .dropdown-trigger {
+  padding: 5px 12px;
+  border: none;
+  border-radius: 9999px;
+  font-size: 12px;
+  font-weight: 500;
+  color: #374151;
+  background-color: #F1F2F4;
+  line-height: 1.4;
+}
+.purchase-top-actions .dropdown-trigger:hover:not(:disabled) {
+  background-color: #E5E7EB;
 }
 
 .purchase-btn:disabled {
@@ -184,26 +193,28 @@
   color: #374151;
 }
 
-/* ── 검색 입력폼 (가운데 상단, 타원형) ───────────────────────── */
+/* ── 검색 입력폼 (가운데, 연회색 알약) ───────────────────────── */
 .purchase-search-bar {
   display: flex;
   margin-bottom: 0;
   flex-shrink: 1;
-  border: 1px solid #E5E7EB;
-  border-radius: 9999px;
+  border: none;
+  border-radius: 12px;
   overflow: hidden;
-  background: white;
+  background: #F1F2F4;
   width: 100%;
-  max-width: 1440px;
+  max-width: 760px;
 }
 
 .purchase-search-input {
   flex: 1;
-  padding: 24px 28px;
+  padding: 12px 18px;
   border: none;
-  font-size: 15px;
+  font-size: 14px;
   outline: none;
   min-width: 0;
+  background: transparent;
+  color: #374151;
 }
 
 .purchase-search-input::placeholder {
@@ -536,23 +547,23 @@
 }
 
 .purchase-pagination-btn {
-  padding: 6px 10px;
-  border: 1px solid #E5E7EB;
-  background: white;
-  border-radius: 6px;
+  padding: 6px 12px;
+  border: none;
+  background: transparent;
+  border-radius: 9999px;
   cursor: pointer;
   font-size: 13px;
-  transition: all 0.2s;
+  color: #4B5563;
+  transition: background 0.15s;
   min-width: 34px;
 }
 
 .purchase-pagination-btn:hover:not(:disabled) {
-  background: #F8FAFC;
-  border-color: #4A8CF7;
+  background: #F1F2F4;
 }
 
 .purchase-pagination-btn.active {
-  background: #4A8CF7;
+  background: #3B82F6;
   color: white;
   border-color: #4A8CF7;
 }

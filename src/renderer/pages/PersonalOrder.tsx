@@ -157,15 +157,18 @@ const PersonalOrder: React.FC = () => {
   return (
     <div className="po-container">
 
-      {/* ── 상단: 좌측 배송 메뉴 + 업데이트/바코드 | 우측 송장·엑셀·주문 ── */}
+      {/* ── 상단: 좌측 타이틀 | 우측 액션 (배송·업데이트·송장·엑셀·장바구니) ── */}
       <div className="po-top-actions">
         <div className="po-toolbar-left">
-          {/* ── 배송: 주문 상태 선택 ──
-             다른 버튼과 달리 '액션'이 아니라 현재 보고 있는 화면(어떤 상품 목록인지)을
-             나타내므로 강조 스타일(po-ship-trigger)로 구분한다. */}
+          <h2 className="po-title">개인주문</h2>
+        </div>
+
+        <div className="po-toolbar-right">
+          {/* ── 배송: 주문 상태 선택 (강조 pill) ── */}
           <DropdownMenu
             label={`배송 · ${selectedTabs.size === 0 ? '전체' : Array.from(selectedTabs).join(', ')}`}
             triggerClassName="po-ship-trigger"
+            align="right"
           >
             {ORDER_STATUS_TABS.map((tab) => {
               const isActive = tab === '전체' ? selectedTabs.size === 0 : selectedTabs.has(tab)
@@ -182,7 +185,7 @@ const PersonalOrder: React.FC = () => {
           </DropdownMenu>
 
           {/* ── [업데이트]: 주문 업데이트 / 바코드 연결 / 송장 업데이트 ── */}
-          <DropdownMenu label="업데이트">
+          <DropdownMenu label="업데이트" align="right">
             <DropdownItem
               onClick={handleUpdate}
               disabled={updating}
@@ -202,9 +205,7 @@ const PersonalOrder: React.FC = () => {
               {invoiceUpdating ? '정리 중...' : '✨ 송장 업데이트'}
             </DropdownItem>
           </DropdownMenu>
-        </div>
 
-        <div className="po-toolbar-right">
           {/* ── [송장]: 통합 업로드(엑셀+PDF) / 출력 ── */}
           <DropdownMenu label="송장" align="right">
             <DropdownItem
@@ -241,11 +242,6 @@ const PersonalOrder: React.FC = () => {
             </DropdownItem>
           </DropdownMenu>
         </div>
-      </div>
-
-      {/* ── 타이틀 ────────────────────────────────────────────── */}
-      <div className="po-header">
-        <h2 className="po-title">개인주문</h2>
       </div>
 
       {/* ── 업데이트 진행 메시지 ───────────────────────────────── */}

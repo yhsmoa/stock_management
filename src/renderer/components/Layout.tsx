@@ -1,49 +1,26 @@
 import React from 'react'
 import { Outlet } from 'react-router-dom'
-import Sidebar from './Sidebar'
-import { theme } from '../styles/theme'
+import Sidebar, { RAIL_WIDTH } from './Sidebar'
 
-// ── 상수 ──────────────────────────────────────────────────────────
-const RAIL_WIDTH = 40     // Sidebar 의 RAIL_WIDTH 와 동일하게 유지
+/* ================================================================
+   Layout — 미니멀 라이트 셸 (edge-to-edge, 감싸는 보드 없음)
+   - 사이드바는 좌측 고정 rail (호버 시 오버레이 확장, 콘텐츠 push 없음)
+   - 본문은 rail 폭만큼 좌측 여백. 상단 헤더 없음(로고는 사이드바)
+   ================================================================ */
 
 const Layout: React.FC = () => {
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden' }}>
-      {/* 헤더 영역 - 항상 고정 */}
-      <header style={{
-        height: '60px',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        paddingLeft: '15px',
-        paddingRight: '20px',
-        borderBottom: `1px solid ${theme.colors.border}`,
-        backgroundColor: theme.colors.bgCard,
-        boxShadow: theme.shadows.sm,
-        zIndex: 1000,
-        position: 'relative'
-      }}>
-        {/* 왼쪽: 타이틀 */}
-        <h1 style={{ margin: 0, fontSize: '20px', fontWeight: 'bold', color: theme.colors.textPrimary }}>
-          Stock Management
-        </h1>
-        {/* 로그아웃 버튼은 사이드바 바닥으로 이동 */}
-      </header>
-
-      {/* 메인 컨텐츠 영역 — Sidebar 는 항상 보이는 rail (overlay 동작) */}
-      <div style={{ display: 'flex', flex: 1, overflow: 'hidden', position: 'relative' }}>
-        <Sidebar />
-
-        {/* 페이지 콘텐츠 — rail 폭만큼 좌측 여백 고정 (확장돼도 push 없음) */}
-        <main style={{
-          flex: 1,
-          overflow: 'auto',
-          padding: '24px',
+    <div style={{ height: '100vh', overflow: 'hidden', background: '#fff' }}>
+      <Sidebar />
+      <main
+        style={{
           marginLeft: `${RAIL_WIDTH}px`,
-        }}>
-          <Outlet />
-        </main>
-      </div>
+          height: '100vh',
+          overflow: 'hidden',
+        }}
+      >
+        <Outlet />
+      </main>
     </div>
   )
 }

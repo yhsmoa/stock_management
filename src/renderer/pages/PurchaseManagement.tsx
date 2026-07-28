@@ -437,6 +437,9 @@ const PurchaseManagement: React.FC = () => {
       {/* ── 상단 버튼 영역: 좌측 업데이트·리셋 | 우측 주문·xlsx·바코드·조회수·복사 ── */}
       <div className="purchase-top-actions">
         <div className="purchase-toolbar-left">
+          <h1 className="purchase-title">로켓그로스 사입</h1>
+        </div>
+        <div className="purchase-toolbar-right">
           {/* ── 업데이트 ──────────────────────────────────────── */}
           <button
             className="purchase-btn"
@@ -454,8 +457,7 @@ const PurchaseManagement: React.FC = () => {
           >
             {resetting ? (updateProgress || '리셋 중...') : '리셋'}
           </button>
-        </div>
-        <div className="purchase-toolbar-right">
+
           {/* ── 주문 모달 열기 ────────────────────────────── */}
           <button
             className="purchase-btn"
@@ -545,12 +547,7 @@ const PurchaseManagement: React.FC = () => {
         </div>
       </div>
 
-      {/* ── 타이틀 ──────────────────────────────────────────── */}
-      <div className="purchase-header">
-        <h1 className="purchase-title">사입관리</h1>
-      </div>
-
-      {/* ── 검색 영역 (좌: 검색모드 드롭박스 | 검색 입력폼) ──── */}
+      {/* ── 검색 영역 (검색모드 드롭박스 + 검색 입력폼, 가운데) ──── */}
       <div className="purchase-search-row">
         {/* ── 검색 모드: 상품검색 / 노트검색 (테두리·배경 없는 드롭박스) ── */}
         <DropdownMenu
