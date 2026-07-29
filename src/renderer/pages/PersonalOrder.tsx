@@ -12,6 +12,7 @@ import {
   ORDER_STATUS_TABS,
   COLUMNS,
   STATUS_DOT_LABELS,
+  STATUS_BADGE_TONE,
   getCellValue,
   getRowKey,
 } from './usePersonalOrder'
@@ -467,6 +468,25 @@ const PersonalOrder: React.FC = () => {
                               >
                                 {cnt}
                               </span>
+                            </td>
+                          )
+                        }
+
+                        // ── 주문상태 (색상 배지) ──
+                        if (col.key === 'status_label') {
+                          const label = getCellValue(row, col.key)
+                          const tone = STATUS_BADGE_TONE[row.status] ?? 'gray'
+                          return (
+                            <td
+                              key={col.key}
+                              {...cellDataAttrs}
+                              className={focusedClass.trim() || undefined}
+                              title={label}
+                              onClick={onCellClick}
+                            >
+                              {label && (
+                                <span className={`po-status-badge ${tone}`}>{label}</span>
+                              )}
                             </td>
                           )
                         }

@@ -1,9 +1,10 @@
 /* ================================================================
    InvoiceUploadModal — 송장 통합 업로드 모달
-   - 왼쪽: 송장 엑셀(.xlsx) 업로드 박스 / 오른쪽: 송장 PDF(.pdf) 업로드 박스
-   - 두 파일이 모두 선택되면 자동으로 분석(onAnalyze) → 요약 표시
+   - 왼쪽: 송장 엑셀(.xlsx) 1개 / 오른쪽: 송장 PDF(.pdf) 여러 개
+       · PDF 는 분할 출력되는 경우가 많아 다중 선택을 지원한다.
+   - 엑셀 1개 + PDF 1개 이상이 준비되면 자동 분석(onAnalyze) → 요약 표시
        · 엑셀 등록 건수 / PDF 일치 건수 / 합배송·출고중지 제외 / 실패건+사유
-   - [업로드] 클릭 시 onSubmit(xlsx, pdf) 로 실제 등록 (엑셀 운송장 저장 + PDF storage 업로드)
+   - [업로드] 클릭 시 onSubmit(xlsx, pdfs) 로 실제 등록 (엑셀 운송장 저장 + PDF storage 업로드)
    - 부모(usePersonalOrder)가 주문 데이터를 알고 있으므로 분석/업로드 로직은 부모가 담당,
      이 컴포넌트는 파일 선택 UI + 요약 표시에 집중한다.
    ================================================================ */
@@ -18,12 +19,17 @@ interface InvoiceUploadModalProps {
   isOpen: boolean
   uploading?: boolean
   onClose: () => void
-  onAnalyze: (xlsx: File, pdf: File) => Promise<InvoiceUploadSummary>
-  onSubmit: (xlsx: File, pdf: File) => Promise<void>
+  onAnalyze: (xlsx: File, pdfs: File[]) => Promise<InvoiceUploadSummary>
+  onSubmit: (xlsx: File, pdfs: File[]) => Promise<void>
 }
+
+// ── 동일 파일 판정 (이름+크기+수정시각) ───────────────────────────
+//   같은 파일을 두 번 고르면 중복 파싱·업로드가 되므로 걸러낸다.
+const fileKey = (f: File) => `${f.name}|${f.size}|${f.lastModified}`
 
 // ══════════════════════════════════════════════════════════════════
 // 파일 업로드 박스 (엑셀 / PDF 공용)
+//   multiple=false 면 항상 1개만 유지, true 면 선택할 때마다 누적된다.
 // ══════════════════════════════════════════════════════════════════
 
 interface UploadBoxProps {
@@ -31,25 +37,42 @@ interface UploadBoxProps {
   hint: string
   accept: string
   icon: string
-  file: File | null
+  files: File[]
+  multiple?: boolean
   disabled?: boolean
-  onSelect: (file: File | null) => void
+  onChange: (files: File[]) => void
 }
 
-const UploadBox: React.FC<UploadBoxProps> = ({ title, hint, accept, icon, file, disabled, onSelect }) => {
+const UploadBox: React.FC<UploadBoxProps> = ({
+  title, hint, accept, icon, files, multiple = false, disabled, onChange,
+}) => {
   const inputRef = useRef<HTMLInputElement>(null)
   const [dragOver, setDragOver] = useState(false)
 
   const extOk = (name: string) =>
     accept.split(',').some((ext) => name.toLowerCase().endsWith(ext.trim().toLowerCase()))
 
+  /** 선택/드롭된 파일 반영 — multiple 이면 기존 목록에 누적(중복 제외) */
+  const accept_ = (incoming: File[]) => {
+    const valid = incoming.filter((f) => extOk(f.name))
+    if (valid.length === 0) return
+    if (!multiple) {
+      onChange([valid[0]])
+      return
+    }
+    const seen = new Set(files.map(fileKey))
+    const added = valid.filter((f) => !seen.has(fileKey(f)))
+    if (added.length > 0) onChange([...files, ...added])
+  }
+
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault()
     setDragOver(false)
     if (disabled) return
-    const dropped = e.dataTransfer.files?.[0]
-    if (dropped && extOk(dropped.name)) onSelect(dropped)
+    accept_(Array.from(e.dataTransfer.files ?? []))
   }
+
+  const hasFiles = files.length > 0
 
   return (
     <div
@@ -60,10 +83,10 @@ const UploadBox: React.FC<UploadBoxProps> = ({ title, hint, accept, icon, file, 
       style={{
         flex: 1,
         minWidth: 0,
-        border: `2px dashed ${dragOver ? theme.colors.primary : file ? theme.colors.success : theme.colors.border}`,
+        border: `2px dashed ${dragOver ? theme.colors.primary : hasFiles ? theme.colors.success : theme.colors.border}`,
         borderRadius: theme.radius.lg,
-        background: dragOver ? theme.colors.primaryLight : file ? '#F0FDF4' : theme.colors.bgHover,
-        padding: '24px 16px',
+        background: dragOver ? theme.colors.primaryLight : hasFiles ? '#F0FDF4' : theme.colors.bgHover,
+        padding: '20px 14px',
         textAlign: 'center',
         cursor: disabled ? 'not-allowed' : 'pointer',
         transition: 'border-color 0.15s, background 0.15s',
@@ -74,28 +97,60 @@ const UploadBox: React.FC<UploadBoxProps> = ({ title, hint, accept, icon, file, 
         ref={inputRef}
         type="file"
         accept={accept}
+        multiple={multiple}
         style={{ display: 'none' }}
         disabled={disabled}
         onChange={(e) => {
-          onSelect(e.target.files?.[0] ?? null)
-          e.target.value = ''
+          accept_(Array.from(e.target.files ?? []))
+          e.target.value = ''   // 같은 파일 재선택 허용
         }}
       />
-      <div style={{ fontSize: 28, marginBottom: 8 }}>{file ? '✅' : icon}</div>
+
+      <div style={{ fontSize: 26, marginBottom: 6 }}>{hasFiles ? '✅' : icon}</div>
       <div style={{ fontSize: 14, fontWeight: 600, color: theme.colors.textPrimary, marginBottom: 4 }}>
         {title}
+        {multiple && hasFiles && (
+          <span style={{ color: theme.colors.textSecondary, fontWeight: 500 }}> ({files.length})</span>
+        )}
       </div>
-      {file ? (
+
+      {hasFiles ? (
         <>
-          <div
-            style={{ fontSize: 12, color: theme.colors.textPrimary, wordBreak: 'break-all', marginBottom: 6 }}
-            title={file.name}
-          >
-            {file.name}
+          {/* ── 선택된 파일 목록 (개별 제거) ── */}
+          <div style={{ maxHeight: 92, overflowY: 'auto', marginBottom: 6, textAlign: 'left' }}>
+            {files.map((f) => (
+              <div
+                key={fileKey(f)}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 6,
+                  fontSize: 11.5, color: theme.colors.textPrimary, padding: '2px 0',
+                }}
+              >
+                <span style={{ flex: 1, minWidth: 0, wordBreak: 'break-all' }} title={f.name}>
+                  {f.name}
+                </span>
+                <button
+                  type="button"
+                  aria-label={`${f.name} 제거`}
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    if (!disabled) onChange(files.filter((x) => fileKey(x) !== fileKey(f)))
+                  }}
+                  disabled={disabled}
+                  style={{
+                    flexShrink: 0, fontSize: 13, lineHeight: 1, padding: '0 2px',
+                    color: theme.colors.textMuted, background: 'none', border: 'none',
+                    cursor: disabled ? 'not-allowed' : 'pointer',
+                  }}
+                >
+                  ×
+                </button>
+              </div>
+            ))}
           </div>
           <button
             type="button"
-            onClick={(e) => { e.stopPropagation(); if (!disabled) onSelect(null) }}
+            onClick={(e) => { e.stopPropagation(); if (!disabled) onChange([]) }}
             disabled={disabled}
             style={{
               fontSize: 11,
@@ -106,8 +161,13 @@ const UploadBox: React.FC<UploadBoxProps> = ({ title, hint, accept, icon, file, 
               textDecoration: 'underline',
             }}
           >
-            제거
+            {multiple ? '모두 제거' : '제거'}
           </button>
+          {multiple && (
+            <div style={{ fontSize: 10.5, color: theme.colors.textMuted, marginTop: 4 }}>
+              클릭하면 파일을 더 추가합니다
+            </div>
+          )}
         </>
       ) : (
         <div style={{ fontSize: 12, color: theme.colors.textSecondary }}>{hint}</div>
@@ -138,26 +198,31 @@ const InvoiceUploadModal: React.FC<InvoiceUploadModalProps> = ({
   onAnalyze,
   onSubmit,
 }) => {
-  const [xlsxFile, setXlsxFile] = useState<File | null>(null)
-  const [pdfFile, setPdfFile] = useState<File | null>(null)
+  const [xlsxFiles, setXlsxFiles] = useState<File[]>([])
+  const [pdfFiles, setPdfFiles] = useState<File[]>([])
   const [summary, setSummary] = useState<InvoiceUploadSummary | null>(null)
   const [analyzing, setAnalyzing] = useState(false)
   const [analyzeError, setAnalyzeError] = useState<string | null>(null)
 
+  const xlsxFile = xlsxFiles[0] ?? null
+
   // ── 열릴 때 초기화 ────────────────────────────────────────────
   useEffect(() => {
     if (isOpen) {
-      setXlsxFile(null)
-      setPdfFile(null)
+      setXlsxFiles([])
+      setPdfFiles([])
       setSummary(null)
       setAnalyzing(false)
       setAnalyzeError(null)
     }
   }, [isOpen])
 
-  // ── 두 파일이 모두 준비되면 자동 분석 ─────────────────────────
+  // ── 엑셀 1개 + PDF 1개 이상이 준비되면 자동 분석 ───────────────
+  //   pdfFiles 는 배열이라 참조가 매번 바뀌므로, 내용 기준 키로 의존성을 건다.
+  const pdfKey = pdfFiles.map(fileKey).join('\n')
+
   useEffect(() => {
-    if (!isOpen || !xlsxFile || !pdfFile) {
+    if (!isOpen || !xlsxFile || pdfFiles.length === 0) {
       setSummary(null)
       setAnalyzeError(null)
       return
@@ -165,22 +230,23 @@ const InvoiceUploadModal: React.FC<InvoiceUploadModalProps> = ({
     let cancelled = false
     setAnalyzing(true)
     setAnalyzeError(null)
-    onAnalyze(xlsxFile, pdfFile)
+    onAnalyze(xlsxFile, pdfFiles)
       .then((res) => { if (!cancelled) setSummary(res) })
       .catch((err) => { if (!cancelled) setAnalyzeError(err?.message ?? '분석 실패') })
       .finally(() => { if (!cancelled) setAnalyzing(false) })
     return () => { cancelled = true }
-  }, [isOpen, xlsxFile, pdfFile, onAnalyze])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen, xlsxFile, pdfKey, onAnalyze])
 
   if (!isOpen) return null
 
-  const bothReady = !!xlsxFile && !!pdfFile
+  const bothReady = !!xlsxFile && pdfFiles.length > 0
   const hasWork = !!summary && (summary.excelRegister > 0 || summary.pdfMatch > 0)
   const canSubmit = bothReady && !analyzing && !uploading && hasWork
 
   const handleSubmit = async () => {
-    if (!canSubmit || !xlsxFile || !pdfFile) return
-    await onSubmit(xlsxFile, pdfFile)
+    if (!canSubmit || !xlsxFile) return
+    await onSubmit(xlsxFile, pdfFiles)
   }
 
   return (
@@ -195,27 +261,29 @@ const InvoiceUploadModal: React.FC<InvoiceUploadModalProps> = ({
         </div>
         <div style={{ fontSize: 13, color: theme.colors.textSecondary, marginBottom: 18 }}>
           송장 엑셀(운송장번호)과 PDF(송장 라벨)를 함께 올리면 자동으로 매칭·등록됩니다.
+          PDF가 여러 개로 나뉘어 있으면 <strong>한 번에 여러 개</strong>를 선택하세요.
         </div>
 
-        {/* ── 업로드 박스 2개 ───────────────────────────────── */}
-        <div style={{ display: 'flex', gap: 12 }}>
+        {/* ── 업로드 박스 2개 (엑셀 1개 / PDF 다중) ─────────── */}
+        <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
           <UploadBox
             title="송장 엑셀"
             hint=".xlsx 파일을 끌어놓거나 클릭"
             accept=".xlsx,.xls"
             icon="📄"
-            file={xlsxFile}
+            files={xlsxFiles}
             disabled={uploading}
-            onSelect={setXlsxFile}
+            onChange={setXlsxFiles}
           />
           <UploadBox
             title="송장 PDF"
-            hint=".pdf 파일을 끌어놓거나 클릭"
+            hint=".pdf 파일을 끌어놓거나 클릭 (여러 개 가능)"
             accept=".pdf"
             icon="📑"
-            file={pdfFile}
+            files={pdfFiles}
+            multiple
             disabled={uploading}
-            onSelect={setPdfFile}
+            onChange={setPdfFiles}
           />
         </div>
 
@@ -248,7 +316,7 @@ const InvoiceUploadModal: React.FC<InvoiceUploadModalProps> = ({
                 color={theme.colors.info}
               />
               <SummaryRow
-                label="PDF 송장 일치"
+                label={`PDF 송장 일치${pdfFiles.length > 1 ? ` (${pdfFiles.length}개 파일)` : ''}`}
                 value={`${summary.pdfMatch} / ${summary.pdfTotal}건`}
                 color={theme.colors.success}
               />
@@ -257,6 +325,9 @@ const InvoiceUploadModal: React.FC<InvoiceUploadModalProps> = ({
               )}
               {summary.cancelSkip > 0 && (
                 <SummaryRow label="출고중지 제외" value={`${summary.cancelSkip}건`} color={theme.colors.warning} />
+              )}
+              {summary.duplicateSkip > 0 && (
+                <SummaryRow label="주문번호 중복 제외" value={`${summary.duplicateSkip}건`} color={theme.colors.danger} />
               )}
               {summary.failures.length > 0 && (
                 <div style={{ marginTop: 8, paddingTop: 8, borderTop: `1px solid ${theme.colors.border}` }}>

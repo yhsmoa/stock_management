@@ -5,6 +5,7 @@
 
 import { useState, useRef, useMemo, useCallback, useEffect } from 'react'
 import * as XLSX from 'xlsx'
+import { downloadStyledWorkbook } from '../services/inboundExcelService'
 import {
   fetchAllOrdersheets,
   fetchAllReturnRequests,
@@ -81,7 +82,7 @@ export const COLUMNS = [
   { key: 'product_info',   label: '상품정보',  width: '268px' },
   { key: 'receiver_name',  label: '수취인',    width: '80px'  },
   { key: 'shipping_count', label: '수량',      width: '50px'  },
-  { key: 'status_label',   label: '주문상태',  width: '70px'  },
+  { key: 'status_label',   label: '주문상태',  width: '82px'  },
   { key: 'estimated_shipping_date', label: '출고예정', width: '60px' },
   { key: 'ordered_at_label', label: '주문일', width: '60px' },
   { key: 'stock',          label: '재고',      width: '44px'  },
@@ -104,6 +105,20 @@ export const STATUS_DOT_LABELS: Record<StatusType, string> = {
   multi: '이력 확인 필요',
   cart: '카트',
   none: '미주문',
+}
+
+// ── 주문상태 배지 색상 ────────────────────────────────────────────
+//   쿠팡 API 상태코드(row.status) 기준 — 한글 라벨이 바뀌어도 안전하도록
+//   STATUS_MAP 의 key 를 그대로 사용한다. 미정의 코드는 gray 로 처리.
+export type StatusBadgeTone = 'gray' | 'yellow' | 'orange' | 'green'
+
+export const STATUS_BADGE_TONE: Record<string, StatusBadgeTone> = {
+  ACCEPT:         'gray',    // 결제완료
+  INSTRUCT:       'yellow',  // 상품준비중
+  DEPARTURE:      'orange',  // 배송지시
+  DELIVERING:     'green',   // 배송중
+  FINAL_DELIVERY: 'green',   // 배송완료
+  NONE_TRACKING:  'gray',    // 업체직송
 }
 
 // ── 유틸 ──────────────────────────────────────────────────────────
@@ -247,8 +262,9 @@ export function usePersonalOrder() {
   const [invoiceUploadModalOpen, setInvoiceUploadModalOpen] = useState(false)
   const [invoiceUploading, setInvoiceUploading] = useState(false)
   const [invoiceUpdating, setInvoiceUpdating] = useState(false)
-  // PDF 파싱은 비용이 크므로 동일 File 재파싱을 피하기 위한 캐시 (분석/업로드 공용)
-  const parsedPdfCacheRef = useRef<{ file: File | null; pages: ParsedInvoicePage[] }>({ file: null, pages: [] })
+  // PDF 파싱은 비용이 크므로 동일 File 재파싱을 피하기 위한 캐시 (분석/업로드 공용).
+  // PDF 는 분할되어 여러 개가 올라올 수 있으므로 File 별로 캐싱한다.
+  const parsedPdfCacheRef = useRef<Map<File, ParsedInvoicePage[]>>(new Map())
 
   // ── fulfillment 상태 (키: `${order_id}|${option_id}`) ─────────
   const [aggMap, setAggMap] = useState<Map<string, FulfillmentAgg>>(new Map())
@@ -1047,20 +1063,30 @@ export function usePersonalOrder() {
       return
     }
 
-    // 시트1: Delivery (등록상품명 앞에 박스 접두, ✔️ 제외)
-    const aoa1 = buildDeliveryAoA(deliveryRows, (r) => {
+    // ── 단품 / 합배송 분리 ─────────────────────────────────────
+    //   한 주문번호에 주문 라인이 1개면 단품(Delivery),
+    //   2개 이상이면 하나의 주문으로 여러 상품이 나가는 건이므로 '합배송' 시트로 보낸다.
+    const boxPrefixOf = (r: PersonalOrderRow) => {
       const a = inboundAllocMap.get(getRowKey(r))
       return a?.boxStr ? `${a.boxStr} ` : ''
-    })
+    }
+    const isCombinedOrder = (r: PersonalOrderRow) =>
+      (orderItemCountMap.get(r.order_id) ?? 1) > 1
 
-    // 시트2: shipment_list (구성 컬럼 + 출고/잔여)
+    // 시트1: Delivery (단품만) / 시트2: 합배송 (동일 헤더·서식)
+    const aoaDelivery = buildDeliveryAoA(deliveryRows.filter((r) => !isCombinedOrder(r)), boxPrefixOf)
+    const aoaCombined = buildDeliveryAoA(deliveryRows.filter(isCombinedOrder), boxPrefixOf)
+
+    // 시트3: shipment_list (구성 컬럼 + 출고/잔여)
     const SHIPMENT_HEADERS = [
       'box_code', 'shipment_no', 'product_no', 'barcode', 'item_name', 'option_name',
       'china_option1', 'china_option2', 'price_cny', 'shipment_size', '수량', '출고', '잔여', 'composition',
     ]
-    const aoa2: (string | number)[][] = [
+    const buildShipmentAoA = (
+      rows: Array<ShipmentDetailRow & { allocated: number }>,
+    ): (string | number)[][] => [
       SHIPMENT_HEADERS,
-      ...inboundDetails.map((d) => [
+      ...rows.map((d) => [
         d.box_code ?? '', d.shipment_no ?? '', d.product_no ?? '', d.barcode ?? '',
         d.item_name ?? '', d.option_name ?? '', d.china_option1 ?? '', d.china_option2 ?? '',
         d.price_cny ?? '', d.shipment_size ?? '', d.quantity ?? 0,
@@ -1068,12 +1094,24 @@ export function usePersonalOrder() {
       ]),
     ]
 
-    const wb = XLSX.utils.book_new()
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa1), 'Delivery')
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa2), 'shipment_list')
+    // 시트4: 남은상품 — Delivery/합배송 으로 빠지고 남은 재고(잔여 > 0)
+    const leftover = inboundDetails.filter((d) => (d.quantity ?? 0) - d.allocated > 0)
+
+    // 헤더 서식(회색 배경) + 자동 열너비가 필요하므로 exceljs 기반 서비스 사용
     const today = new Date().toISOString().slice(0, 10)
-    XLSX.writeFile(wb, `입고준비(${today}).xlsx`)
-  }, [items, inboundAllocMap, inboundDetails])
+    downloadStyledWorkbook(
+      [
+        { name: 'Delivery',      aoa: aoaDelivery,                    headerFill: true },
+        { name: '합배송',         aoa: aoaCombined,                    headerFill: true },
+        { name: 'shipment_list', aoa: buildShipmentAoA(inboundDetails) },
+        { name: '남은상품',       aoa: buildShipmentAoA(leftover) },
+      ],
+      `입고준비(${today}).xlsx`,
+    ).catch((err) => {
+      console.error('[입고엑셀] 생성 실패:', err)
+      alert(`입고엑셀 생성 실패: ${err.message}`)
+    })
+  }, [items, inboundAllocMap, inboundDetails, orderItemCountMap])
 
   // ── [바코드 연결] 핸들러 ──────────────────────────────────────────
   const [barcodeLoading, setBarcodeLoading] = useState(false)
@@ -1184,11 +1222,12 @@ export function usePersonalOrder() {
     return map
   }, [])
 
-  // ── PDF 파싱 (동일 File 재파싱 방지 캐시) ──────────────────────
+  // ── PDF 파싱 (File 별 재파싱 방지 캐시) ────────────────────────
   const parsePdfCached = useCallback(async (file: File): Promise<ParsedInvoicePage[]> => {
-    if (parsedPdfCacheRef.current.file === file) return parsedPdfCacheRef.current.pages
+    const cached = parsedPdfCacheRef.current.get(file)
+    if (cached) return cached
     const pages = await parsePdfInvoices(file)
-    parsedPdfCacheRef.current = { file, pages }
+    parsedPdfCacheRef.current.set(file, pages)
     return pages
   }, [])
 
@@ -1196,8 +1235,14 @@ export function usePersonalOrder() {
   //   요약(summary) + 엑셀 등록 대상(registerMap) + 업로드 대상 PDF(matchedPages)
   const buildInvoicePlan = useCallback(async (
     xlsxFile: File,
-    pdfFile: File,
-  ): Promise<{ summary: InvoiceUploadSummary; registerMap: Map<string, string>; matchedPages: ParsedInvoicePage[] }> => {
+    pdfFiles: File[],
+  ): Promise<{
+    summary: InvoiceUploadSummary
+    registerMap: Map<string, string>
+    /** PDF 는 여러 개일 수 있고 pageIndex 는 각 파일 기준이므로 파일별로 묶어 둔다 */
+    matchedByFile: { file: File; pages: ParsedInvoicePage[] }[]
+    matchedCount: number
+  }> => {
     // (1) 엑셀 파싱 → 유효 운송장 맵
     const xlsxMap = await readInvoiceXlsx(xlsxFile)
     const excelTotal = xlsxMap.size
@@ -1215,45 +1260,85 @@ export function usePersonalOrder() {
       registerMap.set(oid, inv)
     }
 
-    // (3) PDF 파싱 → 업로드 대상 판정
+    // (3) PDF 파싱 → 업로드 대상 판정 (여러 PDF 순회)
     //     조건: 주문 존재 + 합배송 아님 + 출고중지 아님 + 운송장번호 존재(xlsx/기존)
-    const pages = await parsePdfCached(pdfFile)
     const hasTracking = (oid: string) =>
       xlsxMap.has(oid) || trackingMap.has(oid) || pendingSet.has(oid) || invoiceOrderIds.has(oid)
 
-    const matchedPages: ParsedInvoicePage[] = []
+    // (3-1) 전체 PDF 를 먼저 파싱하고 주문번호 등장 횟수를 집계한다.
+    //       → 동일 주문번호가 2건 이상이면 어느 라벨이 맞는지 알 수 없으므로
+    //         '첫 건만 업로드'가 아니라 해당 주문 전체를 업로드 대상에서 제외한다.
+    const parsedPerFile: { file: File; pages: ParsedInvoicePage[] }[] = []
+    const orderIdCount = new Map<string, number>()
+    let pdfTotal = 0
+
+    for (const pdfFile of pdfFiles) {
+      const pages = await parsePdfCached(pdfFile)
+      parsedPerFile.push({ file: pdfFile, pages })
+      pdfTotal += pages.length
+      for (const p of pages) {
+        orderIdCount.set(p.orderId, (orderIdCount.get(p.orderId) ?? 0) + 1)
+      }
+    }
+
+    // (3-2) 업로드 대상 판정
+    const matchedByFile: { file: File; pages: ParsedInvoicePage[] }[] = []
+    let matchedCount = 0
     let combinedSkip = 0
     let cancelSkip = 0
+    let duplicateSkip = 0
+    const duplicateReported = new Set<string>()   // 실패 목록에 주문당 1줄만
     const failures: { orderId: string; reason: string }[] = []
 
-    for (const p of pages) {
-      if (!orderIdSet.has(p.orderId)) { failures.push({ orderId: p.orderId, reason: '주문 없음' }); continue }
-      if (isCombined(p.orderId)) { combinedSkip++; continue }
-      if (releaseStopSet.has(p.orderId)) { cancelSkip++; continue }
-      if (!hasTracking(p.orderId)) { failures.push({ orderId: p.orderId, reason: '운송장번호 없음' }); continue }
-      matchedPages.push(p)
+    for (const { file, pages } of parsedPerFile) {
+      const matched: ParsedInvoicePage[] = []
+      for (const p of pages) {
+        if (!orderIdSet.has(p.orderId)) { failures.push({ orderId: p.orderId, reason: '주문 없음' }); continue }
+        if (isCombined(p.orderId)) { combinedSkip++; continue }
+        if (releaseStopSet.has(p.orderId)) { cancelSkip++; continue }
+        if (!hasTracking(p.orderId)) { failures.push({ orderId: p.orderId, reason: '운송장번호 없음' }); continue }
+
+        // 동일 주문번호 2건 이상 → 전부 업로드 제외
+        const dupCount = orderIdCount.get(p.orderId) ?? 0
+        if (dupCount > 1) {
+          duplicateSkip++
+          if (!duplicateReported.has(p.orderId)) {
+            duplicateReported.add(p.orderId)
+            failures.push({ orderId: p.orderId, reason: `주문번호 중복 ${dupCount}건 — 업로드 제외` })
+          }
+          continue
+        }
+
+        matched.push(p)
+      }
+
+      if (matched.length > 0) {
+        matchedByFile.push({ file, pages: matched })
+        matchedCount += matched.length
+      }
     }
 
     const summary: InvoiceUploadSummary = {
       excelTotal,
       excelRegister: registerMap.size,
-      pdfTotal: pages.length,
-      pdfMatch: matchedPages.length,
+      pdfTotal,
+      pdfMatch: matchedCount,
       combinedSkip,
       cancelSkip,
+      duplicateSkip,
       failures,
     }
-    return { summary, registerMap, matchedPages }
+    return { summary, registerMap, matchedByFile, matchedCount }
   }, [items, orderItemCountMap, trackingMap, invoiceOrderIds, readInvoiceXlsx, parsePdfCached])
 
   // ── 모달 요약 분석 (파일 2개 준비되면 자동 호출) ──────────────
-  const analyzeInvoiceFiles = useCallback(async (xlsxFile: File, pdfFile: File): Promise<InvoiceUploadSummary> => {
-    const { summary } = await buildInvoicePlan(xlsxFile, pdfFile)
+  const analyzeInvoiceFiles = useCallback(async (xlsxFile: File, pdfFiles: File[]): Promise<InvoiceUploadSummary> => {
+    const { summary } = await buildInvoicePlan(xlsxFile, pdfFiles)
     return summary
   }, [buildInvoicePlan])
 
   // ── [업로드] 실행 — 엑셀 운송장 등록 + PDF Storage 업로드 ──────
-  const handleInvoiceUpload = useCallback(async (xlsxFile: File, pdfFile: File) => {
+  const handleInvoiceUpload = useCallback(async (xlsxFile: File, pdfFiles: File[]) => {
     const { userId } = getUserInfo()
     if (!userId) {
       alert('로그인 정보를 확인해 주세요.')
@@ -1266,21 +1351,24 @@ export function usePersonalOrder() {
       { label: '엑셀 운송장번호 등록', state: 'pending' },
       { label: 'PDF Storage 업로드', state: 'pending' },
     ])
-    setProgressStatus(`${xlsxFile.name} · ${pdfFile.name}`)
+    setProgressStatus(
+      `${xlsxFile.name} · PDF ${pdfFiles.length}개`,
+    )
     setProgressOpen(true)
     setInvoiceUploading(true)
 
     try {
       // STEP 1: 분석
       updateStep(0, 'active')
-      const { summary, registerMap, matchedPages } = await buildInvoicePlan(xlsxFile, pdfFile)
-      if (registerMap.size === 0 && matchedPages.length === 0) {
+      const { summary, registerMap, matchedByFile, matchedCount } =
+        await buildInvoicePlan(xlsxFile, pdfFiles)
+      if (registerMap.size === 0 && matchedCount === 0) {
         updateStep(0, 'error')
         alert('등록할 항목이 없습니다.')
         closeProgress()
         return
       }
-      updateStep(0, 'done', `엑셀 ${registerMap.size} · PDF ${matchedPages.length}`)
+      updateStep(0, 'done', `엑셀 ${registerMap.size} · PDF ${matchedCount}`)
 
       // STEP 2: 엑셀 운송장번호 등록 (pending_invoice_number)
       updateStep(1, 'active', `0/${registerMap.size}`)
@@ -1298,17 +1386,26 @@ export function usePersonalOrder() {
       updateStep(1, 'done', `${regResult.success}건`)
 
       // STEP 3: PDF Storage 업로드 (order_id 별 분리 저장)
-      updateStep(2, 'active', `0/${matchedPages.length}`)
-      let upResult = { success: 0, failed: 0, errors: [] as string[] }
-      if (matchedPages.length > 0) {
-        upResult = await splitAndUploadPages(pdfFile, matchedPages, userId)
-        if (upResult.success > 0) {
-          setInvoiceOrderIds((prev) => {
-            const next = new Set(prev)
-            for (const p of matchedPages) next.add(p.orderId)
-            return next
-          })
-        }
+      //   pageIndex 는 각 PDF 기준이므로 파일 단위로 나눠 업로드한다.
+      updateStep(2, 'active', `0/${matchedCount}`)
+      const upResult = { success: 0, failed: 0, errors: [] as string[] }
+      const uploadedOrderIds: string[] = []
+
+      for (const { file, pages } of matchedByFile) {
+        const r = await splitAndUploadPages(file, pages, userId)
+        upResult.success += r.success
+        upResult.failed += r.failed
+        upResult.errors.push(...r.errors)
+        if (r.success > 0) uploadedOrderIds.push(...pages.map((p) => p.orderId))
+        updateStep(2, 'active', `${upResult.success}/${matchedCount}`)
+      }
+
+      if (uploadedOrderIds.length > 0) {
+        setInvoiceOrderIds((prev) => {
+          const next = new Set(prev)
+          for (const oid of uploadedOrderIds) next.add(oid)
+          return next
+        })
       }
       updateStep(2, 'done', `${upResult.success}건`)
 
@@ -1316,6 +1413,7 @@ export function usePersonalOrder() {
         `완료 — 엑셀 ${regResult.success}, PDF ${upResult.success}` +
         (summary.combinedSkip > 0 ? `, 합배송 ${summary.combinedSkip}` : '') +
         (summary.cancelSkip > 0 ? `, 출고중지 ${summary.cancelSkip}` : '') +
+        (summary.duplicateSkip > 0 ? `, 중복제외 ${summary.duplicateSkip}` : '') +
         (summary.failures.length > 0 ? `, 실패 ${summary.failures.length}` : '') +
         (upResult.failed > 0 ? `, 업로드실패 ${upResult.failed}` : ''),
       )

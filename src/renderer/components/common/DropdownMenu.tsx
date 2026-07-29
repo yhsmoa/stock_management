@@ -22,6 +22,11 @@ interface DropdownMenuProps {
   align?: 'left' | 'right'
   /** 트리거 비활성화 */
   disabled?: boolean
+  /**
+   * DropdownSubmenu(플라이아웃)를 포함하는 경우 true.
+   * 기본 메뉴는 overflow:hidden 이라 옆으로 펼쳐지는 하위 메뉴가 잘리므로 해제한다.
+   */
+  hasSubmenu?: boolean
 }
 
 const DropdownMenu: React.FC<DropdownMenuProps> = ({
@@ -30,6 +35,7 @@ const DropdownMenu: React.FC<DropdownMenuProps> = ({
   triggerClassName,
   align = 'left',
   disabled,
+  hasSubmenu = false,
 }) => (
   <div className={`dropdown${disabled ? ' dropdown-disabled' : ''}`}>
     <button
@@ -39,7 +45,11 @@ const DropdownMenu: React.FC<DropdownMenuProps> = ({
     >
       {label}
     </button>
-    <div className={`dropdown-menu dropdown-menu-${align}`}>{children}</div>
+    <div
+      className={`dropdown-menu dropdown-menu-${align}${hasSubmenu ? ' dropdown-menu-host' : ''}`}
+    >
+      {children}
+    </div>
   </div>
 )
 
@@ -55,6 +65,39 @@ export const DropdownItem: React.FC<
   >
     {children}
   </button>
+)
+
+// ── 하위 메뉴 (오른쪽으로 펼쳐지는 플라이아웃) ─────────────────
+//   부모 DropdownMenu 에 hasSubmenu 를 넘겨야 잘리지 않는다.
+interface DropdownSubmenuProps {
+  /** 상위 메뉴에 표시할 항목명 */
+  label: React.ReactNode
+  /** 하위 항목 (DropdownItem 등) */
+  children: React.ReactNode
+  /** 항목 추가 클래스 (예: 선택됨 강조 'active') */
+  className?: string
+}
+
+export const DropdownSubmenu: React.FC<DropdownSubmenuProps> = ({
+  label,
+  children,
+  className,
+}) => (
+  <div className="dropdown-submenu">
+    <button
+      type="button"
+      className={`dropdown-item dropdown-submenu-trigger${className ? ` ${className}` : ''}`}
+    >
+      <span>{label}</span>
+      <span className="dropdown-submenu-arrow" aria-hidden="true">›</span>
+    </button>
+    <div className="dropdown-submenu-menu">{children}</div>
+  </div>
+)
+
+// ── 메뉴 내 구분 라벨 (예: '기간', '정렬') ─────────────────────
+export const DropdownSection: React.FC<{ children: React.ReactNode }> = ({ children }) => (
+  <div className="dropdown-section">{children}</div>
 )
 
 export default DropdownMenu

@@ -42,6 +42,7 @@ export interface InvoiceUploadSummary {
   pdfMatch: number       // storage 에 업로드될 PDF 건수
   combinedSkip: number   // 합배송(주문 라인 2개↑)으로 제외된 PDF 건수
   cancelSkip: number     // 출고중지(release_stop)로 제외된 PDF 건수
+  duplicateSkip: number  // 동일 주문번호가 PDF 에 2건 이상이라 전부 제외된 건수
   failures: { orderId: string; reason: string }[]  // 실패건 + 사유
 }
 

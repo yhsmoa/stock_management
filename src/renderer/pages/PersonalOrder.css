@@ -455,6 +455,42 @@
 .po-status-dot.gray    { background-color: #D1D5DB; }
 .po-status-dot.multi   { background-color: #A855F7; }
 
+/* ── 주문상태 배지 ─────────────────────────────────────────────── */
+.po-status-badge {
+  display: inline-block;
+  padding: 2px 7px;
+  border-radius: 9999px;
+  font-size: 11px;
+  font-weight: 400;
+  line-height: 1.45;
+  white-space: nowrap;
+  border: 1px solid transparent;
+}
+
+.po-status-badge.gray {
+  background: #F1F2F4;
+  color: #5B6270;
+  border-color: #E3E5EA;
+}
+
+.po-status-badge.yellow {
+  background: #FEF3C7;
+  color: #A16207;
+  border-color: #FDE68A;
+}
+
+.po-status-badge.orange {
+  background: #FFEDD5;
+  color: #C2410C;
+  border-color: #FED7AA;
+}
+
+.po-status-badge.green {
+  background: #DCFCE7;
+  color: #15803D;
+  border-color: #BBF7D0;
+}
+
 /* ── 상태 점 필터 버튼 ─────────────────────────────────────────── */
 .po-status-filter-btn {
   display: inline-flex;

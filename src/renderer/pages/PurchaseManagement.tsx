@@ -12,13 +12,42 @@ import OrderModal from '../components/purchase/OrderModal'
 import UploadProgressModal from '../components/UploadProgressModal'
 import PasswordConfirmModal from '../components/common/PasswordConfirmModal'
 import CartNameInputModal from '../components/personal-order/CartNameInputModal'
-import DropdownMenu, { DropdownItem } from '../components/common/DropdownMenu'
+import DropdownMenu, {
+  DropdownItem,
+  DropdownSubmenu,
+  DropdownSection,
+} from '../components/common/DropdownMenu'
 import BulkPriceModal from '../components/purchase/BulkPriceModal'
 
 // ── 상수: 조회수 변동 색상 ────────────────────────────────────
 const VIEW_DIFF_THRESHOLD = 10
 const COLOR_INCREASE = '#EF4444'  // 빨강 (증가)
 const COLOR_DECREASE = '#3B82F6'  // 파랑 (감소)
+
+// ── 상수: 툴바 드롭박스 라벨 ──────────────────────────────────
+//   트리거에 현재 선택값을 표시하기 위한 매핑.
+//   (activeFilter 는 단일 값이라 '필터'/'기타' 중 한쪽만 활성 표시된다)
+
+/** [기준] 정렬 키 → 표시명 */
+const SORT_LABELS: Record<string, string> = {
+  sales:   '판매량',
+  storage: '보관료',
+  stock:   '재고량',
+}
+
+/** [필터] 수량 컬럼 필터 키 → 표시명 */
+const QTY_FILTER_LABELS: Record<string, string> = {
+  input:  '입력',
+  order:  '주문',
+  in_qty: '입고',
+  out_qty: '반출',
+}
+
+/** [기타] 필터 키 → 표시명 */
+const ETC_FILTER_LABELS: Record<string, string> = {
+  no_barcode: 'NO 바코드',
+  note:       '📌',
+}
 
 // ══════════════════════════════════════════════════════════════════
 // CellBadge — 셀 내 값 강조용 배지 컴포넌트
@@ -431,6 +460,21 @@ const PurchaseManagement: React.FC = () => {
   // ══════════════════════════════════════════════════════════════
   // 렌더링
   // ══════════════════════════════════════════════════════════════
+
+  // ── 드롭박스 트리거 진행 상태 라벨 ────────────────────────────
+  //   실행 버튼이 드롭박스 안으로 들어가면 진행 문구가 가려지므로,
+  //   진행 중인 작업을 트리거 라벨에 그대로 노출한다.
+  const prepLabel =
+    updating         ? (updateProgress || '업데이트 중...')
+    : isOrderLoading ? '주문 로딩...'
+    : barcodesyncing ? (barcodeSyncProgress || '바코드 연동 중...')
+    : '준비'
+
+  const orderLabel =
+    orderSending ? '전송 중...'
+    : copying    ? '복사 중...'
+    : '주문'
+
   return (
     <div className="purchase-container">
 
@@ -438,83 +482,77 @@ const PurchaseManagement: React.FC = () => {
       <div className="purchase-top-actions">
         <div className="purchase-toolbar-left">
           <h1 className="purchase-title">로켓그로스 사입</h1>
-        </div>
-        <div className="purchase-toolbar-right">
-          {/* ── 업데이트 ──────────────────────────────────────── */}
-          <button
-            className="purchase-btn"
-            onClick={handleUpdate}
-            disabled={updating}
-          >
-            {updating ? (updateProgress || '업데이트 중...') : '업데이트'}
-          </button>
 
-          {/* ── 리셋 (비밀번호 확인 후 실행) ───────────────────── */}
+          {/* ── 리셋 (비밀번호 확인 후 실행) — 타이틀 옆에 배치 ── */}
           <button
-            className="purchase-btn"
+            className="purchase-btn purchase-reset-btn"
             onClick={() => setResetModalOpen(true)}
             disabled={resetting}
+            title="사입 데이터 초기화 (비밀번호 확인 필요)"
           >
             {resetting ? (updateProgress || '리셋 중...') : '리셋'}
           </button>
-
-          {/* ── 주문 모달 열기 ────────────────────────────── */}
-          <button
-            className="purchase-btn"
-            onClick={() => setOrderModalOpen(true)}
-            disabled={isOrderLoading}
-            title="주문 조회 조건 설정"
-          >
-            {isOrderLoading ? '주문 로딩...' : '주문 🔗'}
-          </button>
-
-          {/* ── RG 재고 xlsx ─────────────────────────────────── */}
-          <label className="purchase-btn" style={{ cursor: 'pointer' }}>
-            RG 재고 xlsx
-            <input
-              ref={rgExcelInputRef}
-              type="file"
-              accept=".xlsx,.xls"
-              style={{ display: 'none' }}
-              onChange={handleRgExcelUpload}
-            />
-          </label>
-
-          {/* ── 쉽먼트 사이즈 xlsx (si_coupang_shipment_size upsert) ─── */}
-          <label className="purchase-btn" style={{ cursor: 'pointer' }}>
-            쉽먼트 사이즈 xlsx
-            <input
-              ref={shipmentSizeExcelInputRef}
-              type="file"
-              accept=".xlsx,.xls"
-              style={{ display: 'none' }}
-              onChange={handleShipmentSizeExcelUpload}
-            />
-          </label>
-
-          {/* ── 바코드 연결 (공용 DropdownMenu: api / xlsx) ──── */}
-          <DropdownMenu label="바코드 연결">
-            <DropdownItem onClick={handleBarcodeSync} disabled={barcodesyncing}>
-              {barcodesyncing ? (barcodeSyncProgress || '연동 중...') : 'api'}
+        </div>
+        <div className="purchase-toolbar-right">
+          {/* ── [준비] 데이터 채우기 ─────────────────────────────
+               업데이트 / 주문🔗 / xlsx 업로드 2종 / 바코드 연결 / 조회수 */}
+          <DropdownMenu label={prepLabel} align="right" hasSubmenu>
+            <DropdownItem onClick={handleUpdate} disabled={updating}>
+              업데이트
             </DropdownItem>
+
+            <DropdownItem
+              onClick={() => setOrderModalOpen(true)}
+              disabled={isOrderLoading}
+              title="주문 조회 조건 설정"
+            >
+              주문 🔗
+            </DropdownItem>
+
             <label className="dropdown-item" style={{ cursor: 'pointer' }}>
-              xlsx
+              RG 재고 xlsx
               <input
-                ref={barcodeExcelInputRef}
+                ref={rgExcelInputRef}
                 type="file"
                 accept=".xlsx,.xls"
                 style={{ display: 'none' }}
-                onChange={handleBarcodeExcel}
+                onChange={handleRgExcelUpload}
               />
             </label>
-          </DropdownMenu>
 
-          {/* ── 조회수 (드롭다운: 콘솔 / csv 업로드) ──────────── */}
-          <div className="purchase-dropdown">
-            <button className="purchase-btn">조회수</button>
-            <div className="purchase-dropdown-menu">
-              <button className="purchase-dropdown-item" onClick={handleViewsConsole}>콘솔</button>
-              <button className="purchase-dropdown-item" onClick={handleViewsCsvClick}>csv 업로드</button>
+            {/* si_coupang_shipment_size upsert */}
+            <label className="dropdown-item" style={{ cursor: 'pointer' }}>
+              쉽먼트 사이즈 xlsx
+              <input
+                ref={shipmentSizeExcelInputRef}
+                type="file"
+                accept=".xlsx,.xls"
+                style={{ display: 'none' }}
+                onChange={handleShipmentSizeExcelUpload}
+              />
+            </label>
+
+            {/* 바코드 연결 — api / xlsx */}
+            <DropdownSubmenu label="바코드 연결">
+              <DropdownItem onClick={handleBarcodeSync} disabled={barcodesyncing}>
+                {barcodesyncing ? (barcodeSyncProgress || '연동 중...') : 'api'}
+              </DropdownItem>
+              <label className="dropdown-item" style={{ cursor: 'pointer' }}>
+                xlsx
+                <input
+                  ref={barcodeExcelInputRef}
+                  type="file"
+                  accept=".xlsx,.xls"
+                  style={{ display: 'none' }}
+                  onChange={handleBarcodeExcel}
+                />
+              </label>
+            </DropdownSubmenu>
+
+            {/* 조회수 — 콘솔 / csv 업로드 */}
+            <DropdownSubmenu label="조회수">
+              <DropdownItem onClick={handleViewsConsole}>콘솔</DropdownItem>
+              <DropdownItem onClick={handleViewsCsvClick}>csv 업로드</DropdownItem>
               <input
                 ref={viewsCsvInputRef}
                 type="file"
@@ -522,28 +560,26 @@ const PurchaseManagement: React.FC = () => {
                 style={{ display: 'none' }}
                 onChange={handleViewsCsvUpload}
               />
-            </div>
-          </div>
+            </DropdownSubmenu>
+          </DropdownMenu>
 
-          {/* ── 복사 (구글 시트 TSV: input > 0 행만) ──────────── */}
-          <button
-            className="purchase-btn"
-            onClick={handleCopy}
-            disabled={copying}
-            title="입력 수량이 있는 행을 구글 시트용 TSV로 클립보드 복사"
-          >
-            {copying ? '복사 중...' : '복사'}
-          </button>
-
-          {/* ── 장바구니 (ft_carts + ft_cart_items: input > 0 행만) ── */}
-          <button
-            className="purchase-btn"
-            onClick={handleOrderSend}
-            disabled={orderSending}
-            title="입력 값이 있는 행을 ft_cart_items 로 전송"
-          >
-            {orderSending ? '전송 중...' : '장바구니'}
-          </button>
+          {/* ── [주문] 입력값(input > 0) 내보내기 ───────────────── */}
+          <DropdownMenu label={orderLabel} align="right">
+            <DropdownItem
+              onClick={handleOrderSend}
+              disabled={orderSending}
+              title="입력 값이 있는 행을 ft_cart_items 로 전송"
+            >
+              장바구니
+            </DropdownItem>
+            <DropdownItem
+              onClick={handleCopy}
+              disabled={copying}
+              title="입력 수량이 있는 행을 구글 시트용 TSV로 클립보드 복사"
+            >
+              복사
+            </DropdownItem>
+          </DropdownMenu>
         </div>
       </div>
 
@@ -622,84 +658,103 @@ const PurchaseManagement: React.FC = () => {
             </div>
           </div>
 
-          {/* ── 판매량 정렬 드롭박스 (기간 7/30일 + 오름/내림/전체) ── */}
+          {/* ── [기준] 정렬 드롭박스 ─────────────────────────
+               판매량 / 보관료 / 재고량 을 하위 플라이아웃으로 묶고,
+               각 기준 안에서 전체·오름차순·내림차순을 선택한다. */}
           <DropdownMenu
-            label={`판매량${sort?.key === 'sales' ? ` · ${salesPeriod === '30d' ? '30일' : '7일'} ${sort.dir === 'desc' ? '▼' : '▲'}` : ''}`}
-            triggerClassName={`purchase-sort-trigger${sort?.key === 'sales' ? ' active' : ''}`}
+            label={`기준${SORT_LABELS[sort?.key ?? ''] ? ` · ${SORT_LABELS[sort!.key]}${sort!.key === 'sales' ? `(${salesPeriod === '30d' ? '30일' : '7일'})` : ''} ${sort!.dir === 'desc' ? '▼' : '▲'}` : ''}`}
+            triggerClassName={`purchase-sort-trigger${sort ? ' active' : ''}`}
+            hasSubmenu
           >
-            <DropdownItem className={sort?.key !== 'sales' ? 'active' : ''} onClick={() => setSortDir('sales', null)}>전체</DropdownItem>
-            <div className="purchase-dropdown-section">기간</div>
-            <DropdownItem className={sort?.key === 'sales' && salesPeriod === '7d' ? 'active' : ''} onClick={() => setSalesPeriod('7d')}>7일</DropdownItem>
-            <DropdownItem className={sort?.key === 'sales' && salesPeriod === '30d' ? 'active' : ''} onClick={() => setSalesPeriod('30d')}>30일</DropdownItem>
-            <div className="purchase-dropdown-section">정렬</div>
-            <DropdownItem className={sort?.key === 'sales' && sort.dir === 'asc' ? 'active' : ''} onClick={() => setSortDir('sales', 'asc')}>오름차순</DropdownItem>
-            <DropdownItem className={sort?.key === 'sales' && sort.dir === 'desc' ? 'active' : ''} onClick={() => setSortDir('sales', 'desc')}>내림차순</DropdownItem>
+            {/* 판매량 — 기간(7/30일) 선택이 추가로 필요 */}
+            <DropdownSubmenu
+              label="판매량"
+              className={sort?.key === 'sales' ? 'active' : ''}
+            >
+              <DropdownItem className={sort?.key !== 'sales' ? 'active' : ''} onClick={() => setSortDir('sales', null)}>전체</DropdownItem>
+              <DropdownItem className={sort?.key === 'sales' && sort.dir === 'asc' ? 'active' : ''} onClick={() => setSortDir('sales', 'asc')}>오름차순</DropdownItem>
+              <DropdownItem className={sort?.key === 'sales' && sort.dir === 'desc' ? 'active' : ''} onClick={() => setSortDir('sales', 'desc')}>내림차순</DropdownItem>
+              <DropdownSection>기간</DropdownSection>
+              <DropdownItem className={salesPeriod === '7d' ? 'active' : ''} onClick={() => setSalesPeriod('7d')}>7일</DropdownItem>
+              <DropdownItem className={salesPeriod === '30d' ? 'active' : ''} onClick={() => setSalesPeriod('30d')}>30일</DropdownItem>
+            </DropdownSubmenu>
+
+            {/* 보관료 */}
+            <DropdownSubmenu
+              label="보관료"
+              className={sort?.key === 'storage' ? 'active' : ''}
+            >
+              <DropdownItem className={sort?.key !== 'storage' ? 'active' : ''} onClick={() => setSortDir('storage', null)}>전체</DropdownItem>
+              <DropdownItem className={sort?.key === 'storage' && sort.dir === 'asc' ? 'active' : ''} onClick={() => setSortDir('storage', 'asc')}>오름차순</DropdownItem>
+              <DropdownItem className={sort?.key === 'storage' && sort.dir === 'desc' ? 'active' : ''} onClick={() => setSortDir('storage', 'desc')}>내림차순</DropdownItem>
+            </DropdownSubmenu>
+
+            {/* 재고량 — C.재고 기준 */}
+            <DropdownSubmenu
+              label="재고량"
+              className={sort?.key === 'stock' ? 'active' : ''}
+            >
+              <DropdownItem className={sort?.key !== 'stock' ? 'active' : ''} onClick={() => setSortDir('stock', null)}>전체</DropdownItem>
+              <DropdownItem className={sort?.key === 'stock' && sort.dir === 'asc' ? 'active' : ''} onClick={() => setSortDir('stock', 'asc')}>오름차순</DropdownItem>
+              <DropdownItem className={sort?.key === 'stock' && sort.dir === 'desc' ? 'active' : ''} onClick={() => setSortDir('stock', 'desc')}>내림차순</DropdownItem>
+            </DropdownSubmenu>
           </DropdownMenu>
 
-          {/* ── 보관료 정렬 드롭박스 (오름/내림/전체) ── */}
+          {/* ── [필터] 수량 컬럼 기반 필터 (입력 / 주문 / 입고 / 반출) ─ */}
           <DropdownMenu
-            label={`보관료${sort?.key === 'storage' ? (sort.dir === 'desc' ? ' ▼' : ' ▲') : ''}`}
-            triggerClassName={`purchase-sort-trigger${sort?.key === 'storage' ? ' active' : ''}`}
+            label={`필터${QTY_FILTER_LABELS[activeFilter ?? ''] ? ` · ${QTY_FILTER_LABELS[activeFilter!]}` : ''}`}
+            triggerClassName={`purchase-filter-trigger${QTY_FILTER_LABELS[activeFilter ?? ''] ? ' active' : ''}`}
           >
-            <DropdownItem className={sort?.key !== 'storage' ? 'active' : ''} onClick={() => setSortDir('storage', null)}>전체</DropdownItem>
-            <DropdownItem className={sort?.key === 'storage' && sort.dir === 'asc' ? 'active' : ''} onClick={() => setSortDir('storage', 'asc')}>오름차순</DropdownItem>
-            <DropdownItem className={sort?.key === 'storage' && sort.dir === 'desc' ? 'active' : ''} onClick={() => setSortDir('storage', 'desc')}>내림차순</DropdownItem>
+            <DropdownItem
+              className={activeFilter === 'input' ? 'active' : ''}
+              onClick={() => handleFilterToggle('input')}
+              title="입력(input) 수량이 1 이상인 행"
+            >
+              입력
+            </DropdownItem>
+            <DropdownItem
+              className={activeFilter === 'order' ? 'active' : ''}
+              onClick={() => handleFilterToggle('order')}
+              title="주문(order_qty) 수량이 1 이상인 행"
+            >
+              주문
+            </DropdownItem>
+            <DropdownItem
+              className={activeFilter === 'in_qty' ? 'active' : ''}
+              onClick={() => handleFilterToggle('in_qty')}
+              title="입고 수량이 1 이상인 행"
+            >
+              입고
+            </DropdownItem>
+            <DropdownItem
+              className={activeFilter === 'out_qty' ? 'active' : ''}
+              onClick={() => handleFilterToggle('out_qty')}
+              title="반출 수량이 1 이상인 행"
+            >
+              반출
+            </DropdownItem>
           </DropdownMenu>
 
-          {/* ── 재고량 정렬 드롭박스 (오름/내림/전체) — C.재고 기준 ── */}
+          {/* ── [기타] NO 바코드 / 📌 노트 ───────────────────── */}
           <DropdownMenu
-            label={`재고량${sort?.key === 'stock' ? (sort.dir === 'desc' ? ' ▼' : ' ▲') : ''}`}
-            triggerClassName={`purchase-sort-trigger${sort?.key === 'stock' ? ' active' : ''}`}
+            label={`기타${ETC_FILTER_LABELS[activeFilter ?? ''] ? ` · ${ETC_FILTER_LABELS[activeFilter!]}` : ''}`}
+            triggerClassName={`purchase-filter-trigger${ETC_FILTER_LABELS[activeFilter ?? ''] ? ' active' : ''}`}
           >
-            <DropdownItem className={sort?.key !== 'stock' ? 'active' : ''} onClick={() => setSortDir('stock', null)}>전체</DropdownItem>
-            <DropdownItem className={sort?.key === 'stock' && sort.dir === 'asc' ? 'active' : ''} onClick={() => setSortDir('stock', 'asc')}>오름차순</DropdownItem>
-            <DropdownItem className={sort?.key === 'stock' && sort.dir === 'desc' ? 'active' : ''} onClick={() => setSortDir('stock', 'desc')}>내림차순</DropdownItem>
+            <DropdownItem
+              className={activeFilter === 'no_barcode' ? 'active' : ''}
+              onClick={() => handleFilterToggle('no_barcode')}
+              title="바코드가 비어있는 행"
+            >
+              NO 바코드
+            </DropdownItem>
+            <DropdownItem
+              className={activeFilter === 'note' ? 'active' : ''}
+              onClick={() => handleFilterToggle('note')}
+              title="노트(메모) 데이터가 있는 행"
+            >
+              📌
+            </DropdownItem>
           </DropdownMenu>
-
-          {/* ── 구분자 ─────────────────────────────────────── */}
-          <span className="purchase-separator">|</span>
-
-          {/* ── 입력 컬럼 기반 필터 (입력 / 주문 / 입고 / 반출) ─ */}
-          <button
-            className={`purchase-filter-btn${activeFilter === 'input' ? ' active' : ''}`}
-            onClick={() => handleFilterToggle('input')}
-            title="입력(input) 수량이 1 이상인 행"
-          >
-            입력
-          </button>
-          <button
-            className={`purchase-filter-btn${activeFilter === 'order' ? ' active' : ''}`}
-            onClick={() => handleFilterToggle('order')}
-            title="주문(order_qty) 수량이 1 이상인 행"
-          >
-            주문
-          </button>
-          <button
-            className={`purchase-filter-btn${activeFilter === 'in_qty' ? ' active' : ''}`}
-            onClick={() => handleFilterToggle('in_qty')}
-            title="입고 수량이 1 이상인 행"
-          >
-            입고
-          </button>
-          <button
-            className={`purchase-filter-btn${activeFilter === 'out_qty' ? ' active' : ''}`}
-            onClick={() => handleFilterToggle('out_qty')}
-            title="반출 수량이 1 이상인 행"
-          >
-            반출
-          </button>
-
-          {/* ── 구분자 ─────────────────────────────────────── */}
-          <span className="purchase-separator">|</span>
-
-          {/* ── 바코드 없는 행 필터 ───────────────────────── */}
-          <button
-            className={`purchase-filter-btn${activeFilter === 'no_barcode' ? ' active' : ''}`}
-            onClick={() => handleFilterToggle('no_barcode')}
-            title="바코드가 비어있는 행"
-          >
-            NO 바코드
-          </button>
 
           {/* ── 상태 필터 (활성/비활성/전체) — 기본 '활성'(비활성 숨김) ── */}
           <DropdownMenu
@@ -725,15 +780,6 @@ const PurchaseManagement: React.FC = () => {
               전체
             </DropdownItem>
           </DropdownMenu>
-
-          {/* ── 📌 노트 필터 (note 데이터 있는 행) ───────────── */}
-          <button
-            className={`purchase-filter-btn${activeFilter === 'note' ? ' active' : ''}`}
-            onClick={() => handleFilterToggle('note')}
-            title="노트(메모) 데이터가 있는 행"
-          >
-            📌
-          </button>
 
           {activeFilter && (
             <span className="purchase-filter-count">

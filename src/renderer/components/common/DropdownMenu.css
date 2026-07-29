@@ -94,3 +94,94 @@
   color: #2563EB;
   font-weight: 600;
 }
+
+/* ── 메뉴 내 구분 라벨 ───────────────────────────────────────── */
+.dropdown-section {
+  padding: 5px 14px 3px;
+  font-size: 10px;
+  font-weight: 600;
+  color: #9CA3AF;
+  letter-spacing: 0.03em;
+  white-space: nowrap;
+  border-top: 1px solid #F3F4F6;
+}
+
+.dropdown-section:first-child {
+  border-top: none;
+}
+
+/* ══════════════════════════════════════════════════════════════
+   하위 메뉴 (오른쪽으로 펼쳐지는 플라이아웃)
+   ══════════════════════════════════════════════════════════════ */
+
+/* 플라이아웃을 담는 상위 메뉴는 잘리지 않도록 overflow 해제 */
+.dropdown-menu-host {
+  overflow: visible;
+}
+
+.dropdown-submenu {
+  position: relative;
+}
+
+/* 항목명 + 오른쪽 화살표 */
+.dropdown-submenu-trigger {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.dropdown-submenu-arrow {
+  color: #9CA3AF;
+  font-size: 14px;
+  line-height: 1;
+}
+
+.dropdown-submenu-trigger.active .dropdown-submenu-arrow {
+  color: #2563EB;
+}
+
+/* 트리거 hover 시에도 열린 상태로 보이도록 배경 유지 */
+.dropdown-submenu:hover > .dropdown-submenu-trigger {
+  background-color: #F3F4F6;
+}
+
+.dropdown-submenu:hover > .dropdown-submenu-trigger.active {
+  background-color: #EFF6FF;
+}
+
+/* 플라이아웃 본체 — 트리거 오른쪽에 딱 붙여 hover 가 끊기지 않게 한다 */
+.dropdown-submenu-menu {
+  display: none;
+  position: absolute;
+  left: 100%;
+  top: -5px;
+  min-width: 104px;
+  background: #fff;
+  border: 1px solid #D1D5DB;
+  border-radius: 6px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  z-index: 60;
+  overflow: hidden;
+  padding: 4px 0;
+}
+
+.dropdown-submenu:hover > .dropdown-submenu-menu {
+  display: block;
+}
+
+/* 우측 정렬 메뉴(화면 오른쪽 끝 버튼)의 플라이아웃은 왼쪽으로 펼쳐
+   화면 밖으로 넘치지 않게 한다. */
+.dropdown-menu-right .dropdown-submenu-menu {
+  left: auto;
+  right: 100%;
+}
+
+/* 우측 펼침일 때는 화살표도 왼쪽을 향하도록 */
+.dropdown-menu-right .dropdown-submenu-trigger {
+  flex-direction: row-reverse;
+}
+
+.dropdown-menu-right .dropdown-submenu-arrow {
+  transform: rotate(180deg);
+}
