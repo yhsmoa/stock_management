@@ -1,32 +1,38 @@
 /* ================================================================
-   Sidebar — 미니멀 라이트 · Rail + Hover 확장
+   Sidebar — 다크 네이비 패널 · Rail + Hover 확장
+   - 화면 좌측 끝에 붙은 전체 높이 패널 (여백/라운드 없음)
    - 기본: 좁은 rail (RAIL_WIDTH) 에 라인 아이콘만
-   - 마우스 호버: SIDEBAR_WIDTH 로 확장 + 로고/검색/라벨/섹션 표시 (오버레이, 콘텐츠 push 없음)
-   - 밝은 반투명 패널, 선택 항목만 은은한 회색 필
+   - 마우스 호버: SIDEBAR_WIDTH 로 확장 + 로고/검색/라벨/섹션 표시
+     (오버레이 확장 — 본문을 밀지 않으므로 테이블 폭을 잃지 않는다)
+   - 활성 항목은 파란 좌측 인디케이터 + 밝은 배경으로 강조
    - 하위 그룹은 확장 상태에서 부모 클릭으로 접이식, 현재 라우트 그룹 자동 펼침
    ================================================================ */
 
-import React, { useState, useEffect, useMemo } from 'react'
+import React, { useState, useEffect, useMemo, useRef } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import type { AuthUser } from '../types/auth'
 
 // ── 레이아웃 상수 ──────────────────────────────────────────────────
-export const SIDEBAR_WIDTH = 240   // 확장 폭
-export const RAIL_WIDTH = 52        // 기본(rail) 폭
+export const SIDEBAR_WIDTH = 248            // 확장 폭
+export const RAIL_WIDTH = 56                // 기본(rail) 폭
+/** 본문(main)이 확보해야 할 좌측 오프셋 — rail 기준(확장은 오버레이) */
+export const CONTENT_OFFSET = RAIL_WIDTH
 
-// ── 미니멀 라이트 팔레트 ───────────────────────────────────────────
+// ── 다크 네이비 팔레트 ─────────────────────────────────────────────
 const C = {
-  panelBg:      '#F8F9FB',
-  border:       'rgba(0, 0, 0, 0.06)',
-  textStrong:   '#111827',
-  text:         '#4B5563',
-  muted:        '#9CA3AF',
-  sectionLabel: '#9AA1AC',
-  activeBg:     '#E9EAEE',
-  hoverBg:      '#F0F1F3',
+  panelBg:      '#151C2C',
+  panelBorder:  'rgba(255, 255, 255, 0.06)',
+  textStrong:   '#FFFFFF',
+  text:         '#C5CBD8',
+  muted:        '#828B9E',
+  sectionLabel: '#66708A',
+  activeBg:     'rgba(255, 255, 255, 0.08)',
+  hoverBg:      'rgba(255, 255, 255, 0.05)',
   accent:       '#3B82F6',
-  searchBg:     '#EEEFF2',
-  badgeBg:      '#EEF0F4',
+  searchBg:     'rgba(255, 255, 255, 0.06)',
+  searchBorder: 'rgba(255, 255, 255, 0.09)',
+  badgeBg:      'rgba(59, 130, 246, 0.18)',
+  badgeText:    '#93B4FA',
 }
 
 // ── 라인 아이콘 (Heroicons outline, stroke=currentColor) ───────────
@@ -40,11 +46,13 @@ const ICON_PATHS: Record<string, string> = {
   truck: 'M8.25 18.75a1.5 1.5 0 01-3 0m3 0a1.5 1.5 0 00-3 0m3 0h6m-9 0H3.375a1.125 1.125 0 01-1.125-1.125V14.25m17.25 4.5a1.5 1.5 0 01-3 0m3 0a1.5 1.5 0 00-3 0m3 0h1.125c.621 0 1.129-.504 1.09-1.124a17.902 17.902 0 00-3.213-9.193 2.056 2.056 0 00-1.58-.86H14.25M16.5 18.75h-6m6 0V7.5m0 11.25H3.75V6a1.5 1.5 0 011.5-1.5h9a1.5 1.5 0 011.5 1.5v1.5',
   chart: 'M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 013 19.875v-6.75zM9.75 8.625c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v11.25c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V8.625zM16.5 4.125c0-.621.504-1.125 1.125-1.125h2.25C20.496 3 21 3.504 21 4.125v15.75c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V4.125z',
   search: 'm21 21-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z',
+  chevron: 'm19.5 8.25-7.5 7.5-7.5-7.5',
+  logout: 'M15.75 9V5.25A2.25 2.25 0 0013.5 3h-6a2.25 2.25 0 00-2.25 2.25v13.5A2.25 2.25 0 007.5 21h6a2.25 2.25 0 002.25-2.25V15m3 0l3-3m0 0l-3-3m3 3H9',
 }
 
-const Icon: React.FC<{ name: string }> = ({ name }) => (
+const Icon: React.FC<{ name: string; size?: number }> = ({ name, size = 17 }) => (
   <svg
-    width={16} height={16} viewBox="0 0 24 24" fill="none"
+    width={size} height={size} viewBox="0 0 24 24" fill="none"
     stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round"
     style={{ flexShrink: 0 }}
   >
@@ -53,9 +61,11 @@ const Icon: React.FC<{ name: string }> = ({ name }) => (
 )
 
 // ── 메뉴 데이터 (섹션 → 항목) ──────────────────────────────────────
-type Leaf = { path: string; label: string; count?: string }
+//   count 는 선택 필드 — 실제 집계값이 연결될 때만 배지가 렌더된다.
+//   (임의의 숫자를 하드코딩하지 않는다)
+type Leaf = { path: string; label: string; count?: number }
 type MenuItem =
-  | { type: 'link'; path: string; icon: string; label: string; count?: string; badge?: string }
+  | { type: 'link'; path: string; icon: string; label: string; count?: number }
   | { type: 'group'; icon: string; label: string; children: Leaf[] }
 
 type Section = { label: string; items: MenuItem[] }
@@ -133,6 +143,19 @@ function findParentGroupLabel(currentPath: string): string | null {
   return null
 }
 
+// ── 검색용 평탄화 목록 (그룹명 + 하위명 모두 검색 대상) ────────────
+type FlatEntry = { path: string; label: string; parent?: string; icon: string; count?: number }
+
+const FLAT_ENTRIES: FlatEntry[] = SECTIONS.flatMap((section) =>
+  section.items.flatMap<FlatEntry>((item) =>
+    item.type === 'link'
+      ? [{ path: item.path, label: item.label, icon: item.icon, count: item.count }]
+      : item.children.map((c) => ({
+          path: c.path, label: c.label, parent: item.label, icon: item.icon, count: c.count,
+        })),
+  ),
+)
+
 // ══════════════════════════════════════════════════════════════════
 // 컴포넌트
 // ══════════════════════════════════════════════════════════════════
@@ -158,8 +181,55 @@ const Sidebar: React.FC = () => {
     navigate('/login')
   }
 
-  // ── rail ↔ 확장 (hover) ────────────────────────────────────────
-  const [expanded, setExpanded] = useState(false)
+  // ── rail ↔ 확장 ───────────────────────────────────────────────
+  //   hover 로 확장하되, Ctrl/⌘+K 로 검색을 열면 마우스가 벗어나도 유지
+  const [hovered, setHovered] = useState(false)
+  const [searchOpen, setSearchOpen] = useState(false)
+  const expanded = hovered || searchOpen
+
+  // ── 메뉴 검색 ─────────────────────────────────────────────────
+  const [query, setQuery] = useState('')
+  const searchRef = useRef<HTMLInputElement>(null)
+  const trimmedQuery = query.trim().toLowerCase()
+
+  const searchResults = useMemo(() => {
+    if (!trimmedQuery) return null
+    return FLAT_ENTRIES.filter(
+      (e) =>
+        e.label.toLowerCase().includes(trimmedQuery)
+        || (e.parent?.toLowerCase().includes(trimmedQuery) ?? false),
+    )
+  }, [trimmedQuery])
+
+  const isMac = useMemo(
+    () => typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.userAgent),
+    [],
+  )
+
+  // Ctrl/⌘ + K → 사이드바 확장 + 검색 포커스
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault()
+        setSearchOpen(true)
+      }
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [])
+
+  // 검색이 열려 input 이 마운트된 뒤 포커스
+  useEffect(() => {
+    if (searchOpen) {
+      searchRef.current?.focus()
+      searchRef.current?.select()
+    }
+  }, [searchOpen])
+
+  // 접히면 검색어 초기화 (rail 상태에서 필터가 남아있지 않도록)
+  useEffect(() => {
+    if (!expanded) setQuery('')
+  }, [expanded])
 
   // ── 펼쳐진 그룹 집합 (초기: 현재 path 의 부모 그룹) ────────────
   const [openGroups, setOpenGroups] = useState<Set<string>>(() => {
@@ -195,13 +265,17 @@ const Sidebar: React.FC = () => {
           className="si-nav-row"
           title={!expanded ? item.label : undefined}
         >
-          <span style={{ ...iconWrap, color: isActive ? C.textStrong : C.muted }}><Icon name={item.icon} /></span>
+          <ActiveBar show={isActive} />
+          <span style={{ ...iconWrap, color: isActive ? C.textStrong : C.muted }}>
+            <Icon name={item.icon} />
+          </span>
           {expanded && <span style={{ flex: 1, ...labelStyle(isActive) }}>{item.label}</span>}
-          {expanded && item.count && <span style={countStyle}>{item.count}</span>}
+          {expanded && item.count != null && <Badge value={item.count} active={isActive} />}
         </Link>
       )
     }
-    // group
+
+    // ── 그룹 (확장 상태에서만 접이식) ──
     const isOpen = openGroups.has(item.label)
     const hasActiveChild = item.children.some((c) => c.path === currentPath)
     return (
@@ -212,18 +286,35 @@ const Sidebar: React.FC = () => {
           className="si-nav-row"
           title={!expanded ? item.label : undefined}
         >
-          <span style={{ ...iconWrap, color: hasActiveChild ? C.textStrong : C.muted }}><Icon name={item.icon} /></span>
-          {expanded && <span style={{ flex: 1, ...labelStyle(hasActiveChild) }}>{item.label}</span>}
+          {/* rail 상태에선 하위 활성 여부를 그룹 아이콘에 표시 */}
+          <ActiveBar show={!expanded && hasActiveChild} />
+          <span style={{ ...iconWrap, color: hasActiveChild ? C.textStrong : C.muted }}>
+            <Icon name={item.icon} />
+          </span>
           {expanded && (
-            <span style={{ fontSize: 10, color: C.muted, transition: 'transform 0.15s', transform: isOpen ? 'rotate(90deg)' : 'none' }}>▸</span>
+            <span style={{ flex: 1, ...labelStyle(hasActiveChild) }}>{item.label}</span>
+          )}
+          {expanded && (
+            <span
+              style={{
+                display: 'inline-flex',
+                color: C.muted,
+                transition: 'transform 0.18s ease',
+                transform: isOpen ? 'none' : 'rotate(-90deg)',
+              }}
+            >
+              <Icon name="chevron" size={13} />
+            </span>
           )}
         </div>
+
         {expanded && isOpen && item.children.map((c) => {
           const isActive = currentPath === c.path
           return (
             <Link key={c.path} to={c.path} style={subRowStyle(isActive)} className="si-nav-row">
+              <ActiveBar show={isActive} />
               <span style={{ flex: 1, ...labelStyle(isActive), fontSize: 13 }}>{c.label}</span>
-              {c.count && <span style={countStyle}>{c.count}</span>}
+              {c.count != null && <Badge value={c.count} active={isActive} />}
             </Link>
           )
         })}
@@ -233,67 +324,205 @@ const Sidebar: React.FC = () => {
 
   return (
     <aside
-      onMouseEnter={() => setExpanded(true)}
-      onMouseLeave={() => setExpanded(false)}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
       style={{
         position: 'fixed',
         top: 0,
         left: 0,
+        height: '100vh',
         zIndex: 998,
         width: expanded ? SIDEBAR_WIDTH : RAIL_WIDTH,
-        height: '100vh',
         background: C.panelBg,
-        borderRight: `1px solid ${C.border}`,
+        borderRight: `1px solid ${C.panelBorder}`,
         display: 'flex',
         flexDirection: 'column',
-        padding: expanded ? '14px 12px' : '14px 8px',
+        padding: expanded ? '16px 12px 12px' : '16px 8px 12px',
         boxSizing: 'border-box',
-        transition: 'width 0.2s ease',
         overflow: 'hidden',
-        boxShadow: expanded ? '4px 0 16px rgba(0, 0, 0, 0.06)' : 'none',
+        transition: 'width 0.2s ease, padding 0.2s ease',
+        boxShadow: expanded ? '6px 0 24px rgba(15, 23, 42, 0.18)' : 'none',
       }}
     >
-      <style>{`.si-nav-row:hover { background: ${C.hoverBg} !important; }`}</style>
+      <style>{`
+        .si-nav-row { position: relative; }
+        .si-nav-row:hover { background: ${C.hoverBg} !important; }
+        .si-search-input::placeholder { color: ${C.sectionLabel}; }
+        .si-scroll::-webkit-scrollbar { width: 6px; }
+        .si-scroll::-webkit-scrollbar-thumb {
+          background: rgba(255, 255, 255, 0.12); border-radius: 3px;
+        }
+        .si-scroll::-webkit-scrollbar-track { background: transparent; }
+      `}</style>
 
       {/* ── 로고 ─────────────────────────────────────────────── */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 9, padding: expanded ? '4px 8px 12px' : '4px 0 12px', justifyContent: expanded ? 'flex-start' : 'center' }}>
-        <span style={{ width: 22, height: 22, borderRadius: 7, background: C.accent, display: 'inline-block', flexShrink: 0 }} />
-        {expanded && <span style={{ fontSize: 16, fontWeight: 700, color: C.textStrong, whiteSpace: 'nowrap' }}>Stock</span>}
+      <div
+        style={{
+          display: 'flex', alignItems: 'center', gap: 10,
+          padding: expanded ? '2px 6px 14px' : '2px 0 14px',
+          justifyContent: expanded ? 'flex-start' : 'center',
+        }}
+      >
+        <span
+          style={{
+            width: 30, height: 30, borderRadius: 9, background: C.accent,
+            display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+            flexShrink: 0, color: '#fff', fontSize: 15, fontWeight: 700,
+          }}
+        >
+          S
+        </span>
+        {expanded && (
+          <span style={{ minWidth: 0 }}>
+            <span
+              style={{
+                display: 'block', fontSize: 14, fontWeight: 700, color: C.textStrong,
+                whiteSpace: 'nowrap', letterSpacing: '-0.01em',
+              }}
+            >
+              Stock Management
+            </span>
+            <span style={{ display: 'block', fontSize: 11, color: C.muted, whiteSpace: 'nowrap' }}>
+              재고관리 시스템
+            </span>
+          </span>
+        )}
       </div>
 
-      {/* ── 검색 (확장 시에만) ───────────────────────────────── */}
-      {expanded && (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 7, background: C.searchBg, borderRadius: 9, padding: '7px 10px', marginBottom: 14 }}>
-          <span style={{ color: C.muted, display: 'inline-flex' }}><Icon name="search" /></span>
+      {/* ── 메뉴 검색 (Ctrl/⌘ + K) ───────────────────────────── */}
+      {expanded ? (
+        <div
+          style={{
+            display: 'flex', alignItems: 'center', gap: 8,
+            background: C.searchBg, border: `1px solid ${C.searchBorder}`,
+            borderRadius: 10, padding: '8px 10px', marginBottom: 16,
+          }}
+        >
+          <span style={{ color: C.sectionLabel, display: 'inline-flex' }}>
+            <Icon name="search" size={15} />
+          </span>
           <input
-            placeholder="검색"
-            style={{ flex: 1, border: 'none', background: 'transparent', outline: 'none', fontSize: 13, color: C.text, minWidth: 0 }}
+            ref={searchRef}
+            className="si-search-input"
+            placeholder="메뉴 검색"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            onBlur={() => setSearchOpen(false)}
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') {
+                setQuery('')
+                setSearchOpen(false)
+                e.currentTarget.blur()
+              }
+            }}
+            style={{
+              flex: 1, border: 'none', background: 'transparent', outline: 'none',
+              fontSize: 13, color: C.text, minWidth: 0,
+            }}
           />
+          <span
+            style={{
+              flexShrink: 0, fontSize: 10, color: C.sectionLabel, fontWeight: 600,
+              border: `1px solid ${C.searchBorder}`, borderRadius: 5, padding: '2px 5px',
+              lineHeight: 1.3, whiteSpace: 'nowrap',
+            }}
+          >
+            {isMac ? '⌘K' : 'Ctrl K'}
+          </span>
+        </div>
+      ) : (
+        /* rail 상태: 검색 아이콘만 (호버하면 위 입력폼으로 확장) */
+        <div
+          style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            background: C.searchBg, border: `1px solid ${C.searchBorder}`,
+            borderRadius: 10, padding: '8px 0', marginBottom: 16, color: C.sectionLabel,
+          }}
+          title={`메뉴 검색 (${isMac ? '⌘' : 'Ctrl'}+K)`}
+        >
+          <Icon name="search" size={15} />
         </div>
       )}
 
       {/* ── 네비게이션 ───────────────────────────────────────── */}
-      <nav style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden' }}>
-        {SECTIONS.map((section) => (
-          <div key={section.label} style={{ marginBottom: expanded ? 14 : 10 }}>
-            {expanded && (
-              <div style={{ fontSize: 11, fontWeight: 600, color: C.sectionLabel, letterSpacing: '0.02em', padding: '0 10px 6px', whiteSpace: 'nowrap' }}>
-                {section.label}
-              </div>
-            )}
-            {section.items.map(renderItem)}
-          </div>
-        ))}
+      <nav className="si-scroll" style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden' }}>
+        {searchResults ? (
+          /* ── 검색 결과 (평탄 목록) ── */
+          searchResults.length === 0 ? (
+            <div style={{ padding: '10px 12px', fontSize: 12, color: C.sectionLabel }}>
+              검색 결과가 없습니다
+            </div>
+          ) : (
+            searchResults.map((e) => {
+              const isActive = currentPath === e.path
+              return (
+                <Link
+                  key={e.path} to={e.path}
+                  style={rowStyle(isActive, true)}
+                  className="si-nav-row"
+                >
+                  <ActiveBar show={isActive} />
+                  <span style={{ ...iconWrap, color: isActive ? C.textStrong : C.muted }}>
+                    <Icon name={e.icon} />
+                  </span>
+                  <span style={{ flex: 1, minWidth: 0 }}>
+                    <span style={{ display: 'block', ...labelStyle(isActive) }}>{e.label}</span>
+                    {e.parent && (
+                      <span style={{ display: 'block', fontSize: 10.5, color: C.sectionLabel }}>
+                        {e.parent}
+                      </span>
+                    )}
+                  </span>
+                  {e.count != null && <Badge value={e.count} active={isActive} />}
+                </Link>
+              )
+            })
+          )
+        ) : (
+          SECTIONS.map((section) => (
+            <div key={section.label} style={{ marginBottom: expanded ? 16 : 10 }}>
+              {expanded && (
+                <div
+                  style={{
+                    fontSize: 10.5, fontWeight: 600, color: C.sectionLabel,
+                    letterSpacing: '0.04em', padding: '0 10px 7px', whiteSpace: 'nowrap',
+                  }}
+                >
+                  {section.label}
+                </div>
+              )}
+              {section.items.map(renderItem)}
+            </div>
+          ))
+        )}
       </nav>
 
       {/* ── 하단: 사용자 + 로그아웃 ──────────────────────────── */}
-      <div style={{ borderTop: `1px solid ${C.border}`, paddingTop: 10, marginTop: 4 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: expanded ? '6px 8px' : '6px 0', justifyContent: expanded ? 'flex-start' : 'center' }}>
-          <span style={{ width: 26, height: 26, borderRadius: '50%', background: C.badgeBg, color: C.text, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, fontWeight: 600, flexShrink: 0 }}>
-            {(displayName || '유').slice(0, 1)}
+      <div style={{ borderTop: `1px solid ${C.panelBorder}`, paddingTop: 10, marginTop: 6 }}>
+        <div
+          style={{
+            display: 'flex', alignItems: 'center', gap: 9,
+            padding: expanded ? '4px 6px' : '4px 0',
+            justifyContent: expanded ? 'flex-start' : 'center',
+          }}
+        >
+          <span
+            title={!expanded ? (displayName || '사용자') : undefined}
+            style={{
+              width: 30, height: 30, borderRadius: '50%', background: C.accent, color: '#fff',
+              display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+              fontSize: 12, fontWeight: 600, flexShrink: 0,
+            }}
+          >
+            {(displayName || '?').slice(0, 1)}
           </span>
           {expanded && (
-            <span style={{ flex: 1, fontSize: 13, fontWeight: 500, color: C.textStrong, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+            <span
+              style={{
+                flex: 1, fontSize: 13, fontWeight: 500, color: C.textStrong,
+                whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+              }}
+            >
               {displayName || '사용자'}
             </span>
           )}
@@ -303,9 +532,13 @@ const Sidebar: React.FC = () => {
               title="로그아웃"
               aria-label="로그아웃"
               className="si-nav-row"
-              style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: C.muted, fontSize: 14, borderRadius: 8, padding: '4px 8px', lineHeight: 1 }}
+              style={{
+                border: 'none', background: 'transparent', cursor: 'pointer', color: C.muted,
+                borderRadius: 8, padding: '6px', lineHeight: 0, display: 'inline-flex',
+                flexShrink: 0,
+              }}
             >
-              ⋯
+              <Icon name="logout" size={16} />
             </button>
           )}
         </div>
@@ -313,6 +546,35 @@ const Sidebar: React.FC = () => {
     </aside>
   )
 }
+
+// ── 활성 좌측 인디케이터 (파란 막대) ───────────────────────────────
+const ActiveBar: React.FC<{ show: boolean }> = ({ show }) =>
+  show ? (
+    <span
+      style={{
+        position: 'absolute', left: 0, top: '50%', transform: 'translateY(-50%)',
+        width: 3, height: 17, borderRadius: 2, background: C.accent,
+      }}
+    />
+  ) : null
+
+// ── 카운트 배지 ────────────────────────────────────────────────────
+const Badge: React.FC<{ value: number; active: boolean }> = ({ value, active }) => (
+  <span
+    style={{
+      flexShrink: 0,
+      fontSize: 11,
+      fontWeight: 600,
+      lineHeight: 1.4,
+      padding: '1px 7px',
+      borderRadius: 9999,
+      background: active ? C.accent : C.badgeBg,
+      color: active ? '#fff' : C.badgeText,
+    }}
+  >
+    {value}
+  </span>
+)
 
 // ── 스타일 헬퍼 ────────────────────────────────────────────────────
 const iconWrap: React.CSSProperties = {
@@ -338,10 +600,10 @@ function rowStyle(active: boolean, expanded: boolean): React.CSSProperties {
   return {
     display: 'flex',
     alignItems: 'center',
-    gap: 9,
-    padding: expanded ? '7px 10px' : '7px 0',
+    gap: 10,
+    padding: expanded ? '8px 10px' : '8px 0',
     justifyContent: expanded ? 'flex-start' : 'center',
-    borderRadius: 8,
+    borderRadius: 9,
     textDecoration: 'none',
     background: active ? C.activeBg : 'transparent',
     transition: 'background 0.15s',
@@ -353,20 +615,14 @@ function subRowStyle(active: boolean): React.CSSProperties {
   return {
     display: 'flex',
     alignItems: 'center',
-    gap: 9,
-    padding: '6px 10px 6px 37px',
-    borderRadius: 8,
+    gap: 10,
+    padding: '7px 10px 7px 38px',
+    borderRadius: 9,
     textDecoration: 'none',
     background: active ? C.activeBg : 'transparent',
     transition: 'background 0.15s',
     userSelect: 'none',
   }
-}
-
-const countStyle: React.CSSProperties = {
-  fontSize: 12,
-  color: C.muted,
-  fontWeight: 500,
 }
 
 export default Sidebar

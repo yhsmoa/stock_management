@@ -9,7 +9,7 @@
   display: flex;
   flex-direction: column;
   height: 100%;
-  background: #f7f6f1;
+  background: #fff;
   padding: 18px 22px;
   box-sizing: border-box;
   overflow: hidden;
@@ -90,21 +90,22 @@
   cursor: pointer;
   transition: background 0.15s, border-color 0.15s, box-shadow 0.15s, transform 0.1s;
   color: #374151;
-  background-image: linear-gradient(to bottom, #ffffff, #f5f6f9);
+  background-image: linear-gradient(to bottom, #f4f5f7, #e7e9ee);
   line-height: 1.4;
   box-shadow:
-    0 1px 1px rgba(17, 24, 39, 0.04),
-    0 2px 3px rgba(17, 24, 39, 0.06),
-    inset 0 1px 0 rgba(255, 255, 255, 0.85);
+    0 1px 1px rgba(17, 24, 39, 0.05),
+    0 2px 3px rgba(17, 24, 39, 0.07),
+    inset 0 1px 0 rgba(255, 255, 255, 0.75);
 }
 
 .po-btn:hover:not(:disabled) {
+  background-image: linear-gradient(to bottom, #f8f9fb, #eceef2);
   border-color: #c4c9d4;
   transform: translateY(-1px);
   box-shadow:
-    0 2px 4px rgba(17, 24, 39, 0.08),
-    0 4px 8px rgba(17, 24, 39, 0.06),
-    inset 0 1px 0 rgba(255, 255, 255, 0.9);
+    0 2px 4px rgba(17, 24, 39, 0.09),
+    0 4px 8px rgba(17, 24, 39, 0.07),
+    inset 0 1px 0 rgba(255, 255, 255, 0.8);
 }
 
 .po-btn:active:not(:disabled) {
@@ -126,22 +127,23 @@
   font-size: 12px;
   font-weight: 500;
   color: #374151;
-  background-image: linear-gradient(to bottom, #ffffff, #f5f6f9);
+  background-image: linear-gradient(to bottom, #f4f5f7, #e7e9ee);
   line-height: 1.4;
   transition: background 0.15s, border-color 0.15s, box-shadow 0.15s, transform 0.1s;
   box-shadow:
-    0 1px 1px rgba(17, 24, 39, 0.04),
-    0 2px 3px rgba(17, 24, 39, 0.06),
-    inset 0 1px 0 rgba(255, 255, 255, 0.85);
+    0 1px 1px rgba(17, 24, 39, 0.05),
+    0 2px 3px rgba(17, 24, 39, 0.07),
+    inset 0 1px 0 rgba(255, 255, 255, 0.75);
 }
 
 .po-top-actions .dropdown-trigger:hover:not(:disabled) {
+  background-image: linear-gradient(to bottom, #f8f9fb, #eceef2);
   border-color: #c4c9d4;
   transform: translateY(-1px);
   box-shadow:
-    0 2px 4px rgba(17, 24, 39, 0.08),
-    0 4px 8px rgba(17, 24, 39, 0.06),
-    inset 0 1px 0 rgba(255, 255, 255, 0.9);
+    0 2px 4px rgba(17, 24, 39, 0.09),
+    0 4px 8px rgba(17, 24, 39, 0.07),
+    inset 0 1px 0 rgba(255, 255, 255, 0.8);
 }
 
 .po-top-actions .dropdown-trigger:active:not(:disabled) {
@@ -192,7 +194,7 @@
    공용 .dropdown-trigger 보다 우선하도록 툴바로 스코프(specificity↑). */
 .po-table-toolbar .dropdown-trigger {
   border: 1px solid #d9dce4;
-  background-image: linear-gradient(to bottom, #ffffff, #f5f6f9);
+  background-image: linear-gradient(to bottom, #f4f5f7, #e7e9ee);
   border-radius: 9999px;
   font-size: 12px;
   font-weight: 500;
@@ -200,17 +202,18 @@
   color: #374151;
   transition: background 0.15s, border-color 0.15s, box-shadow 0.15s, transform 0.1s;
   box-shadow:
-    0 1px 1px rgba(17, 24, 39, 0.04),
-    0 2px 3px rgba(17, 24, 39, 0.06),
-    inset 0 1px 0 rgba(255, 255, 255, 0.85);
+    0 1px 1px rgba(17, 24, 39, 0.05),
+    0 2px 3px rgba(17, 24, 39, 0.07),
+    inset 0 1px 0 rgba(255, 255, 255, 0.75);
 }
 .po-table-toolbar .dropdown-trigger:hover:not(:disabled) {
+  background-image: linear-gradient(to bottom, #f8f9fb, #eceef2);
   border-color: #c4c9d4;
   transform: translateY(-1px);
   box-shadow:
-    0 2px 4px rgba(17, 24, 39, 0.08),
-    0 4px 8px rgba(17, 24, 39, 0.06),
-    inset 0 1px 0 rgba(255, 255, 255, 0.9);
+    0 2px 4px rgba(17, 24, 39, 0.09),
+    0 4px 8px rgba(17, 24, 39, 0.07),
+    inset 0 1px 0 rgba(255, 255, 255, 0.8);
 }
 .po-table-toolbar .dropdown-trigger:active:not(:disabled) {
   transform: translateY(0);

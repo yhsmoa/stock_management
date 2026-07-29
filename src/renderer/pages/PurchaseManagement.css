@@ -9,7 +9,7 @@
   display: flex;
   flex-direction: column;
   height: 100%;
-  background: #f7f6f1;
+  background: #fff;
   padding: 18px 22px;
   box-sizing: border-box;
   overflow: hidden;
@@ -39,7 +39,7 @@
   letter-spacing: -0.01em;
 }
 
-/* ── 버튼 (미니멀 라이트: 테두리 없는 연회색 필) ─────────────── */
+/* ── 버튼 (회색 입체 필 — 개인주문 .po-btn 과 동일 톤) ─────────── */
 .purchase-btn {
   padding: 5px 12px;
   border: 1px solid #d9dce4;
@@ -47,18 +47,32 @@
   font-size: 12px;
   font-weight: 500;
   cursor: pointer;
-  transition: background 0.15s, border-color 0.15s;
+  transition: background 0.15s, border-color 0.15s, box-shadow 0.15s, transform 0.1s;
   color: #374151;
-  background-color: #fff;
+  background-image: linear-gradient(to bottom, #f4f5f7, #e7e9ee);
   line-height: 1.4;
+  box-shadow:
+    0 1px 1px rgba(17, 24, 39, 0.05),
+    0 2px 3px rgba(17, 24, 39, 0.07),
+    inset 0 1px 0 rgba(255, 255, 255, 0.75);
 }
 
 .purchase-btn:hover:not(:disabled) {
-  background-color: #f4f5f8;
+  background-image: linear-gradient(to bottom, #f8f9fb, #eceef2);
   border-color: #c4c9d4;
+  transform: translateY(-1px);
+  box-shadow:
+    0 2px 4px rgba(17, 24, 39, 0.09),
+    0 4px 8px rgba(17, 24, 39, 0.07),
+    inset 0 1px 0 rgba(255, 255, 255, 0.8);
 }
 
-/* 상단 액션의 공용 드롭다운 트리거(바코드 연결)도 흰색 버튼으로 통일 */
+.purchase-btn:active:not(:disabled) {
+  transform: translateY(0);
+  box-shadow: inset 0 1px 2px rgba(17, 24, 39, 0.12);
+}
+
+/* 상단 액션의 공용 드롭다운 트리거(바코드 연결)도 회색 입체 버튼으로 통일 */
 .purchase-top-actions .dropdown-trigger {
   padding: 5px 12px;
   border: 1px solid #d9dce4;
@@ -66,12 +80,26 @@
   font-size: 12px;
   font-weight: 500;
   color: #374151;
-  background-color: #fff;
+  background-image: linear-gradient(to bottom, #f4f5f7, #e7e9ee);
   line-height: 1.4;
+  transition: background 0.15s, border-color 0.15s, box-shadow 0.15s, transform 0.1s;
+  box-shadow:
+    0 1px 1px rgba(17, 24, 39, 0.05),
+    0 2px 3px rgba(17, 24, 39, 0.07),
+    inset 0 1px 0 rgba(255, 255, 255, 0.75);
 }
 .purchase-top-actions .dropdown-trigger:hover:not(:disabled) {
-  background-color: #f4f5f8;
+  background-image: linear-gradient(to bottom, #f8f9fb, #eceef2);
   border-color: #c4c9d4;
+  transform: translateY(-1px);
+  box-shadow:
+    0 2px 4px rgba(17, 24, 39, 0.09),
+    0 4px 8px rgba(17, 24, 39, 0.07),
+    inset 0 1px 0 rgba(255, 255, 255, 0.8);
+}
+.purchase-top-actions .dropdown-trigger:active:not(:disabled) {
+  transform: translateY(0);
+  box-shadow: inset 0 1px 2px rgba(17, 24, 39, 0.12);
 }
 
 .purchase-btn:disabled {
@@ -195,17 +223,33 @@
   color: #374151;
 }
 
-/* ── 검색 입력폼 (가운데, 연회색 알약) ───────────────────────── */
+/* ── 검색 입력폼 (회색 입체 — 공용 SearchBar 와 동일 톤) ───────── */
 .purchase-search-bar {
   display: flex;
   margin-bottom: 0;
   flex-shrink: 1;
-  border: 1px solid #dde2ec;
+  border: 1px solid #d7dbe3;
   border-radius: 12px;
   overflow: hidden;
-  background: #fff;
+  background: linear-gradient(to bottom, #f4f5f7, #e9ebef);
   width: 100%;
   max-width: 760px;
+  transition: background 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease;
+  box-shadow:
+    0 1px 1px rgba(17, 24, 39, 0.04),
+    0 2px 4px rgba(17, 24, 39, 0.06),
+    0 6px 16px rgba(17, 24, 39, 0.07),
+    inset 0 1px 0 rgba(255, 255, 255, 0.75);
+}
+
+.purchase-search-bar:focus-within {
+  background: #fff;
+  border-color: #4A8CF7;
+  box-shadow:
+    0 0 0 3px rgba(74, 140, 247, 0.16),
+    0 4px 10px rgba(74, 140, 247, 0.12),
+    0 10px 24px rgba(17, 24, 39, 0.08),
+    inset 0 1px 0 rgba(255, 255, 255, 0.9);
 }
 
 .purchase-search-input {
@@ -238,15 +282,20 @@
   gap: 6px;
 }
 
+/* 저장 버튼 — 회색 필 위에 덮이지 않도록 파란 그라데이션으로 지정 */
 .purchase-save-btn {
-  background-color: #4A8CF7 !important;
+  background-image: linear-gradient(to bottom, #5A97F8, #4A8CF7) !important;
   color: #fff !important;
-  border-color: #4A8CF7 !important;
+  border-color: transparent !important;
+  box-shadow:
+    0 1px 2px rgba(37, 99, 235, 0.25),
+    0 3px 6px rgba(37, 99, 235, 0.28),
+    inset 0 1px 0 rgba(255, 255, 255, 0.28) !important;
 }
 
 .purchase-save-btn:hover:not(:disabled) {
-  background-color: #3B7DE6 !important;
-  border-color: #3B7DE6 !important;
+  background-image: linear-gradient(to bottom, #4A87ED, #3B7DE6) !important;
+  border-color: transparent !important;
 }
 
 .purchase-save-btn:disabled {
