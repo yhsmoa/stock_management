@@ -5,7 +5,7 @@
 
 import { useState, useRef, useMemo, useCallback, useEffect } from 'react'
 import * as XLSX from 'xlsx'
-import { downloadStyledWorkbook } from '../services/inboundExcelService'
+import { downloadStyledWorkbook, type CellInput } from '../services/inboundExcelService'
 import {
   fetchAllOrdersheets,
   fetchAllReturnRequests,
@@ -159,16 +159,52 @@ const DELIVERY_HEADERS = [
   '통관용수취인전화번호', '기타', '결제위치', '배송유형',
 ]
 
+/** 대기 운송장(pending_invoice_number) 글자색 — 화면 표(주황 #C2410C)와 동일 */
+const PENDING_INVOICE_ARGB = 'FFC2410C'
+
+/** 입고엑셀 Delivery/합배송 시트의 택배사 고정값 */
+const INBOUND_CARRIER_NAME = 'CJ 대한통운'
+
 /**
- * DeliveryList aoa 생성 (헤더 + 행). boxPrefixOf 지정 시 등록상품명 앞에 박스 접두 추가.
- * - 기존 [엑셀] 과 입고엑셀 Delivery 시트가 공유.
+ * 운송장번호 셀 — 화면 표(PersonalOrder invoice_no 열)와 동일한 규칙.
+ *   확정 운송장 > 대기 운송장(주황) > 빈칸
+ * withPending=false 면 기존 동작(확정 운송장만)을 유지한다.
+ */
+function buildInvoiceCell(r: PersonalOrderRow, withPending: boolean): CellInput {
+  const inv = (r.invoice_number ?? '').trim()
+  if (inv) return inv
+  if (!withPending) return r.invoice_number
+  const pending = (r.pending_invoice_number ?? '').trim()
+  return pending ? { v: pending, color: PENDING_INVOICE_ARGB } : ''
+}
+
+interface DeliveryAoAOptions {
+  /** 등록상품명 앞에 붙일 박스 접두 */
+  boxPrefixOf?: (r: PersonalOrderRow) => string
+  /**
+   * 운송장번호 열을 화면 표와 동일하게 출력.
+   * 확정 운송장이 없으면 대기 운송장을 주황색으로 채운다.
+   * (일반 [엑셀] 은 XLSX 로 저장돼 서식 셀을 못 다루므로 기본 false)
+   */
+  pendingInvoice?: boolean
+  /** 택배사 열 고정값 — 미지정 시 주문 데이터의 택배사를 그대로 사용 */
+  carrierName?: string
+}
+
+/**
+ * DeliveryList aoa 생성 (헤더 + 행).
+ * - 기존 [엑셀] 과 입고엑셀 Delivery/합배송 시트가 공유.
  */
 function buildDeliveryAoA(
   rows: PersonalOrderRow[],
-  boxPrefixOf?: (r: PersonalOrderRow) => string,
-): (string | number)[][] {
+  opts: DeliveryAoAOptions = {},
+): CellInput[][] {
+  const { boxPrefixOf, pendingInvoice = false, carrierName } = opts
+
   const body = rows.map((r, i) => [
-    i + 1, r.shipment_box_id, r.order_id, r.delivery_company_name, r.invoice_number,
+    i + 1, r.shipment_box_id, r.order_id,
+    carrierName ?? r.delivery_company_name,
+    buildInvoiceCell(r, pendingInvoice),
     r.split_shipping || 'N', r.planned_shipping_date ?? '',
     r.estimated_shipping_date ?? '',
     r.in_transit_date_time ? formatDateTime(r.in_transit_date_time) : '',
@@ -1074,8 +1110,10 @@ export function usePersonalOrder() {
       (orderItemCountMap.get(r.order_id) ?? 1) > 1
 
     // 시트1: Delivery (단품만) / 시트2: 합배송 (동일 헤더·서식)
-    const aoaDelivery = buildDeliveryAoA(deliveryRows.filter((r) => !isCombinedOrder(r)), boxPrefixOf)
-    const aoaCombined = buildDeliveryAoA(deliveryRows.filter(isCombinedOrder), boxPrefixOf)
+    //   운송장번호: 화면 표와 동일(대기 운송장은 주황) / 택배사: CJ 대한통운 고정
+    const deliveryOpts = { boxPrefixOf, pendingInvoice: true, carrierName: INBOUND_CARRIER_NAME }
+    const aoaDelivery = buildDeliveryAoA(deliveryRows.filter((r) => !isCombinedOrder(r)), deliveryOpts)
+    const aoaCombined = buildDeliveryAoA(deliveryRows.filter(isCombinedOrder), deliveryOpts)
 
     // 시트3: shipment_list (구성 컬럼 + 출고/잔여)
     const SHIPMENT_HEADERS = [

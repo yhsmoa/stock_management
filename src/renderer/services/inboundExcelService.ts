@@ -18,12 +18,28 @@ const COL_WIDTH_PADDING = 2
 
 export type Cell = string | number | null | undefined
 
+/** 글자색 등 서식이 필요한 셀 */
+export interface StyledCell {
+  v: Cell
+  /** 글자색 ARGB (예: 'FFC2410C') */
+  color?: string
+}
+
+export type CellInput = Cell | StyledCell
+
+const isStyled = (c: CellInput): c is StyledCell =>
+  typeof c === 'object' && c !== null && 'v' in c
+
+/** 서식 셀에서 실제 값만 꺼낸다 */
+const rawValue = (c: CellInput): Cell => (isStyled(c) ? c.v : c)
+
 // ── 표시 너비 계산 ────────────────────────────────────────────────
 /**
  * 엑셀 열너비(wch)는 기본 글꼴 문자 폭 기준이라 한글·한자 등 전각 문자는
  * 영문의 약 2배를 차지한다. 이를 반영해 '표시 폭'을 계산한다.
  */
-function displayWidth(value: Cell): number {
+function displayWidth(input: CellInput): number {
+  const value = rawValue(input)
   if (value == null) return 0
   const str = String(value)
   let width = 0
@@ -44,7 +60,7 @@ function displayWidth(value: Cell): number {
 }
 
 /** aoa 를 훑어 열별 최대 표시 폭 → 엑셀 열너비 배열 */
-function calcColumnWidths(aoa: Cell[][]): number[] {
+function calcColumnWidths(aoa: CellInput[][]): number[] {
   const widths: number[] = []
   for (const row of aoa) {
     row.forEach((cell, i) => {
@@ -62,11 +78,11 @@ function calcColumnWidths(aoa: Cell[][]): number[] {
 function addSheet(
   wb: ExcelJS.Workbook,
   name: string,
-  aoa: Cell[][],
+  aoa: CellInput[][],
   opts: { headerFill: boolean },
 ): void {
   const ws = wb.addWorksheet(name)
-  for (const row of aoa) ws.addRow(row)
+  for (const row of aoa) ws.addRow(row.map(rawValue))
 
   // 열너비 (자동 계산)
   calcColumnWidths(aoa).forEach((w, i) => {
@@ -88,14 +104,23 @@ function addSheet(
     }
     header.commit()
   }
+
+  // 셀 단위 글자색 (헤더 서식 이후에 적용해 덮이지 않게 한다)
+  aoa.forEach((row, r) => {
+    row.forEach((cell, c) => {
+      if (isStyled(cell) && cell.color) {
+        ws.getRow(r + 1).getCell(c + 1).font = { color: { argb: cell.color } }
+      }
+    })
+  })
 }
 
 // ── 다운로드 ──────────────────────────────────────────────────────
 export interface SheetSpec {
   /** 시트명 */
   name: string
-  /** 1행 = 헤더, 이후 = 데이터 */
-  aoa: Cell[][]
+  /** 1행 = 헤더, 이후 = 데이터. 셀에 글자색이 필요하면 { v, color } 로 넣는다 */
+  aoa: CellInput[][]
   /** 헤더 회색 배경 적용 여부 (기본 false) */
   headerFill?: boolean
 }
