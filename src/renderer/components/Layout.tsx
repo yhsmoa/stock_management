@@ -10,7 +10,7 @@ import Sidebar, { RAIL_WIDTH } from './Sidebar'
 
 const Layout: React.FC = () => {
   return (
-    <div style={{ height: '100vh', overflow: 'hidden', background: '#fff' }}>
+    <div style={{ height: '100vh', overflow: 'hidden', background: '#f7f6f1' }}>
       <Sidebar />
       <main
         style={{

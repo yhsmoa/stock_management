@@ -1,0 +1,78 @@
+/* ================================================================
+   SearchBar — 공용 검색 입력 스타일
+   - 미니멀 라이트 톤에 '살짝 떠 있는' 입체감을 부여
+     · 다층 드롭섀도우로 카드가 배경에서 떠오르게
+     · 상단 인셋 하이라이트로 볼록한 질감
+     · focus-within 시 파란 링 + 더 큰 그림자로 눌림/부상 표현
+   ================================================================ */
+
+.searchbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  max-width: 760px;
+  padding: 0 16px;
+  background: linear-gradient(to bottom, #ffffff, #fbfbfa);
+  border: 1px solid #e2e6ee;
+  border-radius: 14px;
+  box-sizing: border-box;
+  transition: box-shadow 0.18s ease, border-color 0.18s ease, transform 0.18s ease;
+  box-shadow:
+    0 1px 1px rgba(17, 24, 39, 0.03),
+    0 2px 4px rgba(17, 24, 39, 0.05),
+    0 6px 16px rgba(17, 24, 39, 0.06),
+    inset 0 1px 0 rgba(255, 255, 255, 0.9);
+}
+
+/* hover: 살짝 더 떠오름 */
+.searchbar:hover {
+  border-color: #d3d9e6;
+  box-shadow:
+    0 1px 1px rgba(17, 24, 39, 0.04),
+    0 3px 6px rgba(17, 24, 39, 0.06),
+    0 8px 20px rgba(17, 24, 39, 0.08),
+    inset 0 1px 0 rgba(255, 255, 255, 0.9);
+}
+
+/* focus: 파란 포커스 링 + 강한 부상감 */
+.searchbar:focus-within {
+  border-color: #4A8CF7;
+  box-shadow:
+    0 0 0 3px rgba(74, 140, 247, 0.16),
+    0 4px 10px rgba(74, 140, 247, 0.12),
+    0 10px 24px rgba(17, 24, 39, 0.08),
+    inset 0 1px 0 rgba(255, 255, 255, 0.9);
+}
+
+/* ── 돋보기 아이콘 ─────────────────────────────────────────────── */
+.searchbar-icon {
+  flex-shrink: 0;
+  color: #9CA3AF;
+  transition: color 0.18s ease;
+}
+
+.searchbar:focus-within .searchbar-icon {
+  color: #4A8CF7;
+}
+
+/* ── 입력 ──────────────────────────────────────────────────────── */
+.searchbar-input {
+  flex: 1;
+  min-width: 0;
+  padding: 12px 2px;
+  border: none;
+  background: transparent;
+  font-size: 14px;
+  color: #374151;
+  outline: none;
+}
+
+.searchbar-input::placeholder {
+  color: #9CA3AF;
+}
+
+.searchbar-input:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}

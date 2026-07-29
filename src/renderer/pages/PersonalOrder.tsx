@@ -20,6 +20,7 @@ import CartNameInputModal from '../components/personal-order/CartNameInputModal'
 import InboundShipmentModal from '../components/personal-order/InboundShipmentModal'
 import InvoiceUploadModal from '../components/personal-order/InvoiceUploadModal'
 import DropdownMenu, { DropdownItem } from '../components/common/DropdownMenu'
+import SearchBar from '../components/common/SearchBar'
 
 const PersonalOrder: React.FC = () => {
   const {
@@ -250,18 +251,13 @@ const PersonalOrder: React.FC = () => {
       )}
 
       {/* ── 검색바 (Enter 키로 검색 실행) ────────────────────── */}
-      <div className="po-search-bar">
-        <input
-          className="po-search-input"
-          type="text"
-          placeholder="주문번호, 상품명 또는 수취인으로 검색 (Enter)"
-          value={searchValue}
-          onChange={(e) => setSearchValue(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') handleSearchSubmit()
-          }}
-        />
-      </div>
+      <SearchBar
+        className="po-search-bar"
+        placeholder="주문번호, 상품명 또는 수취인으로 검색 (Enter)"
+        value={searchValue}
+        onChange={setSearchValue}
+        onSubmit={handleSearchSubmit}
+      />
 
       {/* ── 필터 카운트 + 필터 버튼 + 주문확인 버튼 ─────────── */}
       <div className="po-table-toolbar">
