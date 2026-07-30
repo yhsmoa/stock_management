@@ -150,12 +150,15 @@ const Sidebar: React.FC = () => {
   const navigate = useNavigate()
   const currentPath = location.pathname
 
+  // ── 하단에 표시할 사업자 계정명 ───────────────────────────────
+  //   si_users.name 은 '대표자' 이름이라 사업자 구분이 안 된다
+  //   (한 대표자가 여러 사업자 계정을 가짐). 사업자 구분은 username 기준.
   const displayName = useMemo(() => {
     try {
       const raw = localStorage.getItem('user')
       if (!raw) return ''
       const u = JSON.parse(raw) as AuthUser
-      return u.name || u.username || ''
+      return u.username || u.name || ''
     } catch {
       return ''
     }
@@ -369,7 +372,7 @@ const Sidebar: React.FC = () => {
               fontSize: 12, fontWeight: 600, flexShrink: 0,
             }}
           >
-            {(displayName || '?').slice(0, 1)}
+            {(displayName || '?').slice(0, 1).toUpperCase()}
           </span>
           {expanded && (
             <span
