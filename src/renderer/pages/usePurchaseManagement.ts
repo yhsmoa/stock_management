@@ -46,6 +46,12 @@ import type { RgItem, RgItemData } from '../types/purchase'
 const DEFAULT_PAGE_SIZE = 100
 export const PAGE_SIZE_OPTIONS = [100, 500] as const
 
+/**
+ * [조회수 → 콘솔] 스크립트가 한 번에 검색할 상품 수.
+ * 배치를 키우면 검색 요청 횟수가 줄어 차단 위험이 낮아진다.
+ */
+const VIEWS_BATCH_SIZE = 1000
+
 // ── 편집 가능 필드 타입 ──────────────────────────────────────────
 export type EditableField = 'input' | 'in_qty' | 'out_qty'
 
@@ -834,59 +840,89 @@ export function usePurchaseManagement() {
     }
 
     // ── 콘솔 스크립트 생성 (쿠팡 Wing Vue.js 호환) ──
+    //   · 한 번에 VIEWS_BATCH_SIZE 개씩 검색 (요청 횟수 최소화)
+    //   · 이상 징후(결과 0건 / 페이지 정지 / 요소 없음)면 즉시 중단 — 재시도하지 않는다
+    //   · 중단되더라도 그때까지 모은 데이터는 CSV 로 저장
     const script = `(async()=>{
-const wait=ms=>new Promise(r=>setTimeout(r,ms));
 const IDS=${JSON.stringify(uniqueIds)};
-const B=100,results=[];
-console.log('[조회수] 시작: '+IDS.length+'개 상품, '+Math.ceil(IDS.length/B)+'배치');
-for(let i=0;i<IDS.length;i+=B){
-  const batch=IDS.slice(i,i+B);
-  /* ── textarea 값 설정 (Vue v-model + Wing UI 호환) ── */
-  const ta=document.querySelector('.product-number-input textarea');
-  if(!ta){console.error('textarea를 찾을 수 없습니다.');return;}
-  ta.focus();
-  const setter=Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set;
-  setter.call(ta,batch.join(','));
-  ta.dispatchEvent(new Event('input',{bubbles:true}));
-  ta.dispatchEvent(new Event('change',{bubbles:true}));
-  await wait(500);
-  /* ── 검색 버튼 클릭 ── */
-  const btn=document.querySelector('button[type="submit"]');
-  if(!btn){console.error('검색 버튼을 찾을 수 없습니다.');return;}
-  btn.click();
-  await wait(3000);
-  /* ── 페이지 순회하며 테이블 데이터 추출 ── */
-  let page=1;
-  while(true){
-    const rows=document.querySelectorAll('table tbody tr.table-row');
-    if(rows.length===0){console.warn('배치 '+(Math.floor(i/B)+1)+': 검색 결과 없음');break;}
-    rows.forEach(row=>{
-      const c=row.querySelectorAll('td');
-      if(c.length>=5){
-        /* ── 등록상품ID (2번째 td) ── */
-        const id=c[1]?.textContent?.trim()||'';
-        if(id&&!results.find(r=>r.id===id)){
-          /* ── 등록상품명: .product-name-block 에서 추출 (tooltip 중복 방지) ── */
-          const name=row.querySelector('.product-name-block')?.textContent?.trim()||'';
-          /* ── 상품조회수 (5번째 td, 콤마 제거) ── */
-          const views=(c[4]?.textContent?.trim()||'0').replace(/,/g,'');
-          results.push({name,id,views});
-        }
-      }
-    });
-    /* ── 다음 페이지 ── */
-    const nextBtn=document.querySelector('[data-wuic-partial="next"] a');
-    if(!nextBtn||nextBtn.offsetParent===null){break;}
-    nextBtn.click();page++;await wait(2000);
-  }
-  console.log('[조회수] 배치 '+(Math.floor(i/B)+1)+'/'+Math.ceil(IDS.length/B)+' 완료 (누적 '+results.length+'건, '+page+'페이지)');
+/* ── 설정 ─────────────────────────────────────────────
+   대기 시간을 짧게 두면 서버에 부담을 주고 차단 위험이 커진다. */
+const BATCH=${VIEWS_BATCH_SIZE};    /* 한 번에 검색할 상품 수 */
+const D_INPUT=800;                  /* 검색어 입력 후 */
+const D_SEARCH=4000;                /* 검색 실행 후 결과 대기 */
+const D_PAGE=2500;                  /* 페이지 이동 후 */
+const D_BATCH=5000;                 /* 배치 사이 휴식 */
+const MAX_PAGES=300;                /* 무한 루프 방지 */
+
+const wait=ms=>new Promise(r=>setTimeout(r,ms));
+const results=[],seen=new Set();
+let stop='';
+const fail=m=>{stop=m;console.error('[조회수] 중단 — '+m);};
+const firstRowText=()=>{const r=document.querySelector('table tbody tr.table-row');return r?r.textContent:'';};
+
+const totalBatch=Math.ceil(IDS.length/BATCH);
+console.log('[조회수] 시작: '+IDS.length+'개 상품, '+totalBatch+'배치 (배치당 '+BATCH+'개)');
+
+for(let i=0;i<IDS.length;i+=BATCH){
+  const bn=Math.floor(i/BATCH)+1;
+  try{
+    /* ── 검색어 입력 (Vue v-model 호환) ── */
+    const ta=document.querySelector('.product-number-input textarea');
+    if(!ta){fail('상품번호 입력창을 찾을 수 없습니다. Wing 상품조회 페이지가 맞는지 확인하세요.');break;}
+    ta.focus();
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(ta,IDS.slice(i,i+BATCH).join(','));
+    ta.dispatchEvent(new Event('input',{bubbles:true}));
+    ta.dispatchEvent(new Event('change',{bubbles:true}));
+    await wait(D_INPUT);
+
+    /* ── 검색 실행 ── */
+    const btn=document.querySelector('button[type="submit"]');
+    if(!btn){fail('검색 버튼을 찾을 수 없습니다.');break;}
+    btn.click();
+    await wait(D_SEARCH);
+
+    /* ── 결과 페이지 순회 ── */
+    let page=1;
+    while(page<=MAX_PAGES){
+      const rows=document.querySelectorAll('table tbody tr.table-row');
+      /* 결과 0건 = 차단·세션만료 가능성 → 재시도하지 않고 즉시 중단 */
+      if(rows.length===0){fail('배치 '+bn+'/'+totalBatch+' '+page+'페이지 결과가 0건입니다. 차단 또는 로그인 만료일 수 있습니다.');break;}
+      rows.forEach(row=>{
+        const c=row.querySelectorAll('td');
+        if(c.length<5)return;
+        const id=(c[1]&&c[1].textContent||'').trim();
+        if(!id||seen.has(id))return;
+        seen.add(id);
+        const nameEl=row.querySelector('.product-name-block');
+        const name=(nameEl&&nameEl.textContent||'').trim();
+        const views=((c[4]&&c[4].textContent||'0').trim()).replace(/,/g,'');
+        results.push({name,id,views});
+      });
+
+      const nextBtn=document.querySelector('[data-wuic-partial="next"] a');
+      if(!nextBtn||nextBtn.offsetParent===null)break;   /* 마지막 페이지 */
+      const before=firstRowText();
+      nextBtn.click();page++;
+      await wait(D_PAGE);
+      /* 눌렀는데 내용이 그대로면 응답이 막힌 것 → 중단 */
+      if(firstRowText()===before){fail('페이지가 넘어가지 않습니다 (배치 '+bn+', '+page+'페이지).');break;}
+    }
+    if(stop)break;
+    if(page>MAX_PAGES){fail('페이지 수가 비정상적으로 많습니다 ('+MAX_PAGES+'초과).');break;}
+    console.log('[조회수] 배치 '+bn+'/'+totalBatch+' 완료 (누적 '+results.length+'건)');
+  }catch(e){fail('예외 발생: '+((e&&e.message)||e));break;}
+
+  if(i+BATCH<IDS.length){console.log('[조회수] '+(D_BATCH/1000)+'초 대기...');await wait(D_BATCH);}
 }
-/* ── CSV 다운로드 ── */
+
+/* ── CSV 저장 (중단됐어도 모은 만큼은 저장) ── */
 if(results.length===0){console.warn('[조회수] 추출된 데이터가 없습니다.');return;}
 const csv='\\uFEFF등록상품명,등록상품ID,상품조회수\\n'+results.map(r=>'"'+r.name.replace(/"/g,'""')+'","=""'+r.id+'""",'+r.views).join('\\n');
-const blob=new Blob([csv],{type:'text/csv;charset=utf-8'});
-const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='coupang_views.csv';a.click();
-console.log('[조회수] 완료! 총 '+results.length+'건 CSV 저장됨');
+const a=document.createElement('a');
+a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}));
+a.download='coupang_views.csv';a.click();
+if(stop){console.warn('[조회수] 중단되어 '+results.length+'건만 저장했습니다. 원인을 해결한 뒤 다시 실행하세요.');}
+else{console.log('[조회수] 완료! 총 '+results.length+'건 CSV 저장됨');}
 })();`
 
     // ── 클립보드 복사 (Electron 호환) ──
@@ -898,7 +934,12 @@ console.log('[조회수] 완료! 총 '+results.length+'건 CSV 저장됨');
     document.execCommand('copy')
     document.body.removeChild(el)
 
-    alert(`콘솔 스크립트가 클립보드에 복사되었습니다.\n(${uniqueIds.length}개 상품, ${Math.ceil(uniqueIds.length / 100)}배치)`)
+    alert(
+      `콘솔 스크립트가 클립보드에 복사되었습니다.\n`
+      + `상품 ${uniqueIds.length}개 · 배치당 ${VIEWS_BATCH_SIZE}개 · 총 ${Math.ceil(uniqueIds.length / VIEWS_BATCH_SIZE)}배치\n\n`
+      + `※ 오류가 나면 재시도 없이 즉시 중단되며,\n`
+      + `   그때까지 모은 데이터는 CSV로 저장됩니다.`,
+    )
   }, [items, filteredItems, selectedIds])
 
   /* ── [csv 업로드] STEP 1: 모달 열기 ─────────────────────────── */
