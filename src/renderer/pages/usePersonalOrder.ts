@@ -1249,7 +1249,11 @@ export function usePersonalOrder() {
     const rows = XLSX.utils.sheet_to_json(worksheet, { header: 1 }) as any[][]
 
     const map = new Map<string, string>()   // order_id → invoice_number (유효 행 전체)
-    for (const row of rows) {
+    // 1행은 헤더이므로 제외한다.
+    //   헤더의 C열('주문번호')·E열('운송장번호')이 비어있지 않아 그냥 돌리면
+    //   유효 행으로 잡혀 집계 건수가 1 늘어난다.
+    for (let i = 1; i < rows.length; i++) {
+      const row = rows[i]
       if (!row) continue
       const orderId = row[2] != null ? String(row[2]).trim() : ''
       const invoiceNum = row[4] != null ? String(row[4]).trim() : ''
@@ -1290,11 +1294,22 @@ export function usePersonalOrder() {
     const releaseStopSet = new Set(items.filter((r) => r.release_stop).map((r) => r.order_id))
     const isCombined = (oid: string) => (orderItemCountMap.get(oid) ?? 1) > 1
 
-    // (2) 엑셀 운송장 등록 대상 — 주문 존재 + 합배송 아님
+    // 이미 입고된 주문 — 송장이 출력되어 실물에 부착된 상태이므로 재등록 대상이 아니다.
+    //   입고 집계는 (order_id|option_id) 단위라, 한 라인이라도 입고면 주문 전체를 제외한다.
+    const arrivedSet = new Set(
+      items
+        .filter((r) =>
+          r.order_id
+          && (aggMap.get(makeFulfillmentKey(r.order_id, r.vendor_item_id))?.arrival ?? 0) > 0)
+        .map((r) => r.order_id),
+    )
+
+    // (2) 엑셀 운송장 등록 대상 — 주문 존재 + 합배송 아님 + 입고 전
     const registerMap = new Map<string, string>()
     for (const [oid, inv] of xlsxMap) {
       if (!orderIdSet.has(oid)) continue
       if (isCombined(oid)) continue
+      if (arrivedSet.has(oid)) continue
       registerMap.set(oid, inv)
     }
 
@@ -1325,6 +1340,7 @@ export function usePersonalOrder() {
     let combinedSkip = 0
     let cancelSkip = 0
     let duplicateSkip = 0
+    let arrivedSkip = 0
     const duplicateReported = new Set<string>()   // 실패 목록에 주문당 1줄만
     const failures: { orderId: string; reason: string }[] = []
 
@@ -1334,6 +1350,8 @@ export function usePersonalOrder() {
         if (!orderIdSet.has(p.orderId)) { failures.push({ orderId: p.orderId, reason: '주문 없음' }); continue }
         if (isCombined(p.orderId)) { combinedSkip++; continue }
         if (releaseStopSet.has(p.orderId)) { cancelSkip++; continue }
+        // 이미 입고 = 송장이 실물에 부착됨 → 재등록하지 않는다
+        if (arrivedSet.has(p.orderId)) { arrivedSkip++; continue }
         if (!hasTracking(p.orderId)) { failures.push({ orderId: p.orderId, reason: '운송장번호 없음' }); continue }
 
         // 동일 주문번호 2건 이상 → 전부 업로드 제외
@@ -1364,10 +1382,11 @@ export function usePersonalOrder() {
       combinedSkip,
       cancelSkip,
       duplicateSkip,
+      arrivedSkip,
       failures,
     }
     return { summary, registerMap, matchedByFile, matchedCount }
-  }, [items, orderItemCountMap, trackingMap, invoiceOrderIds, readInvoiceXlsx, parsePdfCached])
+  }, [items, orderItemCountMap, trackingMap, invoiceOrderIds, aggMap, readInvoiceXlsx, parsePdfCached])
 
   // ── 모달 요약 분석 (파일 2개 준비되면 자동 호출) ──────────────
   const analyzeInvoiceFiles = useCallback(async (xlsxFile: File, pdfFiles: File[]): Promise<InvoiceUploadSummary> => {
@@ -1452,6 +1471,7 @@ export function usePersonalOrder() {
         (summary.combinedSkip > 0 ? `, 합배송 ${summary.combinedSkip}` : '') +
         (summary.cancelSkip > 0 ? `, 출고중지 ${summary.cancelSkip}` : '') +
         (summary.duplicateSkip > 0 ? `, 중복제외 ${summary.duplicateSkip}` : '') +
+        (summary.arrivedSkip > 0 ? `, 입고제외 ${summary.arrivedSkip}` : '') +
         (summary.failures.length > 0 ? `, 실패 ${summary.failures.length}` : '') +
         (upResult.failed > 0 ? `, 업로드실패 ${upResult.failed}` : ''),
       )

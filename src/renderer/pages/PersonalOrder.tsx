@@ -420,23 +420,36 @@ const PersonalOrder: React.FC = () => {
                           'data-col-key': col.key,
                         }
 
-                        // ── 운송장번호 (invoice_number → pending_invoice_number(주황) → '-') ──
+                        // ── 운송장번호 ──────────────────────────────────
+                        //   입고 완료(agg.arrival > 0) → 파랑
+                        //     : 송장이 출력되어 실물 상품에 이미 부착된 상태
+                        //   확정 운송장 → 기본색 / 대기 운송장 → 주황 / 없음 → '-'
                         if (col.key === 'invoice_no') {
                           const inv = (row.invoice_number ?? '').trim()
                           const pending = (row.pending_invoice_number ?? '').trim()
+                          const shown = inv || pending
+                          const arrived = agg.arrival > 0
                           return (
                             <td
                               key={col.key}
                               {...cellDataAttrs}
                               className={focusedClass.trim() || undefined}
-                              title={inv || pending || '-'}
+                              title={
+                                !shown
+                                  ? '-'
+                                  : arrived
+                                    ? `${shown} — 입고 완료 (송장이 상품에 부착됨)`
+                                    : shown
+                              }
                               onClick={onCellClick}
                             >
-                              {inv
-                                ? inv
-                                : pending
-                                  ? <span style={{ color: '#C2410C', fontWeight: 600 }}>{pending}</span>
-                                  : '-'}
+                              {!shown
+                                ? '-'
+                                : arrived
+                                  ? <span style={{ color: '#2563EB', fontWeight: 600 }}>{shown}</span>
+                                  : inv
+                                    ? inv
+                                    : <span style={{ color: '#C2410C', fontWeight: 600 }}>{pending}</span>}
                             </td>
                           )
                         }

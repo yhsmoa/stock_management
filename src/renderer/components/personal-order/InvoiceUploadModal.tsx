@@ -329,6 +329,9 @@ const InvoiceUploadModal: React.FC<InvoiceUploadModalProps> = ({
               {summary.duplicateSkip > 0 && (
                 <SummaryRow label="주문번호 중복 제외" value={`${summary.duplicateSkip}건`} color={theme.colors.danger} />
               )}
+              {summary.arrivedSkip > 0 && (
+                <SummaryRow label="입고 완료 제외" value={`${summary.arrivedSkip}건`} color={theme.colors.info} />
+              )}
               {summary.failures.length > 0 && (
                 <div style={{ marginTop: 8, paddingTop: 8, borderTop: `1px solid ${theme.colors.border}` }}>
                   <div style={{ fontSize: 12, fontWeight: 600, color: theme.colors.danger, marginBottom: 4 }}>
