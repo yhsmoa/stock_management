@@ -166,26 +166,6 @@ const PersonalOrder: React.FC = () => {
         </div>
 
         <div className="po-toolbar-right">
-          {/* ── 배송: 주문 상태 선택 (강조 pill) ── */}
-          <DropdownMenu
-            label={`배송 · ${selectedTabs.size === 0 ? '전체' : Array.from(selectedTabs).join(', ')}`}
-            triggerClassName="po-ship-trigger"
-            align="right"
-          >
-            {ORDER_STATUS_TABS.map((tab) => {
-              const isActive = tab === '전체' ? selectedTabs.size === 0 : selectedTabs.has(tab)
-              return (
-                <DropdownItem
-                  key={tab}
-                  className={isActive ? 'active' : ''}
-                  onClick={() => handleTabChange(tab)}
-                >
-                  {tab}
-                </DropdownItem>
-              )
-            })}
-          </DropdownMenu>
-
           {/* ── [업데이트]: 주문 업데이트 / 바코드 연결 / 송장 업데이트 ── */}
           <DropdownMenu label="업데이트" align="right">
             <DropdownItem
@@ -250,6 +230,25 @@ const PersonalOrder: React.FC = () => {
       {updateMsg && (
         <div className="po-update-msg">{updateMsg}</div>
       )}
+
+      {/* ── 주문상태 선택옵션 (다중 선택 · 검색폼과 동일 폭) ───── */}
+      <div className="po-status-seg" role="group" aria-label="주문상태 선택">
+        {ORDER_STATUS_TABS.map((tab) => {
+          const isActive = tab === '전체' ? selectedTabs.size === 0 : selectedTabs.has(tab)
+          return (
+            <button
+              key={tab}
+              type="button"
+              className={`po-status-seg-btn${isActive ? ' active' : ''}`}
+              aria-pressed={isActive}
+              title={tab}
+              onClick={() => handleTabChange(tab)}
+            >
+              {tab}
+            </button>
+          )
+        })}
+      </div>
 
       {/* ── 검색바 (Enter 키로 검색 실행) ────────────────────── */}
       <SearchBar

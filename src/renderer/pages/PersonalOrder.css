@@ -175,6 +175,56 @@
   flex-shrink: 0;
 }
 
+/* ── 주문상태 선택옵션 (세그먼트 컨트롤) ──────────────────────
+   검색 입력폼과 같은 폭으로 가운데 정렬. 다중 선택이므로
+   여러 항목이 동시에 활성(흰 알약)될 수 있다. */
+.po-status-seg {
+  display: flex;
+  align-self: center;
+  width: 100%;
+  max-width: 760px;
+  margin-bottom: 8px;
+  flex-shrink: 0;
+  gap: 2px;
+  padding: 3px;
+  box-sizing: border-box;
+  background: #eceef2;
+  border: 1px solid #dfe3ea;
+  border-radius: 11px;
+}
+
+.po-status-seg-btn {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 4px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: #6B7280;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.4;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: background 0.15s, color 0.15s, box-shadow 0.15s;
+}
+
+.po-status-seg-btn:hover:not(.active) {
+  background: rgba(255, 255, 255, 0.55);
+  color: #374151;
+}
+
+.po-status-seg-btn.active {
+  background: #ffffff;
+  color: #111827;
+  font-weight: 600;
+  box-shadow:
+    0 1px 2px rgba(17, 24, 39, 0.10),
+    0 2px 5px rgba(17, 24, 39, 0.06);
+}
+
 /* ── 상태 탭 툴바 ────────────────────────────────────────────── */
 .po-table-toolbar {
   display: flex;
