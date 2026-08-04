@@ -664,17 +664,112 @@ export function validateItemDataExcel(headers: any[]): boolean {
   )
 }
 
+// ── 엑셀 컬럼 매핑 (헤더 이름 기준) ─────────────────────────────────
+//   쿠팡이 중간에 열을 추가해도 깨지지 않도록 위치가 아닌 '헤더 이름'으로 찾는다.
+//   (실제로 'Current DOC / Sales forecast' 4개 열이 중간에 추가된 적이 있다)
+//   2행 헤더는 '상위헤더 / 하위헤더' 형태의 키로 합쳐서 식별한다.
+
+/** 필드 → 엑셀 헤더 키 */
+const ITEM_DATA_COLUMNS = {
+  item_id:                  'Inventory ID',
+  option_id:                'Option ID',
+  sku_id:                   'SKU ID',
+  item_name:                'Product name',
+  option_name:              'Option name',
+  offer_condition:          'Offer condition',
+  orderable_qty:            'Orderable quantity (real-time)',
+  pending_inbounds:         'Pending inbounds (real-time)',
+  item_winner:              'Item winner',
+  recent_sales_7d:          'Recent sales (Excluding bundle sales) / Last 7 days',
+  recent_sales_30d:         'Recent sales (Excluding bundle sales) / Last 30 days',
+  recent_sales_qty_7d:      'Recent sales quantity / Last 7 days',
+  recent_sales_qty_30d:     'Recent sales quantity / Last 30 days',
+  recommended_inbound_qty:  'Recommended inbound quantity',
+  recommended_inbound_date: 'Recommended inbound date',
+  days_of_cover:            'Days of cover',
+  monthly_storage_fee:      'Monthly storage fee',
+  sku_age_1_30d:            'Sku age (D-1) / 1~30 days',
+  sku_age_31_45d:           'Sku age (D-1) / 31~45 days',
+  sku_age_46_60d:           'Sku age (D-1) / 46~60 days',
+  sku_age_61_120d:          'Sku age (D-1) / 61~120 days',
+  sku_age_121_180d:         'Sku age (D-1) / 121~180 days',
+  sku_age_181_plus:         'Sku age (D-1) / 181+ days',
+  customer_returns_30d:     'Customer returns last 30 days (D-1)',
+  season:                   'Season',
+  product_listing_date:     'Product listing date',
+} as const
+
+type ItemDataField = keyof typeof ITEM_DATA_COLUMNS
+
+/** 공백·줄바꿈 정규화 (헤더에 개행이 들어있는 경우가 있다) */
+const normalizeHeader = (v: any): string => String(v ?? '').replace(/\s+/g, ' ').trim()
+
+/**
+ * 2행 헤더(병합 셀 포함)를 훑어 '헤더 키 → 컬럼 인덱스' 맵을 만든다.
+ * - 병합으로 비어 있는 상위 헤더는 직전 값을 이어서 사용
+ * - 하위 헤더가 있으면 '상위 / 하위' 로 합친다
+ */
+function buildHeaderIndex(rows: any[][]): Map<string, number> {
+  const main = rows[0] ?? []
+  const sub = rows[1] ?? []
+  const width = Math.max(main.length, sub.length)
+
+  const index = new Map<string, number>()
+  let carried = ''
+  for (let c = 0; c < width; c++) {
+    const m = normalizeHeader(main[c])
+    if (m) carried = m
+    const s = normalizeHeader(sub[c])
+    const key = s ? `${carried} / ${s}` : carried
+    if (key && !index.has(key)) index.set(key, c)
+  }
+  return index
+}
+
 // ── 엑셀 데이터 파싱 ────────────────────────────────────────────────
 
 /**
  * 재고 SKU 엑셀 데이터를 RgItemData 배열로 변환
- * - Row 0: 헤더, Row 1: 서브헤더(스킵), Row 2~: 데이터
- * - 인덱스 0(No.) 스킵, 인덱스 1~26 매핑
+ * - Row 0: 헤더, Row 1: 서브헤더, Row 2~: 데이터
+ * - 컬럼은 위치가 아닌 헤더 이름으로 찾는다 (열 추가에 안전)
+ * - 찾지 못한 헤더는 missing 으로 반환해 호출부가 사용자에게 알릴 수 있게 한다
  */
 export function parseItemDataExcel(
   rows: any[][],
   userId: string,
-): Omit<RgItemData, 'id' | 'created_at'>[] {
+): { items: Omit<RgItemData, 'id' | 'created_at'>[]; missing: string[] } {
+  const headerIndex = buildHeaderIndex(rows)
+
+  // 필드 → 컬럼 인덱스 확정
+  const colOf = {} as Record<ItemDataField, number | undefined>
+  const missing: string[] = []
+  for (const [field, header] of Object.entries(ITEM_DATA_COLUMNS) as [ItemDataField, string][]) {
+    const idx = headerIndex.get(header)
+    colOf[field] = idx
+    if (idx == null) missing.push(header)
+  }
+  if (missing.length > 0) {
+    console.warn('[parseItemDataExcel] 헤더를 찾지 못한 컬럼:', missing)
+  }
+
+  const toNum = (v: any): number | null => {
+    if (v == null || String(v).trim() === '') return null
+    const n = Number(String(v).replace(/,/g, '').trim())
+    return isNaN(n) ? null : n
+  }
+  const toStr = (v: any): string | null => {
+    if (v == null || String(v).trim() === '') return null
+    return String(v).trim()
+  }
+  const num = (row: any[], f: ItemDataField) => {
+    const c = colOf[f]
+    return c == null ? null : toNum(row[c])
+  }
+  const str = (row: any[], f: ItemDataField) => {
+    const c = colOf[f]
+    return c == null ? null : toStr(row[c])
+  }
+
   const result: Omit<RgItemData, 'id' | 'created_at'>[] = []
 
   // Row 2부터 데이터 행
@@ -682,54 +777,42 @@ export function parseItemDataExcel(
     const row = rows[i]
     if (!row || row.length === 0) continue
 
-    // item_id(인덱스 1)가 없으면 빈 행 → 스킵
-    const itemId = row[1]
-    if (itemId == null || String(itemId).trim() === '') continue
-
-    const toNum = (v: any): number | null => {
-      if (v == null || String(v).trim() === '') return null
-      const n = Number(v)
-      return isNaN(n) ? null : n
-    }
-
-    const toStr = (v: any): string | null => {
-      if (v == null || String(v).trim() === '') return null
-      return String(v).trim()
-    }
+    // item_id 가 없으면 빈 행 → 스킵
+    if (num(row, 'item_id') == null) continue
 
     result.push({
       user_id: userId,
-      item_id: toNum(row[1]),
-      option_id: toNum(row[2]),
-      sku_id: toNum(row[3]),
-      item_name: toStr(row[4]),
-      option_name: toStr(row[5]),
-      offer_condition: toStr(row[6]),
-      orderable_qty: toNum(row[7]),
-      pending_inbounds: toNum(row[8]),
-      item_winner: toStr(row[9]),
-      recent_sales_7d: toNum(row[10]),
-      recent_sales_30d: toNum(row[11]),
-      recent_sales_qty_7d: toNum(row[12]),
-      recent_sales_qty_30d: toNum(row[13]),
-      recommended_inbound_qty: toNum(row[14]),
-      recommended_inbound_date: toStr(row[15]),
-      days_of_cover: toStr(row[16]),
-      monthly_storage_fee: toNum(row[17]),
-      sku_age_1_30d: toNum(row[18]),
-      sku_age_31_45d: toNum(row[19]),
-      sku_age_46_60d: toNum(row[20]),
-      sku_age_61_120d: toNum(row[21]),
-      sku_age_121_180d: toNum(row[22]),
-      sku_age_181_plus: toNum(row[23]),
-      customer_returns_30d: toNum(row[24]),
-      season: toStr(row[25]),
-      product_listing_date: toStr(row[26]),
+      item_id: num(row, 'item_id'),
+      option_id: num(row, 'option_id'),
+      sku_id: num(row, 'sku_id'),
+      item_name: str(row, 'item_name'),
+      option_name: str(row, 'option_name'),
+      offer_condition: str(row, 'offer_condition'),
+      orderable_qty: num(row, 'orderable_qty'),
+      pending_inbounds: num(row, 'pending_inbounds'),
+      item_winner: str(row, 'item_winner'),
+      recent_sales_7d: num(row, 'recent_sales_7d'),
+      recent_sales_30d: num(row, 'recent_sales_30d'),
+      recent_sales_qty_7d: num(row, 'recent_sales_qty_7d'),
+      recent_sales_qty_30d: num(row, 'recent_sales_qty_30d'),
+      recommended_inbound_qty: num(row, 'recommended_inbound_qty'),
+      recommended_inbound_date: str(row, 'recommended_inbound_date'),
+      days_of_cover: str(row, 'days_of_cover'),
+      monthly_storage_fee: num(row, 'monthly_storage_fee'),
+      sku_age_1_30d: num(row, 'sku_age_1_30d'),
+      sku_age_31_45d: num(row, 'sku_age_31_45d'),
+      sku_age_46_60d: num(row, 'sku_age_46_60d'),
+      sku_age_61_120d: num(row, 'sku_age_61_120d'),
+      sku_age_121_180d: num(row, 'sku_age_121_180d'),
+      sku_age_181_plus: num(row, 'sku_age_181_plus'),
+      customer_returns_30d: num(row, 'customer_returns_30d'),
+      season: str(row, 'season'),
+      product_listing_date: str(row, 'product_listing_date'),
     })
   }
 
   console.log(`[parseItemDataExcel] ${result.length}건 파싱 완료`)
-  return result
+  return { items: result, missing }
 }
 
 // ── 데이터 저장 (delete → 병렬 batch insert) ────────────────────────

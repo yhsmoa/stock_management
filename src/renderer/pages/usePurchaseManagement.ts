@@ -559,11 +559,24 @@ export function usePurchaseManagement() {
       setUploadProgress(20)
       setUploadStatus('데이터 파싱 중...')
 
-      const parsedItems = parseItemDataExcel(rows, userId)
+      const { items: parsedItems, missing } = parseItemDataExcel(rows, userId)
 
       if (parsedItems.length === 0) {
         alert('파싱된 데이터가 없습니다. 엑셀 파일을 확인해주세요.')
         return
+      }
+
+      // 헤더를 못 찾은 컬럼이 있으면 해당 값이 전부 비게 되므로 먼저 알린다.
+      // (쿠팡이 헤더명을 바꾸면 조용히 누락되는 것을 막기 위함)
+      if (missing.length > 0) {
+        const proceed = window.confirm(
+          `엑셀에서 찾지 못한 컬럼이 ${missing.length}개 있습니다.\n`
+          + `해당 값은 비어있는 상태로 저장됩니다.\n\n`
+          + missing.slice(0, 10).join('\n')
+          + (missing.length > 10 ? `\n… 외 ${missing.length - 10}개` : '')
+          + `\n\n계속 진행할까요?`,
+        )
+        if (!proceed) return
       }
 
       setUploadProgress(40)
