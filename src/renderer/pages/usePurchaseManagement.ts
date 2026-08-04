@@ -248,8 +248,9 @@ export function usePurchaseManagement() {
     setCurrentPage(1)
   }, [])
 
-  /* ── 정렬 (판매량 / 보관료 / 재고량 — 상품 단위 합산, 3단계 토글) ─ */
-  type SortKey = 'sales' | 'storage' | 'stock'
+  /* ── 정렬 (판매량 / 보관료 / 재고량 / 반품 / 반품-보관료
+         — 상품 단위 합산, 3단계 토글) ─ */
+  type SortKey = 'sales' | 'storage' | 'stock' | 'return_qty' | 'return_fee'
   const [sort, setSort] = useState<{ key: SortKey; dir: 'desc' | 'asc' } | null>(null)
   // 판매량 정렬 기준 기간 (7일 / 30일)
   const [salesPeriod, setSalesPeriodRaw] = useState<'7d' | '30d'>('7d')
@@ -367,6 +368,13 @@ export function usePurchaseManagement() {
     if (sort) {
       // 상품별 합산 (전체 items 기준 — 필터/검색과 무관하게 상품 총합 사용)
       const metricOf = (item: RgItem): number => {
+        // 반품 계열은 Option ID 매칭이 불가해 itemDataMap 이 아니라
+        // 상품명+옵션명 집계(returnAggMap)를 사용한다.
+        if (sort.key === 'return_qty' || sort.key === 'return_fee') {
+          const agg = returnAggMap.get(makeReturnKey(item.seller_product_name, item.option_name))
+          if (!agg) return 0
+          return sort.key === 'return_qty' ? agg.qty : agg.fee
+        }
         const data = item.vendor_item_id ? itemDataMap.get(item.vendor_item_id) : undefined
         if (!data) return 0
         if (sort.key === 'sales') {
@@ -392,7 +400,7 @@ export function usePurchaseManagement() {
     }
 
     return result
-  }, [activeFilter, statusFilter, items, itemDataMap, searchQuery, searchMode, sort, salesPeriod])
+  }, [activeFilter, statusFilter, items, itemDataMap, returnAggMap, searchQuery, searchMode, sort, salesPeriod])
 
   const handleFilterToggle = (filter: FilterKey) => {
     setActiveFilter((prev) => (prev === filter ? null : filter))

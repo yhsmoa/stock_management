@@ -36,9 +36,11 @@ const COLOR_DECREASE = '#3B82F6'  // 파랑 (감소)
 
 /** [기준] 정렬 키 → 표시명 */
 const SORT_LABELS: Record<string, string> = {
-  sales:   '판매량',
-  storage: '보관료',
-  stock:   '재고량',
+  sales:      '판매량',
+  storage:    '보관료',
+  stock:      '재고량',
+  return_qty: '반품',
+  return_fee: '반품-보관료',
 }
 
 /** [필터] 수량 컬럼 필터 키 → 표시명 */
@@ -714,6 +716,26 @@ const PurchaseManagement: React.FC = () => {
               <DropdownItem className={sort?.key !== 'stock' ? 'active' : ''} onClick={() => setSortDir('stock', null)}>전체</DropdownItem>
               <DropdownItem className={sort?.key === 'stock' && sort.dir === 'asc' ? 'active' : ''} onClick={() => setSortDir('stock', 'asc')}>오름차순</DropdownItem>
               <DropdownItem className={sort?.key === 'stock' && sort.dir === 'desc' ? 'active' : ''} onClick={() => setSortDir('stock', 'desc')}>내림차순</DropdownItem>
+            </DropdownSubmenu>
+
+            {/* 반품 — 반품 재고 수량 */}
+            <DropdownSubmenu
+              label="반품"
+              className={sort?.key === 'return_qty' ? 'active' : ''}
+            >
+              <DropdownItem className={sort?.key !== 'return_qty' ? 'active' : ''} onClick={() => setSortDir('return_qty', null)}>전체</DropdownItem>
+              <DropdownItem className={sort?.key === 'return_qty' && sort.dir === 'asc' ? 'active' : ''} onClick={() => setSortDir('return_qty', 'asc')}>오름차순</DropdownItem>
+              <DropdownItem className={sort?.key === 'return_qty' && sort.dir === 'desc' ? 'active' : ''} onClick={() => setSortDir('return_qty', 'desc')}>내림차순</DropdownItem>
+            </DropdownSubmenu>
+
+            {/* 반품-보관료 */}
+            <DropdownSubmenu
+              label="반품-보관료"
+              className={sort?.key === 'return_fee' ? 'active' : ''}
+            >
+              <DropdownItem className={sort?.key !== 'return_fee' ? 'active' : ''} onClick={() => setSortDir('return_fee', null)}>전체</DropdownItem>
+              <DropdownItem className={sort?.key === 'return_fee' && sort.dir === 'asc' ? 'active' : ''} onClick={() => setSortDir('return_fee', 'asc')}>오름차순</DropdownItem>
+              <DropdownItem className={sort?.key === 'return_fee' && sort.dir === 'desc' ? 'active' : ''} onClick={() => setSortDir('return_fee', 'desc')}>내림차순</DropdownItem>
             </DropdownSubmenu>
           </DropdownMenu>
 
