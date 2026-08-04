@@ -5,7 +5,13 @@
 
 import React, { useState, useEffect, useRef } from 'react'
 import './PurchaseManagement.css'
-import { usePurchaseManagement, COLUMNS, PAGE_SIZE_OPTIONS, type EditableField } from './usePurchaseManagement'
+import {
+  usePurchaseManagement,
+  COLUMNS,
+  PAGE_SIZE_OPTIONS,
+  makeReturnKey,
+  type EditableField,
+} from './usePurchaseManagement'
 import type { RgItem } from '../types/purchase'
 import ProductDetailPanel from '../components/purchase/ProductDetailPanel'
 import OrderModal from '../components/purchase/OrderModal'
@@ -224,6 +230,7 @@ const PurchaseManagement: React.FC = () => {
     statusSaving,
     handleBulkItemStatus,
     warehouseQtyMap,
+    returnAggMap,
     copying,
     handleCopy,
     pageSize,
@@ -405,9 +412,19 @@ const PurchaseManagement: React.FC = () => {
         return <span style={{ color: '#EF4444' }}>{fee.toLocaleString()}</span>
       }
 
-      /* ── 가격 열 ─────────────────────────────────────────── */
-      case 'price':
-        return item.sale_price ? item.sale_price.toLocaleString() : ''
+      /* ── 반품 열 (반품 재고 수량 / 반품 보관료) ─────────────
+         반품 행은 Option ID 가 새로 발급돼 ID 매칭이 불가하므로
+         상품명+옵션명으로 집계한 returnAggMap 에서 찾는다. */
+      case 'return_qty': {
+        const agg = returnAggMap.get(makeReturnKey(item.seller_product_name, item.option_name))
+        if (!agg?.qty) return ''
+        return <span style={{ color: '#7C3AED', fontWeight: 600 }}>{agg.qty.toLocaleString()}</span>
+      }
+      case 'return_fee': {
+        const agg = returnAggMap.get(makeReturnKey(item.seller_product_name, item.option_name))
+        if (!agg?.fee) return ''
+        return <span style={{ color: '#EF4444' }}>{agg.fee.toLocaleString()}</span>
+      }
 
       /* ── 조회수 V1~V5 (최근 5개 날짜, V1=가장 오래된, V5=최근) ──
          이전 V와 비교: diff > +10 → 빨강, diff < -10 → 파랑, ±10 이내 → 기본색 */

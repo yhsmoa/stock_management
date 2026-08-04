@@ -88,12 +88,43 @@ export const COLUMNS: Column[] = [
   { key: 'v4',       label: 'V4',       width: '46px' },
   { key: 'v5',       label: 'V5',       width: '46px' },
   { key: 'storage',  label: '보관료',   width: '48px', borderLeft: true },
-  { key: 'price',    label: 'price',    width: '52px' },
-  { key: 'margin',   label: 'margin',   width: '52px' },
+  // 반품 재고 — 반품 행은 Option ID 가 새로 발급돼 ID 매칭이 불가하므로
+  // 상품명+옵션명으로 집계해 붙인다 (returnAggMap).
+  { key: 'return_qty', label: '반품',    width: '46px' },
+  { key: 'return_fee', label: '반품-보', width: '52px' },
   { key: 'in_qty',   label: '입고',     width: '46px', editable: true, colClass: 'col-in-qty' },
   { key: 'out_qty',  label: '반출',     width: '46px', editable: true, colClass: 'col-out-qty' },
   { key: 'note',     label: 'note',     width: '70px', editableText: true },
 ]
+
+// ── 반품 재고 집계 ─────────────────────────────────────────────
+//   반품(offer_condition = '반품-*') 행은 Inventory/Option/SKU ID 가 새로
+//   발급되어 NEW 상품과 ID 로 이어지지 않는다. 따라서 상품명+옵션명으로 묶는다.
+//   재고가 0 인 반품 행은 집계 대상이 아니다(등급별로 빈 행이 생기기 때문).
+
+/** 반품 집계 키 — 상품명 + 옵션명 */
+export const makeReturnKey = (name: string | null, option: string | null): string =>
+  `${(name ?? '').trim()}||${(option ?? '').trim()}`
+
+export interface ReturnAgg {
+  qty: number   // 반품 재고 수량 합
+  fee: number   // 반품 보관료 합
+}
+
+function buildReturnAggMap(rows: RgItemData[]): Map<string, ReturnAgg> {
+  const map = new Map<string, ReturnAgg>()
+  for (const d of rows) {
+    if (!(d.offer_condition ?? '').trim().startsWith('반품')) continue
+    const qty = d.orderable_qty ?? 0
+    if (qty <= 0) continue
+    const key = makeReturnKey(d.item_name, d.option_name)
+    const entry = map.get(key) ?? { qty: 0, fee: 0 }
+    entry.qty += qty
+    entry.fee += d.monthly_storage_fee ?? 0
+    map.set(key, entry)
+  }
+  return map
+}
 
 // ── 일괄 작업 유틸 ────────────────────────────────────────────
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms))
@@ -147,6 +178,8 @@ export function usePurchaseManagement() {
 
   /* ── 재고 SKU 데이터 (option_id → RgItemData) ────────── */
   const [itemDataMap, setItemDataMap] = useState<Map<string, RgItemData>>(new Map())
+  // 반품 집계 (상품명+옵션명 → { qty, fee })
+  const [returnAggMap, setReturnAggMap] = useState<Map<string, ReturnAgg>>(new Map())
 
   /* ── 리셋/업데이트 로딩 ──────────────────────────────────── */
   const [resetting, setResetting] = useState(false)
@@ -421,6 +454,7 @@ export function usePurchaseManagement() {
           if (d.option_id != null) dataMap.set(String(d.option_id), d)
         }
         setItemDataMap(dataMap)
+        setReturnAggMap(buildReturnAggMap(rgItemData))
 
         // ── viewsDataMap (seller_product_id → Map<date, view>) ──
         const vMap = new Map<string, Map<string, number>>()
@@ -590,6 +624,7 @@ export function usePurchaseManagement() {
         if (d.option_id != null) dataMap.set(String(d.option_id), d)
       }
       setItemDataMap(dataMap)
+      setReturnAggMap(buildReturnAggMap(freshData))
 
       setUploadProgress(100)
       setUploadStatus('완료!')
@@ -1789,5 +1824,8 @@ else{console.log('[조회수] 완료! 총 '+results.length+'건 CSV 저장됨');
 
     // 창고 재고
     warehouseQtyMap,
+
+    // 반품 집계 (상품명+옵션명 기준)
+    returnAggMap,
   }
 }
