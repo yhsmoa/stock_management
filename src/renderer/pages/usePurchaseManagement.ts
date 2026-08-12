@@ -39,7 +39,22 @@ import {
   type OrderDelta,
   type ShipmentType,
 } from '../services/orderFulfillmentService'
-import { sendPurchaseOrdersPre } from '../services/orderSendService'
+import {
+  sendPurchaseOrdersPre,
+  fetchCarts,
+  type CartOption,
+  type CartTarget,
+} from '../services/orderSendService'
+import {
+  readPeriodSalesFile,
+  validatePeriodSalesHeader,
+  parsePeriodSalesRows,
+  aggregatePeriodSales,
+  downloadUnmatchedSellerExcel,
+  savePeriodSales,
+  fetchPeriodSalesAgg,
+  type PeriodSalesAgg,
+} from '../services/periodSalesService'
 import type { RgItem, RgItemData } from '../types/purchase'
 
 // ── 상수 ──────────────────────────────────────────────────────
@@ -180,6 +195,9 @@ export function usePurchaseManagement() {
   const [itemDataMap, setItemDataMap] = useState<Map<string, RgItemData>>(new Map())
   // 반품 집계 (상품명+옵션명 → { qty, fee })
   const [returnAggMap, setReturnAggMap] = useState<Map<string, ReturnAgg>>(new Map())
+  // 기간판매량 (vendor_item_id → { rocket, seller }) — 업로드 세션 동안만 유지
+  const [periodSalesMap, setPeriodSalesMap] = useState<Map<string, PeriodSalesAgg>>(new Map())
+  const periodSalesInputRef = useRef<HTMLInputElement>(null)
 
   /* ── 리셋/업데이트 로딩 ──────────────────────────────────── */
   const [resetting, setResetting] = useState(false)
@@ -189,21 +207,26 @@ export function usePurchaseManagement() {
   /* ── 체크박스 ────────────────────────────────────────────── */
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
 
-  /* ── 인라인 편집 (input / in_qty / out_qty 공통) ────────── */
+  /* ── 인라인 편집 (input / in_qty / out_qty 공통) ──────────
+     입력 중인 값(draft)은 셀 <input> 의 지역 상태로 둔다.
+     여기(페이지 상태)에 두면 글자마다 표 전체가 리렌더되어 느려진다. */
   const [editingCell, setEditingCell] = useState<{ id: string; field: EditableField } | null>(null)
-  const [editingCellValue, setEditingCellValue] = useState('')
 
   /* ── 변경 추적 (일괄 저장용, itemId → { input?, in_qty?, out_qty? }) */
   const [pendingEdits, setPendingEdits] = useState<Map<string, Partial<Record<EditableField, number | null>>>>(new Map())
 
   /* ── DB 원본값 추적 (되돌리기 감지용) ── */
   const dbOriginalsRef = useRef<Map<string, Partial<Record<EditableField, number | null>>>>(new Map())
+  /* 편집 핸들러가 최신 값을 읽되 identity 는 고정되도록 하는 ref
+     (핸들러가 매 렌더 새로 만들어지면 메모된 행이 전부 리렌더된다) */
+  const itemsRef = useRef<RgItem[]>([])
+  const warehouseQtyRef = useRef<Map<string, number>>(new Map())
   const [saving, setSaving] = useState(false)
   const [resettingInputs, setResettingInputs] = useState(false)
 
-  /* ── 노트(문자열) 인라인 편집 ─────────────────────────────── */
+  /* ── 노트(문자열) 인라인 편집 ───────────────────────────────
+     draft 는 셀 <input> 지역 상태 (위 인라인 편집과 동일한 이유) */
   const [editingNoteId, setEditingNoteId] = useState<string | null>(null)
-  const [noteDraft, setNoteDraft] = useState('')
   const [pendingNotes, setPendingNotes] = useState<Map<string, string | null>>(new Map())
   const dbOriginalNotesRef = useRef<Map<string, string | null>>(new Map())
 
@@ -285,6 +308,10 @@ export function usePurchaseManagement() {
   // ══════════════════════════════════════════════════════════════
   // 필터 + 검색
   // ══════════════════════════════════════════════════════════════
+
+  // 편집 핸들러가 참조할 최신 값 동기화 (identity 고정용 — 위 ref 선언 참고)
+  itemsRef.current = items
+  warehouseQtyRef.current = warehouseQtyMap
 
   const filteredItems = useMemo(() => {
     let result = items
@@ -447,14 +474,20 @@ export function usePurchaseManagement() {
 
       setLoading(true)
       try {
-        const [rgItems, rgItemData, viewsData, warehouseMap] = await Promise.all([
+        const [rgItems, rgItemData, viewsData, warehouseMap, periodAgg] = await Promise.all([
           fetchRgItems(userId),
           fetchRgItemData(userId),
           fetchViewsData(userId),
           fetchWarehouseQty(userId),
+          // 저장된 기간판매량 (실패해도 나머지 화면은 뜨도록 개별 catch)
+          fetchPeriodSalesAgg(userId).catch((e) => {
+            console.error('[기간판매량] 조회 실패:', e)
+            return new Map<string, PeriodSalesAgg>()
+          }),
         ])
 
         setItems(rgItems)
+        setPeriodSalesMap(periodAgg)
 
         // ── itemDataMap (option_id → RgItemData) ──
         const dataMap = new Map<string, RgItemData>()
@@ -564,6 +597,61 @@ export function usePurchaseManagement() {
   // ══════════════════════════════════════════════════════════════
   // [RG 재고 xlsx] — 기존 엑셀 업로드 (이름만 변경)
   // ══════════════════════════════════════════════════════════════
+
+  /* ── [기간판매량 xlsx] 업로드 ─────────────────────────────────
+     엑셀의 판매량을 로켓그로스 상품에 매칭해 '기간' 열에 표시한다.
+     · 로켓그로스 → 옵션 ID 직접 매칭
+     · 판매자배송 → '바코드 연결' 과 동일한 6단계 규칙으로 매칭
+     매칭 실패한 판매자배송(판매량 ≥ 1)은 엑셀로 자동 다운로드. */
+  const handlePeriodSalesUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0]
+    event.target.value = ''   // 같은 파일 재선택 허용
+    if (!file) return
+
+    try {
+      const rows = await readPeriodSalesFile(file)
+      if (!validatePeriodSalesHeader(rows[0])) {
+        alert('기간판매량 엑셀 형식이 아닙니다.\n(A열 옵션 ID, F열 판매방식, I열 판매량 필요)')
+        return
+      }
+
+      const parsed = parsePeriodSalesRows(rows)
+      if (parsed.length === 0) {
+        alert('데이터 행이 없습니다.')
+        return
+      }
+
+      const userId = getUserId()
+      if (!userId) {
+        alert('사용자 정보를 찾을 수 없습니다. 다시 로그인해주세요.')
+        return
+      }
+
+      const result = aggregatePeriodSales(parsed, items)
+      setPeriodSalesMap(result.aggMap)
+
+      // ── DB 저장 (엑셀 원본 A~S + 매칭 결과 전체) ──
+      const saved = await savePeriodSales(parsed, userId)
+
+      // ── 결과 요약 ──
+      const lines = [
+        `기간판매량 ${result.totalRows}행 적용 (저장 ${saved.success}건${saved.errors ? ` / 실패 ${saved.errors}` : ''})`,
+        `- 로켓그로스: 매칭 ${result.rocketMatched} / 미매칭 ${result.rocketUnmatched}`,
+        `- 판매자배송: 매칭 ${result.sellerMatched} / 미매칭 ${result.sellerUnmatched}`,
+      ]
+      if (result.unmatchedSellerRows.length > 0) {
+        lines.push('', `판매량이 있는 미매칭 판매자배송 ${result.unmatchedSellerRows.length}건은 엑셀로 내려받습니다.`)
+      }
+      alert(lines.join('\n'))
+
+      if (result.unmatchedSellerRows.length > 0) {
+        await downloadUnmatchedSellerExcel(result.unmatchedSellerRows)
+      }
+    } catch (err: any) {
+      console.error('[기간판매량] 업로드 실패:', err)
+      alert(`기간판매량 업로드 실패: ${err.message}`)
+    }
+  }
 
   const handleRgExcelUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]
@@ -1059,23 +1147,25 @@ else{console.log('[조회수] 완료! 총 '+results.length+'건 CSV 저장됨');
   // 인라인 편집 (input / in_qty / out_qty 공통)
   // ══════════════════════════════════════════════════════════════
 
-  /** 셀 클릭 → 편집 모드 진입 */
-  const handleCellClick = (itemId: string, field: EditableField, currentValue: number | null) => {
+  /** 셀 클릭 → 편집 모드 진입 (초기값은 셀 input 이 item 에서 직접 읽는다) */
+  const handleCellClick = useCallback((itemId: string, field: EditableField) => {
     setEditingCell({ id: itemId, field })
-    setEditingCellValue(currentValue != null ? String(currentValue) : '')
-  }
+  }, [])
 
   // ── 노트(문자열) 편집 ────────────────────────────────────────
   /** 노트 셀 클릭 → 편집 모드 진입 */
-  const handleNoteClick = (itemId: string, currentValue: string | null) => {
+  const handleNoteClick = useCallback((itemId: string) => {
     setEditingNoteId(itemId)
-    setNoteDraft(currentValue ?? '')
-  }
+  }, [])
 
-  /** 노트 blur → DB 원본과 비교 → 변경/되돌리기 판정 (handleCellBlur 와 동일 패턴) */
-  const handleNoteBlur = (itemId: string, currentValue: string | null) => {
+  /** 노트 확정 → DB 원본과 비교 → 변경/되돌리기 판정 (handleCellBlur 와 동일 패턴) */
+  const handleNoteBlur = useCallback((
+    itemId: string,
+    currentValue: string | null,
+    draft: string,
+  ) => {
     setEditingNoteId(null)
-    const newValue = noteDraft === '' ? null : noteDraft
+    const newValue = draft === '' ? null : draft
 
     // DB 원본 기록 (첫 편집 시에만)
     const origMap = dbOriginalNotesRef.current
@@ -1101,7 +1191,7 @@ else{console.log('[조회수] 완료! 총 '+results.length+'건 CSV 저장됨');
       next.set(itemId, newValue)
       return next
     })
-  }
+  }, [])
 
   /** 상세 패널 비고 — 즉시 저장 (테이블 [저장] 거치지 않음) */
   const saveDetailNote = useCallback(async (itemId: string, note: string) => {
@@ -1123,16 +1213,23 @@ else{console.log('[조회수] 완료! 총 '+results.length+'건 CSV 저장됨');
   }, [])
 
   /** 셀 blur → DB 원본값과 비교 → 변경/되돌리기 판정 */
-  const handleCellBlur = (itemId: string, field: EditableField, currentValue: number | null) => {
+  const handleCellBlur = useCallback((
+    itemId: string,
+    field: EditableField,
+    currentValue: number | null,
+    draft: string,
+  ) => {
     setEditingCell(null)
-    const trimmed = editingCellValue.trim()
+    const trimmed = draft.trim()
     let newValue = trimmed === '' ? null : Number(trimmed)
 
     // ── 입고 필드 상한 검증: 창고 수량을 초과할 수 없음 ──
+    //   items/warehouseQtyMap 을 ref 로 읽어 콜백 identity 를 고정한다
+    //   (매 렌더마다 바뀌면 메모된 행이 전부 다시 그려진다)
     if (field === 'in_qty' && newValue != null && newValue > 0) {
-      const targetItem = items.find((it) => it.id === itemId)
+      const targetItem = itemsRef.current.find((it) => it.id === itemId)
       const maxQty = targetItem?.barcode
-        ? (warehouseQtyMap.get(targetItem.barcode) ?? 0)
+        ? (warehouseQtyRef.current.get(targetItem.barcode) ?? 0)
         : 0
 
       if (newValue > maxQty) {
@@ -1199,7 +1296,7 @@ else{console.log('[조회수] 완료! 총 '+results.length+'건 CSV 저장됨');
       next.set(itemId, { ...existing, [field]: newValue })
       return next
     })
-  }
+  }, [])
 
   /** 일괄 저장 (input + in_qty + out_qty + note, 행 단위 병합) */
   const handleSaveInputs = async () => {
@@ -1362,19 +1459,25 @@ else{console.log('[조회수] 완료! 총 '+results.length+'건 CSV 저장됨');
   // ══════════════════════════════════════════════════════════════
   // [주문 전송] — ft_carts + ft_cart_items 일괄 생성
   //   대상: [복사] 와 동일하게 filteredItems 중 input>0 인 행
-  //   흐름: 1) 사전 검증 + 미저장 가드 → CartNameInputModal 오픈
+  //   흐름: 1) 사전 검증 + 미저장 가드 → CartSelectModal 오픈
   //         2) 모달 [저장] → 실제 전송 (sendPurchaseOrdersPre)
   // ══════════════════════════════════════════════════════════════
 
   const [orderSending, setOrderSending] = useState(false)
   const [orderSendModalOpen, setOrderSendModalOpen] = useState(false)
+  // 장바구니 선택 모달용 — 기존 카트 목록
+  const [carts, setCarts] = useState<CartOption[]>([])
+  const [cartsLoading, setCartsLoading] = useState(false)
 
-  /** [주문 전송] 버튼 onClick — 검증 통과 시 모달만 오픈 */
-  const handleOrderSend = useCallback(() => {
-    const targets = filteredItems.filter(
-      (item) => item.input != null && item.input > 0,
-    )
-    if (targets.length === 0) {
+  /** 전송 대상 (입력 값이 있는 행) */
+  const orderSendTargets = useMemo(
+    () => filteredItems.filter((item) => item.input != null && item.input > 0),
+    [filteredItems],
+  )
+
+  /** [장바구니] 버튼 onClick — 검증 통과 시 모달 오픈 + 카트 목록 조회 */
+  const handleOrderSend = useCallback(async () => {
+    if (orderSendTargets.length === 0) {
       alert('입력 값이 있는 행이 없습니다.')
       return
     }
@@ -1382,10 +1485,22 @@ else{console.log('[조회수] 완료! 총 '+results.length+'건 CSV 저장됨');
       if (!confirm('저장하지 않은 변경이 있습니다. 그대로 전송하시겠어요?')) return
     }
     setOrderSendModalOpen(true)
-  }, [filteredItems, pendingEdits])
+
+    // 기존 카트 목록 조회 (실패해도 '신규' 생성은 가능하도록 모달은 유지)
+    setCartsLoading(true)
+    try {
+      const orderUserId = await getOrderUserId()
+      setCarts(orderUserId ? await fetchCarts(orderUserId) : [])
+    } catch (err) {
+      console.error('[카트 목록] 조회 실패:', err)
+      setCarts([])
+    } finally {
+      setCartsLoading(false)
+    }
+  }, [orderSendTargets, pendingEdits])
 
   /** 모달 [저장] — 실제 전송 + 사용자 알림 */
-  const handleConfirmOrderSend = useCallback(async (cartName: string) => {
+  const handleConfirmOrderSend = useCallback(async (target: CartTarget) => {
     const targets = filteredItems.filter(
       (item) => item.input != null && item.input > 0,
     )
@@ -1401,13 +1516,13 @@ else{console.log('[조회수] 완료! 총 '+results.length+'건 CSV 저장됨');
 
     setOrderSending(true)
     try {
-      const { count } = await sendPurchaseOrdersPre(targets, orderUserId, cartName)
+      const { count, cartName } = await sendPurchaseOrdersPre(targets, orderUserId, target)
       setOrderSendModalOpen(false)
       alert(`${count}건 전송 완료 (${cartName})`)
     } catch (err: any) {
       console.error('[주문 전송] 실패:', err)
       alert(`주문 전송 실패: ${err.message}`)
-      // 모달 유지 → 사용자가 이름 바꿔 재시도
+      // 모달 유지 → 사용자가 다시 선택/입력해 재시도
     } finally {
       setOrderSending(false)
     }
@@ -1417,10 +1532,10 @@ else{console.log('[조회수] 완료! 총 '+results.length+'건 CSV 저장됨');
   // 상품 상세 패널
   // ══════════════════════════════════════════════════════════════
 
-  const handleProductClick = (item: RgItem) => {
+  const handleProductClick = useCallback((item: RgItem) => {
     setDetailItem(item)
     setDetailPanelOpen(true)
-  }
+  }, [])
 
   // ══════════════════════════════════════════════════════════════
   // 검색 & 선택
@@ -1445,13 +1560,14 @@ else{console.log('[조회수] 완료! 총 '+results.length+'건 CSV 저장됨');
     }
   }
 
-  const handleSelectRow = (id: string, checked: boolean) => {
+  const handleSelectRow = useCallback((id: string, checked: boolean) => {
     setSelectedIds((prev) => {
       const next = new Set(prev)
-      checked ? next.add(id) : next.delete(id)
+      if (checked) next.add(id)
+      else next.delete(id)
       return next
     })
-  }
+  }, [])
 
   // ══════════════════════════════════════════════════════════════
   // 페이지네이션
@@ -1677,13 +1793,18 @@ else{console.log('[조회수] 완료! 총 '+results.length+'건 CSV 저장됨');
   // 셀 렌더링 헬퍼
   // ══════════════════════════════════════════════════════════════
 
-  const getItemData = (item: RgItem): RgItemData | undefined =>
-    item.vendor_item_id ? itemDataMap.get(item.vendor_item_id) : undefined
+  // 표 렌더러(renderCell)의 의존성이라 identity 를 고정한다.
+  // 매 렌더 새로 만들면 메모된 행이 전부 다시 그려진다.
+  const getItemData = useCallback(
+    (item: RgItem): RgItemData | undefined =>
+      item.vendor_item_id ? itemDataMap.get(item.vendor_item_id) : undefined,
+    [itemDataMap],
+  )
 
-  const isNotItemWinner = (item: RgItem): boolean => {
-    const data = getItemData(item)
-    return data?.item_winner === '아이템위너 아님'
-  }
+  const isNotItemWinner = useCallback(
+    (item: RgItem): boolean => getItemData(item)?.item_winner === '아이템위너 아님',
+    [getItemData],
+  )
 
   // ── 반환 ────────────────────────────────────────────────────
   return {
@@ -1772,15 +1893,11 @@ else{console.log('[조회수] 완료! 총 '+results.length+'건 CSV 저장됨');
 
     // 인라인 편집 (input / in_qty / out_qty 공통)
     editingCell,
-    editingCellValue,
-    setEditingCellValue,
     handleCellClick,
     handleCellBlur,
 
     // 노트(문자열) 인라인 편집
     editingNoteId,
-    noteDraft,
-    setNoteDraft,
     handleNoteClick,
     handleNoteBlur,
     pendingNotes,
@@ -1803,6 +1920,9 @@ else{console.log('[조회수] 완료! 총 '+results.length+'건 CSV 저장됨');
     setOrderSendModalOpen,
     handleOrderSend,
     handleConfirmOrderSend,
+    carts,
+    cartsLoading,
+    orderSendCount: orderSendTargets.length,
 
     // 상품 상세
     detailPanelOpen,
@@ -1835,5 +1955,10 @@ else{console.log('[조회수] 완료! 총 '+results.length+'건 CSV 저장됨');
 
     // 반품 집계 (상품명+옵션명 기준)
     returnAggMap,
+
+    // 기간판매량 (업로드 세션 동안만 유지)
+    periodSalesMap,
+    periodSalesInputRef,
+    handlePeriodSalesUpload,
   }
 }

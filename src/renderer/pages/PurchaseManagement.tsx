@@ -3,7 +3,7 @@
    - 로직은 usePurchaseManagement 훅에서 관리
    ================================================================ */
 
-import React, { useState, useEffect, useRef } from 'react'
+import React, { useState, useEffect, useRef, useCallback } from 'react'
 import './PurchaseManagement.css'
 import {
   usePurchaseManagement,
@@ -17,7 +17,7 @@ import ProductDetailPanel from '../components/purchase/ProductDetailPanel'
 import OrderModal from '../components/purchase/OrderModal'
 import UploadProgressModal from '../components/UploadProgressModal'
 import PasswordConfirmModal from '../components/common/PasswordConfirmModal'
-import CartNameInputModal from '../components/personal-order/CartNameInputModal'
+import CartSelectModal from '../components/common/CartSelectModal'
 import DropdownMenu, {
   DropdownItem,
   DropdownSubmenu,
@@ -144,6 +144,152 @@ const getViewDiffColor = (
   return undefined
 }
 
+// ══════════════════════════════════════════════════════════════════
+// 인라인 편집 입력 — draft 를 지역 상태로 보관
+//   페이지 상태로 두면 글자마다 표 전체(수천 셀)가 리렌더되어 느려진다.
+//   확정(Enter/blur) 시에만 상위로 값을 올린다.
+// ══════════════════════════════════════════════════════════════════
+
+interface CellInputProps {
+  /** 편집 시작 시점의 값 */
+  initial: string
+  /** 숫자만 허용할지 */
+  numeric?: boolean
+  /** 확정 — move: -1 위 행, 1 아래 행, 0 이동 없음 */
+  onCommit: (draft: string, move: -1 | 0 | 1) => void
+}
+
+const CellInput: React.FC<CellInputProps> = ({ initial, numeric = false, onCommit }) => {
+  const [draft, setDraft] = useState(initial)
+  // Enter 로 확정한 뒤에는 blur 가 또 확정하지 않도록 잠근다
+  const committed = useRef(false)
+
+  return (
+    <input
+      className="purchase-input-cell"
+      type="text"
+      inputMode={numeric ? 'numeric' : undefined}
+      autoFocus
+      value={draft}
+      onFocus={(e) => e.target.select()}
+      onChange={(e) => {
+        if (!numeric || e.target.value === '' || /^\d+$/.test(e.target.value)) {
+          setDraft(e.target.value)
+        }
+      }}
+      onBlur={() => {
+        if (committed.current) return
+        committed.current = true
+        onCommit(draft, 0)
+      }}
+      onKeyDown={(e) => {
+        if (e.key !== 'Enter') return
+        e.preventDefault()
+        committed.current = true
+        onCommit(draft, e.shiftKey ? -1 : 1)
+      }}
+    />
+  )
+}
+
+// ══════════════════════════════════════════════════════════════════
+// 표 한 행 — React.memo 로 변경된 행만 다시 그린다
+//   props 는 전부 안정적인 참조여야 memo 가 동작한다:
+//   · item          → 편집 시 해당 행만 새 객체로 교체됨
+//   · renderCell    → 페이지에서 useCallback (편집 상태에 의존하지 않음)
+//   · 핸들러들      → 훅에서 useCallback
+// ══════════════════════════════════════════════════════════════════
+
+interface PurchaseRowProps {
+  item: RgItem
+  rowId: string
+  isSelected: boolean
+  isDisabled: boolean
+  /** 이 행에서 편집 중인 숫자 필드 (없으면 null) */
+  editingField: EditableField | null
+  /** 이 행의 노트를 편집 중인지 */
+  isEditingNote: boolean
+  renderCell: (col: typeof COLUMNS[number], item: RgItem) => React.ReactNode
+  onSelect: (rowId: string, checked: boolean) => void
+  onProductClick: (item: RgItem) => void
+  onCellClick: (itemId: string, field: EditableField) => void
+  onCellCommit: (
+    itemId: string, field: EditableField,
+    currentValue: number | null, draft: string, move: -1 | 0 | 1,
+  ) => void
+  onNoteClick: (itemId: string) => void
+  onNoteCommit: (
+    itemId: string, currentValue: string | null, draft: string, move: -1 | 0 | 1,
+  ) => void
+}
+
+const PurchaseRow = React.memo<PurchaseRowProps>(({
+  item, rowId, isSelected, isDisabled, editingField, isEditingNote,
+  renderCell, onSelect, onProductClick, onCellClick, onCellCommit, onNoteClick, onNoteCommit,
+}) => (
+  <tr className={isDisabled ? 'purchase-row-disabled' : undefined}>
+    <td>
+      <input
+        type="checkbox"
+        className="purchase-checkbox"
+        checked={isSelected}
+        onChange={(e) => onSelect(rowId, e.target.checked)}
+      />
+    </td>
+    {COLUMNS.map((c) => {
+      const cls = [
+        c.isProduct && 'col-product',
+        c.isInput && 'col-input',
+        c.colClass,
+        c.borderLeft && 'col-border-left',
+      ].filter(Boolean).join(' ')
+
+      // ── 편집 가능 셀은 행이 직접 처리 (renderCell 은 표시 전용) ──
+      let content: React.ReactNode
+      if (c.editable && editingField === c.key) {
+        const field = c.key as EditableField
+        const current = (item[field] ?? null) as number | null
+        content = (
+          <CellInput
+            initial={current != null ? String(current) : ''}
+            numeric
+            onCommit={(draft, move) => onCellCommit(item.id!, field, current, draft, move)}
+          />
+        )
+      } else if (c.editableText && isEditingNote) {
+        content = (
+          <CellInput
+            initial={item.note ?? ''}
+            onCommit={(draft, move) => onNoteCommit(item.id!, item.note ?? null, draft, move)}
+          />
+        )
+      } else {
+        content = renderCell(c, item)
+      }
+
+      return (
+        <td
+          key={c.key}
+          className={cls}
+          onClick={
+            c.isProduct
+              ? () => onProductClick(item)
+              : c.editable
+                ? () => { if (editingField !== c.key) onCellClick(item.id!, c.key as EditableField) }
+                : c.editableText
+                  ? () => { if (!isEditingNote) onNoteClick(item.id!) }
+                  : undefined
+          }
+          style={c.isProduct || c.editable || c.editableText ? { cursor: 'pointer' } : undefined}
+        >
+          {content}
+        </td>
+      )
+    })}
+  </tr>
+))
+PurchaseRow.displayName = 'PurchaseRow'
+
 const PurchaseManagement: React.FC = () => {
   const {
     searchValue,
@@ -197,13 +343,9 @@ const PurchaseManagement: React.FC = () => {
     handleSelectAll,
     handleSelectRow,
     editingCell,
-    editingCellValue,
-    setEditingCellValue,
     handleCellClick,
     handleCellBlur,
     editingNoteId,
-    noteDraft,
-    setNoteDraft,
     handleNoteClick,
     handleNoteBlur,
     pendingNotes,
@@ -242,6 +384,12 @@ const PurchaseManagement: React.FC = () => {
     setOrderSendModalOpen,
     handleOrderSend,
     handleConfirmOrderSend,
+    carts,
+    cartsLoading,
+    orderSendCount,
+    periodSalesMap,
+    periodSalesInputRef,
+    handlePeriodSalesUpload,
   } = usePurchaseManagement()
 
   // ── 주문 모달 open 상태 ─────────────────────────────────────
@@ -286,43 +434,38 @@ const PurchaseManagement: React.FC = () => {
     return () => document.removeEventListener('keydown', onKey)
   }, [])
 
-  // ── 편집 가능 셀 공통 렌더러 (input / in_qty / out_qty) ─────
-  const renderEditableCell = (item: RgItem, field: EditableField, value: number | null) => {
-    if (editingCell && editingCell.id === item.id && editingCell.field === field) {
-      return (
-        <input
-          className="purchase-input-cell"
-          type="text"
-          inputMode="numeric"
-          autoFocus
-          value={editingCellValue}
-          onFocus={(e) => e.target.select()}
-          onChange={(e) => {
-            if (e.target.value === '' || /^\d+$/.test(e.target.value)) {
-              setEditingCellValue(e.target.value)
-            }
-          }}
-          onBlur={() => handleCellBlur(item.id!, field, value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') {
-              e.preventDefault()
-              handleCellBlur(item.id!, field, value)
-              // 같은 필드에서 Enter=다음 행(아래), Shift+Enter=이전 행(위)
-              const currentIdx = pageItems.findIndex((pi) => pi.id === item.id)
-              const target = pageItems[currentIdx + (e.shiftKey ? -1 : 1)]
-              if (target?.id) {
-                handleCellClick(target.id, field, target[field] ?? null)
-              }
-            }
-          }}
-        />
-      )
-    }
-    return <span>{value != null ? value : ''}</span>
-  }
-
   // ── 셀 렌더링 ──────────────────────────────────────────────
-  const renderCell = (col: typeof COLUMNS[number], item: RgItem) => {
+  // ── 편집 확정 핸들러 (확정 + 다음/이전 행 이동) ─────────────
+  //   pageItems 는 매 렌더 새 배열이라 ref 로 읽어 콜백 identity 를 고정한다.
+  const pageItemsRef = useRef(pageItems)
+  pageItemsRef.current = pageItems
+
+  const handleCellCommit = useCallback((
+    itemId: string, field: EditableField,
+    currentValue: number | null, draft: string, move: -1 | 0 | 1,
+  ) => {
+    handleCellBlur(itemId, field, currentValue, draft)
+    if (move === 0) return
+    const list = pageItemsRef.current
+    const i = list.findIndex((p) => p.id === itemId)
+    const target = list[i + move]
+    if (target?.id) handleCellClick(target.id, field)
+  }, [handleCellBlur, handleCellClick])
+
+  const handleNoteCommit = useCallback((
+    itemId: string, currentValue: string | null, draft: string, move: -1 | 0 | 1,
+  ) => {
+    handleNoteBlur(itemId, currentValue, draft)
+    if (move === 0) return
+    const list = pageItemsRef.current
+    const i = list.findIndex((p) => p.id === itemId)
+    const target = list[i + move]
+    if (target?.id) handleNoteClick(target.id)
+  }, [handleNoteBlur, handleNoteClick])
+
+  //   편집 상태에 의존하지 않는 '표시 전용' 렌더러.
+  //   여기서 editingCell 을 참조하면 편집할 때마다 모든 행이 리렌더된다.
+  const renderCell = useCallback((col: typeof COLUMNS[number], item: RgItem) => {
     const data = getItemData(item)
 
     switch (col.key) {
@@ -351,11 +494,11 @@ const PurchaseManagement: React.FC = () => {
 
       /* ── 편집 가능 열 (입력 / 입고 / 반출) ─────────────── */
       case 'input':
-        return renderEditableCell(item, 'input', item.input)
+        return <span>{item.input ?? ''}</span>
       case 'in_qty':
-        return renderEditableCell(item, 'in_qty', item.in_qty ?? null)
+        return <span>{item.in_qty ?? ''}</span>
       case 'out_qty':
-        return renderEditableCell(item, 'out_qty', item.out_qty ?? null)
+        return <span>{item.out_qty ?? ''}</span>
 
       /* ── 카트 열(🛒): si_rg_items.cart_qty (선택 카트 합) ── */
       case 'cart': {
@@ -414,6 +557,20 @@ const PurchaseManagement: React.FC = () => {
         return <span style={{ color: '#EF4444' }}>{fee.toLocaleString()}</span>
       }
 
+      /* ── 기간 열 (기간판매량 = 판매자배송 + 로켓그로스) ─────
+         hover 시 판매방식별 내역을 툴팁으로 보여준다. */
+      case 'personal': {
+        const ps = item.vendor_item_id ? periodSalesMap.get(item.vendor_item_id) : undefined
+        if (!ps) return ''
+        const total = ps.seller + ps.rocket
+        if (total <= 0) return ''
+        return (
+          <span title={`판매자 ${ps.seller} + 로켓 ${ps.rocket}`} style={{ fontWeight: 600 }}>
+            {total.toLocaleString()}
+          </span>
+        )
+      }
+
       /* ── 반품 열 (반품 재고 수량 / 반품 보관료) ─────────────
          반품 행은 Option ID 가 새로 발급돼 ID 매칭이 불가하므로
          상품명+옵션명으로 집계한 returnAggMap 에서 찾는다. */
@@ -448,33 +605,14 @@ const PurchaseManagement: React.FC = () => {
       }
 
       /* ── 기타 ────────────────────────────���───────────────── */
-      /* ── 노트(메모): 클릭 → 텍스트 입력, [저장] 시 si_rg_items.note 저장 ── */
-      case 'note': {
-        if (editingNoteId === item.id) {
-          return (
-            <input
-              className="purchase-input-cell"
-              type="text"
-              autoFocus
-              value={noteDraft}
-              onChange={(e) => setNoteDraft(e.target.value)}
-              onBlur={() => handleNoteBlur(item.id!, item.note ?? null)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') {
-                  e.preventDefault()
-                  handleNoteBlur(item.id!, item.note ?? null)
-                }
-              }}
-            />
-          )
-        }
+      /* ── 노트(메모): 표시 전용 (편집 입력은 PurchaseRow 담당) ── */
+      case 'note':
         return <span>{item.note ?? ''}</span>
-      }
 
       default:
         return ''
     }
-  }
+  }, [getItemData, isNotItemWinner, warehouseQtyMap, viewsDataMap, recentViewDates, returnAggMap, periodSalesMap])
 
   // ══════════════════════════════════════════════════════════════
   // 렌더링
@@ -514,7 +652,7 @@ const PurchaseManagement: React.FC = () => {
         </div>
         <div className="purchase-toolbar-right">
           {/* ── [준비] 데이터 채우기 ─────────────────────────────
-               업데이트 / 주문🔗 / xlsx 업로드 2종 / 바코드 연결 / 조회수 */}
+               업데이트 / 주문🔗 · 구분선 · 바코드 연결 / 조회수 */}
           <DropdownMenu label={prepLabel} align="right" hasSubmenu>
             <DropdownItem onClick={handleUpdate} disabled={updating}>
               업데이트
@@ -528,28 +666,7 @@ const PurchaseManagement: React.FC = () => {
               주문 🔗
             </DropdownItem>
 
-            <label className="dropdown-item" style={{ cursor: 'pointer' }}>
-              RG 재고 xlsx
-              <input
-                ref={rgExcelInputRef}
-                type="file"
-                accept=".xlsx,.xls"
-                style={{ display: 'none' }}
-                onChange={handleRgExcelUpload}
-              />
-            </label>
-
-            {/* si_coupang_shipment_size upsert */}
-            <label className="dropdown-item" style={{ cursor: 'pointer' }}>
-              쉽먼트 사이즈 xlsx
-              <input
-                ref={shipmentSizeExcelInputRef}
-                type="file"
-                accept=".xlsx,.xls"
-                style={{ display: 'none' }}
-                onChange={handleShipmentSizeExcelUpload}
-              />
-            </label>
+            <div className="dropdown-divider" role="separator" />
 
             {/* 바코드 연결 — api / xlsx */}
             <DropdownSubmenu label="바코드 연결">
@@ -580,6 +697,43 @@ const PurchaseManagement: React.FC = () => {
                 onChange={handleViewsCsvUpload}
               />
             </DropdownSubmenu>
+          </DropdownMenu>
+
+          {/* ── [xlsx] 엑셀 업로드 모음 ──────────────────────────── */}
+          <DropdownMenu label="xlsx" align="right">
+            <label className="dropdown-item" style={{ cursor: 'pointer' }}>
+              기간판매량
+              <input
+                ref={periodSalesInputRef}
+                type="file"
+                accept=".xlsx,.xls"
+                style={{ display: 'none' }}
+                onChange={handlePeriodSalesUpload}
+              />
+            </label>
+
+            <label className="dropdown-item" style={{ cursor: 'pointer' }}>
+              RG 재고
+              <input
+                ref={rgExcelInputRef}
+                type="file"
+                accept=".xlsx,.xls"
+                style={{ display: 'none' }}
+                onChange={handleRgExcelUpload}
+              />
+            </label>
+
+            {/* si_coupang_shipment_size upsert */}
+            <label className="dropdown-item" style={{ cursor: 'pointer' }}>
+              쉽먼트 사이즈
+              <input
+                ref={shipmentSizeExcelInputRef}
+                type="file"
+                accept=".xlsx,.xls"
+                style={{ display: 'none' }}
+                onChange={handleShipmentSizeExcelUpload}
+              />
+            </label>
           </DropdownMenu>
 
           {/* ── [주문] 입력값(input > 0) 내보내기 ───────────────── */}
@@ -962,60 +1116,26 @@ const PurchaseManagement: React.FC = () => {
                       </td>
                     </tr>
                   ) : (
-                    pageItems.map((item, idx) => {
-                      const rowId = String(startIdx + idx)
-                      const isDisabled = item.item_status === 'NOT_AVAILABLE'
-                      return (
-                        <tr
-                          key={item.id ?? `${item.seller_product_id}-${item.seller_product_item_id}-${idx}`}
-                          className={isDisabled ? 'purchase-row-disabled' : undefined}
-                        >
-                          <td>
-                            <input
-                              type="checkbox"
-                              className="purchase-checkbox"
-                              checked={selectedIds.has(rowId)}
-                              onChange={(e) => handleSelectRow(rowId, e.target.checked)}
-                            />
-                          </td>
-                          {COLUMNS.map((c) => {
-                            const cls = [
-                              c.isProduct && 'col-product',
-                              c.isInput && 'col-input',
-                              c.colClass,
-                              c.borderLeft && 'col-border-left',
-                            ].filter(Boolean).join(' ')
-                            return (
-                              <td
-                                key={c.key}
-                                className={cls}
-                                onClick={
-                                  c.isProduct
-                                    ? () => handleProductClick(item)
-                                    : c.editable
-                                      ? () => {
-                                          const field = c.key as EditableField
-                                          if (!(editingCell && editingCell.id === item.id && editingCell.field === field)) {
-                                            handleCellClick(item.id!, field, item[field] ?? null)
-                                          }
-                                        }
-                                      : c.editableText
-                                        ? () => {
-                                            if (editingNoteId !== item.id) {
-                                              handleNoteClick(item.id!, item.note ?? null)
-                                            }
-                                          }
-                                        : undefined
-                                }
-                                style={c.isProduct || c.editable || c.editableText ? { cursor: 'pointer' } : undefined}
-                              >
-                                {renderCell(c, item)}
-                              </td>
-                            )
-                          })}
-                        </tr>
-                      )
-                    })
+                    pageItems.map((item, idx) => (
+                      <PurchaseRow
+                        key={item.id ?? `${item.seller_product_id}-${item.seller_product_item_id}-${idx}`}
+                        item={item}
+                        rowId={String(startIdx + idx)}
+                        isSelected={selectedIds.has(String(startIdx + idx))}
+                        isDisabled={item.item_status === 'NOT_AVAILABLE'}
+                        editingField={
+                          editingCell && editingCell.id === item.id ? editingCell.field : null
+                        }
+                        isEditingNote={editingNoteId === item.id}
+                        renderCell={renderCell}
+                        onSelect={handleSelectRow}
+                        onProductClick={handleProductClick}
+                        onCellClick={handleCellClick}
+                        onCellCommit={handleCellCommit}
+                        onNoteClick={handleNoteClick}
+                        onNoteCommit={handleNoteCommit}
+                      />
+                    ))
                   )}
                 </tbody>
               </table>
@@ -1099,12 +1219,15 @@ const PurchaseManagement: React.FC = () => {
         confirmVariant="danger"
       />
 
-      {/* ── 주문 전송 — 카트 이름 입력 모달 ───────────────────── */}
-      <CartNameInputModal
+      {/* ── 장바구니 추가 — 기존 카트 선택 / 신규 생성 ────────── */}
+      <CartSelectModal
         isOpen={orderSendModalOpen}
+        count={orderSendCount}
+        carts={carts}
+        cartsLoading={cartsLoading}
+        loading={orderSending}
         onClose={() => setOrderSendModalOpen(false)}
         onSubmit={handleConfirmOrderSend}
-        loading={orderSending}
       />
 
       {/* ── 일괄 가격수정 모달 ─────────────────────────────────── */}

@@ -17,7 +17,7 @@ import {
   getRowKey,
 } from './usePersonalOrder'
 import { makeFulfillmentKey } from '../services/orderFulfillmentService'
-import CartNameInputModal from '../components/personal-order/CartNameInputModal'
+import CartSelectModal from '../components/common/CartSelectModal'
 import InboundShipmentModal from '../components/personal-order/InboundShipmentModal'
 import InvoiceUploadModal from '../components/personal-order/InvoiceUploadModal'
 import DropdownMenu, { DropdownItem } from '../components/common/DropdownMenu'
@@ -70,6 +70,8 @@ const PersonalOrder: React.FC = () => {
     orderSendModalOpen,
     setOrderSendModalOpen,
     handleConfirmOrderSend,
+    carts,
+    cartsLoading,
     handleRowClick,
     handleSearchSubmit,
     handleBarcodeLink,
@@ -797,12 +799,15 @@ const PersonalOrder: React.FC = () => {
         onConfirm={handleInboundConfirm}
       />
 
-      {/* ── 주문 전송 — 카트 이름 입력 모달 ───────────────────── */}
-      <CartNameInputModal
+      {/* ── 장바구니 추가 — 기존 카트 선택 / 신규 생성 ────────── */}
+      <CartSelectModal
         isOpen={orderSendModalOpen}
+        count={selectedIds.size}
+        carts={carts}
+        cartsLoading={cartsLoading}
+        loading={orderSending}
         onClose={() => setOrderSendModalOpen(false)}
         onSubmit={handleConfirmOrderSend}
-        loading={orderSending}
       />
 
       {/* ── 송장 통합 업로드 — 엑셀 + PDF 모달 ───────────────── */}

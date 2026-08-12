@@ -80,6 +80,120 @@ export async function fetchRgItemsWithBarcode(userId: string): Promise<RgItem[]>
 }
 
 // ══════════════════════════════════════════════════════════════════
+// 공용: 로켓그로스 상품(si_rg_items) 매칭 엔진
+//   6단계 규칙을 바코드 연결 외 용도(기간판매량 등)에서도 재사용하기 위해
+//   '인덱스 구축 + 단건 탐색' 으로 분리한다.
+// ══════════════════════════════════════════════════════════════════
+
+export interface RgMatchIndex {
+  byVendorItemId: Map<string, RgItem[]>
+  bySellerProductId: Map<string, RgItem[]>
+  bySellerProductName: Map<string, RgItem[]>
+}
+
+/** 매칭 대상 레코드 (주문·엑셀행 등 무엇이든 이 4개만 있으면 된다) */
+export interface RgMatchTarget {
+  vendorItemId?: string | null
+  sellerProductId?: string | null
+  optionName?: string | null
+  /** 상품명 (rg.seller_product_name 과 비교) */
+  itemName?: string | null
+}
+
+/**
+ * 매칭 인덱스 구축
+ * @param requireBarcode 바코드가 있는 상품만 후보로 삼을지 (바코드 연결 용도면 true)
+ */
+export function buildRgMatchIndex(
+  rgItems: RgItem[],
+  requireBarcode = false,
+): RgMatchIndex {
+  const byVendorItemId = new Map<string, RgItem[]>()
+  const bySellerProductId = new Map<string, RgItem[]>()
+  const bySellerProductName = new Map<string, RgItem[]>()
+
+  const push = (m: Map<string, RgItem[]>, k: string | null | undefined, v: RgItem) => {
+    if (!k) return
+    if (!m.has(k)) m.set(k, [])
+    m.get(k)!.push(v)
+  }
+
+  for (const rg of rgItems) {
+    if (requireBarcode && !rg.barcode) continue
+    push(byVendorItemId, rg.vendor_item_id, rg)
+    push(bySellerProductId, rg.seller_product_id, rg)
+    push(bySellerProductName, rg.seller_product_name, rg)
+  }
+
+  return { byVendorItemId, bySellerProductId, bySellerProductName }
+}
+
+/**
+ * 단건 매칭 — 6단계 우선순위 규칙 (matchBarcodes 와 동일 규칙)
+ *   1. vendor_item_id + option_name 정확 일치
+ *   2. seller_product_id + option_name 정확 일치 (다건 → vendor_item_id 큰 것)
+ *   3. seller_product_id + option_name 토큰정렬 일치
+ *   4. seller_product_id + option_name 토큰 subset (1건만)
+ *   5. 상품명 + 옵션명 (ID 무관 폴백) — 5a 정확, 5b 토큰정렬
+ *   6. 매칭 불가 → null
+ */
+export function findRgItem(t: RgMatchTarget, idx: RgMatchIndex): RgItem | null {
+  const optName = t.optionName ?? ''
+
+  // ── 규칙 1 ──
+  const r1 = t.vendorItemId ? idx.byVendorItemId.get(t.vendorItemId) : undefined
+  if (r1) {
+    const m = r1.find((rg) => rg.option_name === optName)
+    if (m) return m
+  }
+
+  const r2 = t.sellerProductId ? idx.bySellerProductId.get(t.sellerProductId) : undefined
+
+  // ── 규칙 2 ──
+  if (r2) {
+    const exact = r2.filter((rg) => rg.option_name === optName)
+    if (exact.length === 1) return exact[0]
+    if (exact.length > 1) {
+      return [...exact].sort((a, b) =>
+        (b.vendor_item_id ?? '').localeCompare(a.vendor_item_id ?? ''))[0]
+    }
+  }
+
+  // ── 규칙 3 ──
+  if (r2) {
+    const sortedOpt = tokenSort(optName)
+    const m = r2.find((rg) => rg.option_name && tokenSort(rg.option_name) === sortedOpt)
+    if (m) return m
+  }
+
+  // ── 규칙 4 ──
+  if (r2) {
+    const orderTokens = tokenize(optName)
+    const subset = r2.filter(
+      (rg) => rg.option_name && isSubset(orderTokens, tokenize(rg.option_name)),
+    )
+    if (subset.length === 1) return subset[0]
+  }
+
+  // ── 규칙 5 (상품명 + 옵션명 폴백) ──
+  const r5 = t.itemName ? idx.bySellerProductName.get(t.itemName) : undefined
+  if (r5) {
+    const exact = r5.filter((rg) => rg.option_name === optName)
+    if (exact.length === 1) return exact[0]
+    if (exact.length > 1) {
+      return [...exact].sort((a, b) =>
+        (b.vendor_item_id ?? '').localeCompare(a.vendor_item_id ?? ''))[0]
+    }
+    const sortedOpt = tokenSort(optName)
+    const m = r5.find((rg) => rg.option_name && tokenSort(rg.option_name) === sortedOpt)
+    if (m) return m
+  }
+
+  // ── 규칙 6 ──
+  return null
+}
+
+// ══════════════════════════════════════════════════════════════════
 // 메인: 바코드 매칭 (6단계 규칙)
 // ══════════════════════════════════════════════════════════════════
 

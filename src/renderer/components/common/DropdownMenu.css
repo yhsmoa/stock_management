@@ -95,6 +95,13 @@
   font-weight: 600;
 }
 
+/* ── 항목 사이 구분선 ────────────────────────────────────────── */
+.dropdown-divider {
+  height: 1px;
+  margin: 4px 0;
+  background: #E5E7EB;
+}
+
 /* ── 메뉴 내 구분 라벨 ───────────────────────────────────────── */
 .dropdown-section {
   padding: 5px 14px 3px;

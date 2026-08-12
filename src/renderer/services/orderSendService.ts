@@ -54,6 +54,99 @@ async function createCart(orderUserId: string, trimmedName: string): Promise<str
 }
 
 // ══════════════════════════════════════════════════════════════════
+// 카트 목록 조회 — 기존 카트에 추가하기 위한 선택지
+// ══════════════════════════════════════════════════════════════════
+
+export interface CartOption {
+  id: string
+  cart_name: string
+  status: string | null
+  created_at: string | null
+}
+
+/**
+ * 사용자의 카트 목록 (최신순).
+ * PostgREST 기본 1000행 제한 → range 루프로 전체 조회 (CLAUDE.md 룰 5)
+ */
+export async function fetchCarts(orderUserId: string): Promise<CartOption[]> {
+  if (!isOrderSupabaseConfigured || !orderUserId) return []
+
+  const all: CartOption[] = []
+  let from = 0
+  while (true) {
+    const { data, error } = await (orderSupabase.from('ft_carts') as any)
+      .select('id, cart_name, status, created_at')
+      .eq('user_id', orderUserId)
+      .order('created_at', { ascending: false })
+      .range(from, from + 999)
+    if (error) {
+      console.error('[orderSendService:fetchCarts]', error)
+      throw error
+    }
+    const rows = (data ?? []) as CartOption[]
+    all.push(...rows)
+    if (rows.length < 1000) break
+    from += 1000
+  }
+  return all
+}
+
+// ══════════════════════════════════════════════════════════════════
+// 카트 대상 — 신규 생성 또는 기존 카트에 추가
+// ══════════════════════════════════════════════════════════════════
+
+export type CartTarget =
+  | { mode: 'new'; cartName: string }
+  | { mode: 'existing'; cartId: string }
+
+/**
+ * 대상 카트를 확정한다.
+ * - new      : 카트 생성 후 cart_seq 1 부터
+ * - existing : 기존 카트명을 읽고, 마지막 cart_seq 다음부터 이어붙인다
+ */
+async function resolveCart(
+  orderUserId: string,
+  target: CartTarget,
+): Promise<{ cartId: string; cartName: string; startSeq: number }> {
+  if (target.mode === 'new') {
+    const trimmed = target.cartName.trim()
+    if (!trimmed) throw new Error('카트 이름이 비어 있습니다.')
+    const cartId = await createCart(orderUserId, trimmed)
+    return { cartId, cartName: trimmed, startSeq: 1 }
+  }
+
+  // ── 기존 카트 ──
+  if (!target.cartId) throw new Error('카트를 선택해 주세요.')
+  const { data: cart, error: cartErr } = await (orderSupabase.from('ft_carts') as any)
+    .select('id, cart_name')
+    .eq('id', target.cartId)
+    .eq('user_id', orderUserId)
+    .single()
+  if (cartErr || !cart) {
+    console.error('[orderSendService:resolveCart]', cartErr)
+    throw new Error('선택한 카트를 찾을 수 없습니다.')
+  }
+
+  // 기존 아이템 뒤에 이어붙이도록 마지막 순번 확인
+  const { data: last, error: seqErr } = await (orderSupabase.from('ft_cart_items') as any)
+    .select('cart_seq')
+    .eq('cart_id', target.cartId)
+    .order('cart_seq', { ascending: false })
+    .limit(1)
+  if (seqErr) {
+    console.error('[orderSendService:cart_seq]', seqErr)
+    throw seqErr
+  }
+  const maxSeq = Number((last as any[])?.[0]?.cart_seq ?? 0) || 0
+
+  return {
+    cartId: cart.id as string,
+    cartName: (cart.cart_name as string) ?? '',
+    startSeq: maxSeq + 1,
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════
 // 내부 헬퍼 — ft_cart_items 1000건 청크 insert (CLAUDE.md 룰 5)
 // ══════════════════════════════════════════════════════════════════
 
@@ -91,7 +184,7 @@ async function insertCartItemsChunked(payload: Record<string, unknown>[]): Promi
 export async function sendPersonalOrdersPre(
   rows: PersonalOrderRow[],
   orderUserId: string,
-  cartName: string,
+  target: CartTarget,
 ): Promise<{ count: number; cartId: string; cartName: string }> {
   // ── 가드 ──────────────────────────────────────────────────────
   if (!isOrderSupabaseConfigured) {
@@ -99,11 +192,9 @@ export async function sendPersonalOrdersPre(
   }
   if (!orderUserId) throw new Error('주문 계정(orderUserId)이 없습니다.')
   if (rows.length === 0) throw new Error('전송할 행이 없습니다.')
-  const trimmedName = cartName.trim()
-  if (!trimmedName) throw new Error('카트 이름이 비어 있습니다.')
 
-  // ── (1) 카트 생성 ──
-  const cartId = await createCart(orderUserId, trimmedName)
+  // ── (1) 카트 확정 (신규 생성 또는 기존 카트 이어붙이기) ──
+  const { cartId, cartName: trimmedName, startSeq } = await resolveCart(orderUserId, target)
 
   // ── (2) payload 매핑 ──
   const payload = rows.map((r, idx) => ({
@@ -117,7 +208,7 @@ export async function sendPersonalOrdersPre(
     cart_name: trimmedName,
     shipment_type: 'PERSONAL' as const,
     personal_order_no: r.order_id,
-    cart_seq: idx + 1,
+    cart_seq: startSeq + idx,
   }))
 
   // ── (3) 아이템 insert ──
@@ -150,7 +241,7 @@ export async function sendPersonalOrdersPre(
 export async function sendPurchaseOrdersPre(
   rows: RgItem[],
   orderUserId: string,
-  cartName: string,
+  target: CartTarget,
 ): Promise<{ count: number; cartId: string; cartName: string }> {
   // ── 가드 ──────────────────────────────────────────────────────
   if (!isOrderSupabaseConfigured) {
@@ -158,11 +249,9 @@ export async function sendPurchaseOrdersPre(
   }
   if (!orderUserId) throw new Error('주문 계정(orderUserId)이 없습니다.')
   if (rows.length === 0) throw new Error('전송할 행이 없습니다.')
-  const trimmedName = cartName.trim()
-  if (!trimmedName) throw new Error('카트 이름이 비어 있습니다.')
 
-  // ── (1) 카트 생성 ──
-  const cartId = await createCart(orderUserId, trimmedName)
+  // ── (1) 카트 확정 (신규 생성 또는 기존 카트 이어붙이기) ──
+  const { cartId, cartName: trimmedName, startSeq } = await resolveCart(orderUserId, target)
 
   // ── (2) payload 매핑 ──
   const payload = rows.map((r, idx) => ({
@@ -175,7 +264,7 @@ export async function sendPurchaseOrdersPre(
     cart_id: cartId,
     cart_name: trimmedName,
     shipment_type: 'COUPANG' as const,
-    cart_seq: idx + 1,
+    cart_seq: startSeq + idx,
   }))
 
   // ── (3) 아이템 insert ──

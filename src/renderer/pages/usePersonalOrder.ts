@@ -52,7 +52,12 @@ import {
   type ParsedInvoicePage,
   type InvoiceUploadSummary,
 } from '../services/invoiceService'
-import { sendPersonalOrdersPre } from '../services/orderSendService'
+import {
+  sendPersonalOrdersPre,
+  fetchCarts,
+  type CartOption,
+  type CartTarget,
+} from '../services/orderSendService'
 import { StockService } from '../services/stockService'
 import type { ProgressStep } from '../components/common/ProgressModal'
 import type { AuthUser } from '../types/auth'
@@ -891,10 +896,13 @@ export function usePersonalOrder() {
   }, [filteredItems, selectedIds, selectedStatuses, getRowStatus, orderItemsMap, getUserInfo])
 
   // ── [주문 전송] 핸들러 — ft_carts + ft_cart_items 일괄 insert ───
-  //   기본 흐름: [주문 전송] 클릭 → 사전 검증 → CartNameInputModal 오픈
+  //   기본 흐름: [주문 전송] 클릭 → 사전 검증 → CartSelectModal 오픈
   //               → 사용자가 cart_name 입력 후 [저장] → 실제 전송
   const [orderSending, setOrderSending] = useState(false)
   const [orderSendModalOpen, setOrderSendModalOpen] = useState(false)
+  // 장바구니 선택 모달용 — 기존 카트 목록
+  const [carts, setCarts] = useState<CartOption[]>([])
+  const [cartsLoading, setCartsLoading] = useState(false)
 
   /** [주문 전송] 버튼 onClick — 검증 통과 시 모달만 오픈 */
   const handleOrderSend = useCallback(() => {
@@ -913,10 +921,20 @@ export function usePersonalOrder() {
       return
     }
     setOrderSendModalOpen(true)
+
+    // 기존 카트 목록 조회 (실패해도 '신규' 생성은 가능하도록 모달은 유지)
+    setCartsLoading(true)
+    void fetchCarts(orderUserId)
+      .then(setCarts)
+      .catch((err) => {
+        console.error('[카트 목록] 조회 실패:', err)
+        setCarts([])
+      })
+      .finally(() => setCartsLoading(false))
   }, [selectedIds, filteredItems, getUserInfo])
 
   /** 모달에서 [저장] 클릭 시 — 실제 전송 + 사용자 알림 */
-  const handleConfirmOrderSend = useCallback(async (cartName: string) => {
+  const handleConfirmOrderSend = useCallback(async (target: CartTarget) => {
     const { orderUserId } = getUserInfo()
     if (!orderUserId) {
       alert('주문 계정 정보가 없습니다. 관리자에게 문의하세요.')
@@ -930,14 +948,14 @@ export function usePersonalOrder() {
 
     setOrderSending(true)
     try {
-      const { count } = await sendPersonalOrdersPre(targetRows, orderUserId, cartName)
+      const { count, cartName } = await sendPersonalOrdersPre(targetRows, orderUserId, target)
       setSelectedIds(new Set())
       setOrderSendModalOpen(false)
       alert(`${count}건 전송 완료 (${cartName})`)
     } catch (err: any) {
       console.error('[주문 전송] 실패:', err)
       alert(`주문 전송 실패: ${err.message}`)
-      // 모달은 그대로 → 사용자가 이름 바꿔 재시도 가능
+      // 모달은 그대로 → 사용자가 다시 선택/입력해 재시도 가능
     } finally {
       setOrderSending(false)
     }
@@ -1726,6 +1744,8 @@ export function usePersonalOrder() {
     orderSendModalOpen,
     setOrderSendModalOpen,
     handleConfirmOrderSend,
+    carts,
+    cartsLoading,
     handleRowClick,
     handleBarcodeLink,
     barcodeLoading,
