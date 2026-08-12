@@ -28,6 +28,7 @@ import {
   fetchViewsData,
   getRecentViewDates,
   updateVendorItemPrice,
+  savePriceUpdate,
   setVendorItemSale,
   persistCartQty,
   saveItemStatus,
@@ -271,9 +272,9 @@ export function usePurchaseManagement() {
     setCurrentPage(1)
   }, [])
 
-  /* ── 정렬 (판매량 / 보관료 / 재고량 / 반품 / 반품-보관료
+  /* ── 정렬 (판매량 / 기간판매량 / 보관료 / 재고량 / 반품 / 반품-보관료
          — 상품 단위 합산, 3단계 토글) ─ */
-  type SortKey = 'sales' | 'storage' | 'stock' | 'return_qty' | 'return_fee'
+  type SortKey = 'sales' | 'period_sales' | 'storage' | 'stock' | 'return_qty' | 'return_fee'
   const [sort, setSort] = useState<{ key: SortKey; dir: 'desc' | 'asc' } | null>(null)
   // 판매량 정렬 기준 기간 (7일 / 30일)
   const [salesPeriod, setSalesPeriodRaw] = useState<'7d' | '30d'>('7d')
@@ -402,6 +403,11 @@ export function usePurchaseManagement() {
           if (!agg) return 0
           return sort.key === 'return_qty' ? agg.qty : agg.fee
         }
+        // 기간판매량은 업로드한 엑셀 집계(옵션 ID 기준) — 판매자배송 + 로켓그로스 합
+        if (sort.key === 'period_sales') {
+          const ps = item.vendor_item_id ? periodSalesMap.get(item.vendor_item_id) : undefined
+          return ps ? ps.rocket + ps.seller : 0
+        }
         const data = item.vendor_item_id ? itemDataMap.get(item.vendor_item_id) : undefined
         if (!data) return 0
         if (sort.key === 'sales') {
@@ -427,7 +433,7 @@ export function usePurchaseManagement() {
     }
 
     return result
-  }, [activeFilter, statusFilter, items, itemDataMap, returnAggMap, searchQuery, searchMode, sort, salesPeriod])
+  }, [activeFilter, statusFilter, items, itemDataMap, returnAggMap, periodSalesMap, searchQuery, searchMode, sort, salesPeriod])
 
   const handleFilterToggle = (filter: FilterKey) => {
     setActiveFilter((prev) => (prev === filter ? null : filter))
@@ -1212,6 +1218,26 @@ else{console.log('[조회수] 완료! 총 '+results.length+'건 CSV 저장됨');
     }
   }, [])
 
+  /** 상세 패널 가격 변경 — 쿠팡 반영 성공 후 DB(sale_price·price_updated_at) 기록 */
+  const saveDetailPrice = useCallback(async (itemId: string, price: number) => {
+    const userId = getUserId()
+    if (!userId) return
+    const target = itemsRef.current.find((it) => it.id === itemId)
+    const vid = target?.vendor_item_id
+    if (!vid) return
+
+    try {
+      const updatedAt = await savePriceUpdate([vid], price, userId)
+      setItems((prev) => prev.map((it) =>
+        it.id === itemId ? { ...it, sale_price: price, price_updated_at: updatedAt } : it,
+      ))
+    } catch (e) {
+      // 쿠팡 반영은 이미 끝난 상태 — 기록 실패만 알린다
+      console.error('[saveDetailPrice] 실패:', e)
+      alert('가격은 변경됐지만 수정 시각 저장에 실패했습니다.')
+    }
+  }, [])
+
   /** 셀 blur → DB 원본값과 비교 → 변경/되돌리기 판정 */
   const handleCellBlur = useCallback((
     itemId: string,
@@ -1299,8 +1325,9 @@ else{console.log('[조회수] 완료! 총 '+results.length+'건 CSV 저장됨');
   }, [])
 
   /** 일괄 저장 (input + in_qty + out_qty + note, 행 단위 병합) */
-  const handleSaveInputs = async () => {
-    if (pendingEdits.size === 0 && pendingNotes.size === 0) return
+  /** @returns 저장 성공 여부 — 이탈 가드(UnsavedChangesGuard)가 이동 여부를 판단한다 */
+  const handleSaveInputs = async (): Promise<boolean> => {
+    if (pendingEdits.size === 0 && pendingNotes.size === 0) return true
 
     setSaving(true)
     try {
@@ -1332,9 +1359,11 @@ else{console.log('[조회수] 완료! 총 '+results.length+'건 CSV 저장됨');
       dbOriginalsRef.current.clear()
       setPendingNotes(new Map())
       dbOriginalNotesRef.current.clear()
+      return true
     } catch (err) {
       console.error('[저장] 실패:', err)
       alert('저장 중 오류가 발생했습니다.')
+      return false
     } finally {
       setSaving(false)
     }
@@ -1490,7 +1519,8 @@ else{console.log('[조회수] 완료! 총 '+results.length+'건 CSV 저장됨');
     setCartsLoading(true)
     try {
       const orderUserId = await getOrderUserId()
-      setCarts(orderUserId ? await fetchCarts(orderUserId) : [])
+      // 아직 처리 전(NEW) 카트만 추가 대상으로 노출한다
+      setCarts(orderUserId ? await fetchCarts(orderUserId, { onlyNew: true }) : [])
     } catch (err) {
       console.error('[카트 목록] 조회 실패:', err)
       setCarts([])
@@ -1719,10 +1749,22 @@ else{console.log('[조회수] 완료! 총 '+results.length+'건 CSV 저장됨');
         }
         await sleep(120)
       }
-      // 성공 행 로컬 sale_price 갱신
+      // 성공 행: DB(sale_price·price_updated_at) 기록 + 로컬 갱신
+      //   DB 기록이 실패해도 쿠팡 반영은 이미 끝났으므로 로컬은 갱신하고 로그만 남긴다.
       if (successVids.size > 0) {
+        const userId = getUserId()
+        let updatedAt: string | null = null
+        if (userId) {
+          try {
+            updatedAt = await savePriceUpdate([...successVids], price, userId)
+          } catch (e) {
+            console.error('[handleBulkPrice] 가격 변경 시각 저장 실패:', e)
+          }
+        }
         setItems((prev) => prev.map((it) =>
-          it.vendor_item_id && successVids.has(it.vendor_item_id) ? { ...it, sale_price: price } : it,
+          it.vendor_item_id && successVids.has(it.vendor_item_id)
+            ? { ...it, sale_price: price, price_updated_at: updatedAt ?? it.price_updated_at ?? null }
+            : it,
         ))
       }
     } finally {
@@ -1902,6 +1944,7 @@ else{console.log('[조회수] 완료! 총 '+results.length+'건 CSV 저장됨');
     handleNoteBlur,
     pendingNotes,
     saveDetailNote,
+    saveDetailPrice,
 
     // 저장 / 입력 초기화
     pendingEdits,

@@ -1,0 +1,78 @@
+/* ================================================================
+   반출관리 (OutboundManagement) 전용 스타일
+   - 공통 표/툴바 스타일은 PurchaseManagement.css 를 그대로 쓰고,
+     여기에는 반출관리에만 필요한 규칙만 둔다.
+   ================================================================ */
+
+/* ── 상황판 (타이틀 ↔ 검색폼 사이) ─────────────────────────────
+   등급별 재고/건수 카드 + 보관비 총액 카드. 카드 수가 늘어나면
+   줄바꿈되고, 좁은 화면에서는 가로 스크롤 없이 아래로 흐른다. */
+.outbound-board {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0 0 12px;
+}
+
+.outbound-board-card {
+  /* 카드가 줄바꿈돼도 남은 폭만큼 과하게 늘어나지 않도록 상한을 둔다 */
+  flex: 1 1 130px;
+  min-width: 130px;
+  max-width: 220px;
+  background: #ffffff;
+  border: 1px solid #dde2ec;
+  border-radius: 10px;
+  padding: 10px 12px;
+}
+
+.outbound-board-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: #6B7280;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.outbound-board-value {
+  margin-top: 4px;
+  font-size: 20px;
+  font-weight: 700;
+  color: #1F2937;
+  line-height: 1.2;
+}
+
+.outbound-board-sub {
+  margin-top: 2px;
+  font-size: 11px;
+  color: #9CA3AF;
+}
+
+/* 보관비 카드 — 금액은 빨강(표의 보관비 열과 동일) */
+.outbound-board-card.outbound-board-fee .outbound-board-value {
+  color: #EF4444;
+}
+
+/* ── [반출 xlsx] 버튼 (초록) ───────────────────────────────────
+   .purchase-btn 의 형태(둥근 알약·입체감)를 그대로 쓰고 색만 초록으로. */
+.purchase-btn.outbound-export-btn {
+  background-image: linear-gradient(to bottom, #34D07A, #22C55E);
+  color: #fff;
+  border-color: transparent;
+  box-shadow:
+    0 1px 2px rgba(22, 163, 74, 0.25),
+    0 3px 6px rgba(22, 163, 74, 0.28),
+    inset 0 1px 0 rgba(255, 255, 255, 0.28);
+}
+
+.purchase-btn.outbound-export-btn:hover:not(:disabled) {
+  background-image: linear-gradient(to bottom, #2CC06D, #17A34A);
+  border-color: transparent;
+}
+
+/* ── 묶음 구분선 ───────────────────────────────────────────────
+   상품명 + 옵션명이 같은 행(등급별 재고)은 붙어서 나오므로,
+   묶음이 바뀌는 첫 행에만 진한 선을 그어 경계를 보이게 한다. */
+.purchase-table.outbound-table tbody tr.outbound-group-start td {
+  border-top: 1px solid #cbd5e1;
+}

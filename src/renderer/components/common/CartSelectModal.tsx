@@ -169,7 +169,8 @@ const CartSelectModal: React.FC<CartSelectModalProps> = ({
           {carts.map((c) => (
             <option key={c.id} value={c.id}>{cartLabel(c)}</option>
           ))}
-          <option value={NEW_CART_VALUE}>신규</option>
+          {/* 신규 생성 — 기존 카트와 한눈에 구분되도록 ➕ 를 붙인다 */}
+          <option value={NEW_CART_VALUE}>➕ NEW</option>
         </select>
 
         {/* ── 새 카트 이름 ('신규' 선택 시에만 활성) ─────────── */}

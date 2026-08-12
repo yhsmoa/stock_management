@@ -64,19 +64,29 @@ export interface CartOption {
   created_at: string | null
 }
 
+/** 아직 처리되지 않은(추가 가능한) 카트 상태 */
+export const CART_STATUS_NEW = 'NEW'
+
 /**
  * 사용자의 카트 목록 (최신순).
+ * - onlyNew: status='NEW' 카트만 (이미 처리된 카트에 담기는 것을 막는다)
  * PostgREST 기본 1000행 제한 → range 루프로 전체 조회 (CLAUDE.md 룰 5)
  */
-export async function fetchCarts(orderUserId: string): Promise<CartOption[]> {
+export async function fetchCarts(
+  orderUserId: string,
+  opts: { onlyNew?: boolean } = {},
+): Promise<CartOption[]> {
   if (!isOrderSupabaseConfigured || !orderUserId) return []
 
   const all: CartOption[] = []
   let from = 0
   while (true) {
-    const { data, error } = await (orderSupabase.from('ft_carts') as any)
+    let query = (orderSupabase.from('ft_carts') as any)
       .select('id, cart_name, status, created_at')
       .eq('user_id', orderUserId)
+    if (opts.onlyNew) query = query.eq('status', CART_STATUS_NEW)
+
+    const { data, error } = await query
       .order('created_at', { ascending: false })
       .range(from, from + 999)
     if (error) {

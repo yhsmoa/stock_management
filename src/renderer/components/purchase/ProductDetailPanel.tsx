@@ -29,6 +29,15 @@ interface ProductDetailPanelProps {
   // 쿠팡 storefront 링크(coupang.com/vp/products/{노출상품ID})에 필요.
   displayedProductId?: string | number | null
   onSaveNote?: (note: string) => void   // 비고 저장 (포커스 아웃 시)
+  // 가격 변경이 쿠팡에 반영된 뒤 호출 — 부모가 DB(sale_price·price_updated_at)에 기록한다
+  onPriceChanged?: (price: number) => void
+}
+
+// ── 가격 수정 시각 표기 (YYYY-MM-DD) ────────────────────────────────
+const formatPriceDate = (iso: string | null | undefined): string => {
+  if (!iso) return ''
+  const d = new Date(iso)
+  return isNaN(d.getTime()) ? '' : d.toLocaleDateString('sv-SE')  // 2026-08-12
 }
 
 // ── 스타일 ──────────────────────────────────────────────────────────
@@ -376,6 +385,7 @@ const ProductDetailPanel: React.FC<ProductDetailPanelProps> = ({
   itemWinner,
   displayedProductId,
   onSaveNote,
+  onPriceChanged,
 }) => {
   /* ── 상태 ─────────────────────────────────────────────────────── */
   const [detailLoading, setDetailLoading] = useState(false)
@@ -391,6 +401,9 @@ const ProductDetailPanel: React.FC<ProductDetailPanelProps> = ({
   const [savingPrice, setSavingPrice] = useState(false)
   const [onSale, setOnSale] = useState<boolean | null>(null)                // null = 조회 중/실패
   const [savingSale, setSavingSale] = useState(false)
+  // 최근 가격 수정 시각 — DB 값으로 시작해 변경 성공 시 즉시 갱신
+  const [priceUpdatedAt, setPriceUpdatedAt] = useState<string | null>(null)
+  useEffect(() => { setPriceUpdatedAt(item?.price_updated_at ?? null) }, [item?.id, item?.price_updated_at])
 
   /* ── 비고 입력 draft (선택 상품 변경 시 동기화) ─────────────── */
   const [noteDraft, setNoteDraft] = useState('')
@@ -443,13 +456,16 @@ const ProductDetailPanel: React.FC<ProductDetailPanelProps> = ({
       await updateVendorItemPrice(vid, newPrice, false)
       setBaselinePrice(newPrice)
       setPriceInput(String(newPrice))
+      // 수정 시각 — 화면은 즉시 갱신하고, DB 기록은 부모가 처리한다
+      setPriceUpdatedAt(new Date().toISOString())
+      onPriceChanged?.(newPrice)
     } catch (err: any) {
       setPriceError(err?.message || '가격 변경에 실패했습니다.')
       revert()
     } finally {
       setSavingPrice(false)
     }
-  }, [item?.vendor_item_id, priceInput, baselinePrice])
+  }, [item?.vendor_item_id, priceInput, baselinePrice, onPriceChanged])
 
   /* ── 판매 재개/중지 ─────────────────────────────────────────── */
   const handleSetSale = useCallback(async (action: 'resume' | 'stop') => {
@@ -719,11 +735,22 @@ const ProductDetailPanel: React.FC<ProductDetailPanelProps> = ({
                     {priceError ? (
                       <div style={styles.priceError}>{priceError}</div>
                     ) : (
-                      baselinePrice != null && (
+                      (baselinePrice != null || priceUpdatedAt) && (
                         <div style={styles.priceHint}>
-                          현재 {baselinePrice.toLocaleString()}원 · 변경 가능 범위{' '}
-                          {Math.ceil(baselinePrice * PRICE_MIN_RATIO).toLocaleString()} ~{' '}
-                          {(baselinePrice * PRICE_MAX_RATIO).toLocaleString()}원 (10원 단위)
+                          {baselinePrice != null && (
+                            <>
+                              현재 {baselinePrice.toLocaleString()}원 · 변경 가능 범위{' '}
+                              {Math.ceil(baselinePrice * PRICE_MIN_RATIO).toLocaleString()} ~{' '}
+                              {(baselinePrice * PRICE_MAX_RATIO).toLocaleString()}원 (10원 단위)
+                            </>
+                          )}
+                          {/* 앱에서 바꾼 이력만 남는다 (윙에서 직접 수정한 건 기록 없음) */}
+                          {priceUpdatedAt && (
+                            <>
+                              {baselinePrice != null && ' · '}
+                              최근 수정 {formatPriceDate(priceUpdatedAt)}
+                            </>
+                          )}
                         </div>
                       )
                     )}

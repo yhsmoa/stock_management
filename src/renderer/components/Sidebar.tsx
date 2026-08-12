@@ -91,6 +91,7 @@ const SECTIONS: Section[] = [
           { path: '/personal-order',      label: '개인주문' },
           { path: '/coupang',             label: '상품관리' },
           { path: '/purchase-management', label: '로켓그로스 사입' },
+          { path: '/outbound-management', label: '반출관리' },
         ],
       },
     ],

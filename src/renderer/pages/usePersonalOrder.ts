@@ -923,7 +923,8 @@ export function usePersonalOrder() {
 
     // 기존 카트 목록 조회 (실패해도 '신규' 생성은 가능하도록 모달은 유지)
     setCartsLoading(true)
-    void fetchCarts(orderUserId)
+    // 아직 처리 전(NEW) 카트만 추가 대상으로 노출한다
+    void fetchCarts(orderUserId, { onlyNew: true })
       .then(setCarts)
       .catch((err) => {
         console.error('[카트 목록] 조회 실패:', err)

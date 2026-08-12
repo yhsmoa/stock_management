@@ -24,6 +24,7 @@ import DropdownMenu, {
   DropdownSection,
 } from '../components/common/DropdownMenu'
 import BulkPriceModal from '../components/purchase/BulkPriceModal'
+import UnsavedChangesGuard from '../components/common/UnsavedChangesGuard'
 
 // ── 상수: 조회수 변동 색상 ────────────────────────────────────
 const VIEW_DIFF_THRESHOLD = 10
@@ -37,6 +38,7 @@ const COLOR_DECREASE = '#3B82F6'  // 파랑 (감소)
 /** [기준] 정렬 키 → 표시명 */
 const SORT_LABELS: Record<string, string> = {
   sales:      '판매량',
+  period_sales: '기간판매량',
   storage:    '보관료',
   stock:      '재고량',
   return_qty: '반품',
@@ -349,6 +351,7 @@ const PurchaseManagement: React.FC = () => {
     handleNoteBlur,
     pendingNotes,
     saveDetailNote,
+    saveDetailPrice,
     pendingEdits,
     saving,
     handleSaveInputs,
@@ -631,8 +634,18 @@ const PurchaseManagement: React.FC = () => {
     : copying    ? '복사 중...'
     : '주문'
 
+  // ── 저장되지 않은 변경 (입력/노트) ─────────────────────────────
+  const pendingCount = pendingEdits.size + pendingNotes.size
+
   return (
     <div className="purchase-container">
+
+      {/* ── 저장 안 한 변경이 있으면 페이지 이탈·창 닫기 시 경고 ── */}
+      <UnsavedChangesGuard
+        when={pendingCount > 0}
+        count={pendingCount}
+        onSave={handleSaveInputs}
+      />
 
       {/* ── 상단 버튼 영역: 좌측 업데이트·리셋 | 우측 주문·xlsx·바코드·조회수·복사 ── */}
       <div className="purchase-top-actions">
@@ -849,6 +862,16 @@ const PurchaseManagement: React.FC = () => {
               <DropdownSection>기간</DropdownSection>
               <DropdownItem className={salesPeriod === '7d' ? 'active' : ''} onClick={() => setSalesPeriod('7d')}>7일</DropdownItem>
               <DropdownItem className={salesPeriod === '30d' ? 'active' : ''} onClick={() => setSalesPeriod('30d')}>30일</DropdownItem>
+            </DropdownSubmenu>
+
+            {/* 기간판매량 — 업로드한 '기간판매량' 엑셀 집계('기간' 열) 기준 */}
+            <DropdownSubmenu
+              label="기간판매량"
+              className={sort?.key === 'period_sales' ? 'active' : ''}
+            >
+              <DropdownItem className={sort?.key !== 'period_sales' ? 'active' : ''} onClick={() => setSortDir('period_sales', null)}>전체</DropdownItem>
+              <DropdownItem className={sort?.key === 'period_sales' && sort.dir === 'asc' ? 'active' : ''} onClick={() => setSortDir('period_sales', 'asc')}>오름차순</DropdownItem>
+              <DropdownItem className={sort?.key === 'period_sales' && sort.dir === 'desc' ? 'active' : ''} onClick={() => setSortDir('period_sales', 'desc')}>내림차순</DropdownItem>
             </DropdownSubmenu>
 
             {/* 보관료 */}
@@ -1187,6 +1210,7 @@ const PurchaseManagement: React.FC = () => {
         itemWinner={detailItem ? getItemData(detailItem)?.item_winner : undefined}
         displayedProductId={detailItem ? (getItemData(detailItem)?.item_id ?? null) : null}
         onSaveNote={(note) => { if (detailItem?.id) saveDetailNote(detailItem.id, note) }}
+        onPriceChanged={(price) => { if (detailItem?.id) saveDetailPrice(detailItem.id, price) }}
       />
 
       {/* ── 엑셀 업로드 프로그레스 모달 ────────────────────── */}

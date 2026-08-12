@@ -238,6 +238,35 @@ export async function updateVendorItemPrice(
   assertCoupangOk(json, '가격 변경에 실패했습니다.')
 }
 
+/**
+ * 가격 변경 결과를 si_rg_items 에 기록한다 (쿠팡 API 성공 후에만 호출).
+ * - sale_price       : 방금 적용한 금액 (다음 리셋 전까지 DB 값이 낡지 않도록 함께 갱신)
+ * - price_updated_at : 변경 시각 — 화면의 '최근 수정' 표시용
+ * vendor_item_id 100개 단위 .in() 청크 update (saveItemStatus 와 동일 패턴)
+ * @returns 기록한 시각(ISO) — 호출 측 로컬 상태 갱신에 그대로 쓴다
+ */
+export async function savePriceUpdate(
+  vendorItemIds: string[],
+  price: number,
+  userId: string,
+): Promise<string> {
+  const updatedAt = new Date().toISOString()
+  const CHUNK = 100
+  for (let i = 0; i < vendorItemIds.length; i += CHUNK) {
+    const chunk = vendorItemIds.slice(i, i + CHUNK)
+    const { error } = await supabase
+      .from('si_rg_items')
+      .update({ sale_price: price, price_updated_at: updatedAt })
+      .eq('user_id', userId)
+      .in('vendor_item_id', chunk)
+    if (error) {
+      console.error('[savePriceUpdate] 저장 오류:', error)
+      throw error
+    }
+  }
+  return updatedAt
+}
+
 /** 아이템별 판매 재개('resume') / 중지('stop') */
 export async function setVendorItemSale(
   vendorItemId: string,
@@ -577,6 +606,45 @@ export async function fetchRgItemData(userId: string): Promise<RgItemData[]> {
 
   const allData = batches.flat()
   console.log(`[purchaseService] si_rg_item_data ${allData.length}건 조회`)
+  return allData
+}
+
+// ── si_rg_item_data 반출 대상 조회 (offer_condition ≠ NEW) ───────────
+
+/**
+ * 반출관리용 조회 — 정상(NEW) 이 아닌 등급 재고(반품-최상/상/중/미개봉 등) 중
+ * 판매가능 재고(orderable_qty)가 1 이상인 행만 가져온다.
+ * - offer_condition 이 비어있는 행도 'NEW 아님'으로 보고 포함한다
+ *   (PostgREST 의 neq 는 NULL 을 제외하므로 or 조건으로 명시)
+ * - PostgREST 기본 1000행 제한 → range 루프 (CLAUDE.md 룰 5)
+ */
+export async function fetchNonNewRgItemData(userId: string): Promise<RgItemData[]> {
+  const batches: RgItemData[][] = []
+  let from = 0
+  const batchSize = 1000
+
+  while (true) {
+    const { data, error } = await supabase
+      .from('si_rg_item_data')
+      .select('*')
+      .eq('user_id', userId)
+      .or('offer_condition.is.null,offer_condition.neq.NEW')
+      .gt('orderable_qty', 0)
+      .range(from, from + batchSize - 1)
+
+    if (error) {
+      console.error('si_rg_item_data(반출) 조회 오류:', error)
+      throw error
+    }
+
+    const rows = data ?? []
+    if (rows.length > 0) batches.push(rows)
+    if (rows.length < batchSize) break
+    from += batchSize
+  }
+
+  const allData = batches.flat()
+  console.log(`[purchaseService] si_rg_item_data(반출 대상) ${allData.length}건 조회`)
   return allData
 }
 

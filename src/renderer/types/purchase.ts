@@ -21,6 +21,9 @@ export interface RgItem {
   barcode: string | null
   external_vendor_sku: string | null
   sale_price: number | null
+  /** 앱에서 가격을 변경한 시각 (ISO). 쿠팡 윙에서 직접 바꾼 건은 기록되지 않는다.
+   *  API 매핑(mapListItemToRgItems 등)에서는 채우지 않으므로 optional. */
+  price_updated_at?: string | null
   input: number | null                     // 사용자 입력 수량
   in_qty: number | null                   // 입고 수량
   out_qty: number | null                  // 반출 수량
