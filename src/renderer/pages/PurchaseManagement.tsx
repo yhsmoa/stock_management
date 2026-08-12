@@ -307,7 +307,6 @@ const PurchaseManagement: React.FC = () => {
     activeFilter,
     handleFilterToggle,
     sort,
-    handleSortToggle,
     setSortDir,
     salesPeriod,
     setSalesPeriod,

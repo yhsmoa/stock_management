@@ -2,12 +2,6 @@ import * as XLSX from 'xlsx'
 import { supabase } from './supabase'
 import type { CoupangReturn } from '../types/coupangReturn'
 
-// 엑셀 날짜를 JavaScript Date로 변환
-const excelDateToJSDate = (excelDate: number): Date => {
-  const date = new Date((excelDate - 25569) * 86400 * 1000)
-  return date
-}
-
 // 엑셀 파일을 읽고 파싱하는 함수
 export const parseExcelFile = async (file: File): Promise<CoupangReturn[]> => {
   return new Promise((resolve, reject) => {

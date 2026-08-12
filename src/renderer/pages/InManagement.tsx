@@ -3,7 +3,6 @@ import { theme } from '../styles/theme'
 import Button from '../components/common/Button'
 import { supabase } from '../services/supabase'
 import { StockService } from '../services/stockService'
-import type { Stock } from '../types/stock'
 
 // CoupangItem interface
 interface CoupangItem {
@@ -43,11 +42,12 @@ const InManagement: React.FC = () => {
   const [location, setLocation] = useState('')
   const [barcode, setBarcode] = useState('')
   const [activeInput, setActiveInput] = useState<string | null>(null)
-  const [resultMessage, setResultMessage] = useState('')
+  // 값은 화면에 쓰이지 않고 설정만 된다 → 바인딩 생략
+  const [, setResultMessage] = useState('')
   const [coupangItems, setCoupangItems] = useState<CoupangItem[]>([])
-  const [loading, setLoading] = useState(false)
+  const [, setLoading] = useState(false)
   const [dataReady, setDataReady] = useState(false) // 데이터 로딩 완료 상태
-  const [matchedItem, setMatchedItem] = useState<CoupangItem | null>(null)
+  const [, setMatchedItem] = useState<CoupangItem | null>(null)
   const [scannedItems, setScannedItems] = useState<ScannedItem[]>([])
   const [showSlidePanel, setShowSlidePanel] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
@@ -61,7 +61,6 @@ const InManagement: React.FC = () => {
     item: CoupangItem;
     qty: number;
   } | null>(null)
-  const [pendingItems, setPendingItems] = useState<ScannedItem[]>([])
   const [showBarcodeResult, setShowBarcodeResult] = useState(false)
 
   const barcodeRef = useRef<HTMLInputElement>(null)

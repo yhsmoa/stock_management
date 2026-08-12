@@ -47,7 +47,7 @@ const Register: React.FC = () => {
 
     try {
       const { user_id, password, seller_id, name, phone_number, email_address } = formData
-      const { data, error } = await registerUser({
+      const { error } = await registerUser({
         username: user_id,
         password,
         seller_id,

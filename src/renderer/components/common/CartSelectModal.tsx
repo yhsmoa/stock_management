@@ -17,6 +17,19 @@ const MAX_CART_NAME_LENGTH = 100
 /** 드롭박스에서 '신규 생성'을 뜻하는 값 (실제 카트 id 와 충돌하지 않는 값) */
 const NEW_CART_VALUE = '__NEW__'
 
+/**
+ * 카트 표시명 — 이름 + 상태 + 생성일.
+ * 카트가 쌓이면 이름만으로 구분이 어려워, 이미 처리된 카트인지 눈으로 가려낼 수
+ * 있도록 함께 보여준다. (상태 값의 의미는 주문 시스템 쪽에서 정하므로
+ * 여기서 임의로 숨기지 않고 그대로 노출한다)
+ */
+function cartLabel(c: CartOption): string {
+  const parts = [c.cart_name || '(이름 없음)']
+  if (c.status) parts.push(`· ${c.status}`)
+  if (c.created_at) parts.push(`· ${String(c.created_at).slice(0, 10)}`)
+  return parts.join(' ')
+}
+
 // ── Props ─────────────────────────────────────────────────────────
 interface CartSelectModalProps {
   isOpen: boolean
@@ -154,7 +167,7 @@ const CartSelectModal: React.FC<CartSelectModalProps> = ({
         >
           <option value="">{cartsLoading ? '불러오는 중...' : '선택'}</option>
           {carts.map((c) => (
-            <option key={c.id} value={c.id}>{c.cart_name}</option>
+            <option key={c.id} value={c.id}>{cartLabel(c)}</option>
           ))}
           <option value={NEW_CART_VALUE}>신규</option>
         </select>

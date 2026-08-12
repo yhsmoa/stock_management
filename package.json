@@ -7,6 +7,7 @@
     "dev": "vite --host",
     "dev:electron": "node scripts/dev.js",
     "dev:vite": "vite",
+    "typecheck": "tsc --noEmit",
     "build": "vite build",
     "build:electron": "vite build && electron-builder",
     "preview": "vite preview",

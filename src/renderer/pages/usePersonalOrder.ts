@@ -276,7 +276,6 @@ export function usePersonalOrder() {
   const [items, setItems] = useState<PersonalOrderRow[]>([])
   const [loading, setLoading] = useState(false)
   const [updating, setUpdating] = useState(false)
-  const [updateMsg, setUpdateMsg] = useState('')
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [acknowledging, setAcknowledging] = useState(false)
   const [showUnorderedOnly, setShowUnorderedOnly] = useState(false)
@@ -1692,7 +1691,6 @@ export function usePersonalOrder() {
     setCurrentPage,
     loading,
     updating,
-    updateMsg,
     selectedIds,
     acknowledging,
     showUnorderedOnly,

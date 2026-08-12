@@ -32,7 +32,6 @@ const PersonalOrder: React.FC = () => {
     setCurrentPage,
     loading,
     updating,
-    updateMsg,
     selectedIds,
     acknowledging,
     showUnorderedOnly,
@@ -228,11 +227,6 @@ const PersonalOrder: React.FC = () => {
         </div>
       </div>
 
-      {/* ── 업데이트 진행 메시지 ───────────────────────────────── */}
-      {updateMsg && (
-        <div className="po-update-msg">{updateMsg}</div>
-      )}
-
       {/* ── 주문상태 선택옵션 (다중 선택 · 검색폼과 동일 폭) ───── */}
       <div className="po-status-seg" role="group" aria-label="주문상태 선택">
         {ORDER_STATUS_TABS.map((tab) => {
@@ -390,7 +384,7 @@ const PersonalOrder: React.FC = () => {
                   </td>
                 </tr>
               ) : (
-                pagedItems.map((row, idx) => {
+                pagedItems.map((row) => {
                   const agg = getAgg(row)
                   const status = getRowStatus(row)
                   // 행 유일 키 — 한 송장박스에 여러 아이템이 들어가는 경우 shipment_box_id 는 중복되므로 row.id(uuid) 사용

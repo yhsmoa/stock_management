@@ -18,6 +18,18 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
 // ── 상수 ─────────────────────────────────────────────────────────
 const STORAGE_BUCKET = 'personal-order-invoices'
 
+/**
+ * pdf-lib 의 save() 가 돌려주는 Uint8Array 를 Blob 에 안전하게 넣는다.
+ * TS 5.7 부터 TypedArray 가 버퍼 종류(ArrayBuffer | SharedArrayBuffer)로
+ * 제네릭화되어 BlobPart 에 그대로 넣을 수 없다. 뷰의 실제 구간만 복사해
+ * ArrayBuffer 를 만들어 넘긴다 (부분 뷰여도 안전).
+ */
+function toPdfBlob(bytes: Uint8Array): Blob {
+  const buf = new ArrayBuffer(bytes.byteLength)
+  new Uint8Array(buf).set(bytes)
+  return new Blob([buf], { type: 'application/pdf' })
+}
+
 // ── 타입 ─────────────────────────────────────────────────────────
 export interface ParsedInvoicePage {
   pageIndex: number       // 0-based 페이지 번호
@@ -229,7 +241,6 @@ export async function checkInvoiceExists(
   userId: string,
   orderId: string,
 ): Promise<boolean> {
-  const filePath = `${userId}/${orderId}.pdf`
   const { data } = await supabase.storage
     .from(STORAGE_BUCKET)
     .list(userId, { search: `${orderId}.pdf` })
@@ -262,11 +273,6 @@ async function downloadInvoicePdf(
 // 내부 헬퍼 — PDF 콘텐츠 영역을 100x150mm 라벨 페이지로 재구성
 // ══════════════════════════════════════════════════════════════════
 
-// mm → pt 변환 (1mm = 2.834645669pt)
-const MM_TO_PT = 2.834645669
-const LABEL_W_PT = 100 * MM_TO_PT  // 283.46pt
-const LABEL_H_PT = 150 * MM_TO_PT  // 425.20pt
-
 /**
  * 입력 PDF의 콘텐츠 영역만 남도록 **원본 PDF에 회전-인지 CropBox 설정**하여 반환.
  *
@@ -298,7 +304,9 @@ async function cropPdfToContent(arrayBuffer: ArrayBuffer): Promise<PDFDocument> 
   const detectCtx = detectCanvas.getContext('2d')!
   detectCtx.fillStyle = '#ffffff'
   detectCtx.fillRect(0, 0, detectCanvas.width, detectCanvas.height)
-  await page.render({ canvasContext: detectCtx, viewport: detectVp }).promise
+  // pdfjs 5 부터 canvas 가 필수 파라미터 (미지정 시 canvasContext 에서 유도).
+  // 같은 canvas 이므로 아래 detectCtx.getImageData 로 결과를 그대로 읽을 수 있다.
+  await page.render({ canvas: detectCanvas, canvasContext: detectCtx, viewport: detectVp }).promise
 
   const imageData = detectCtx.getImageData(0, 0, detectCanvas.width, detectCanvas.height)
   const { data, width, height } = imageData
@@ -390,7 +398,7 @@ export async function printInvoice(
 
   const croppedDoc = await cropPdfToContent(arrayBuffer)
   const bytes = await croppedDoc.save()
-  const blob = new Blob([bytes], { type: 'application/pdf' })
+  const blob = toPdfBlob(bytes)
   const blobUrl = URL.createObjectURL(blob)
   window.open(blobUrl, '_blank')
 }
@@ -442,7 +450,7 @@ export async function printMultipleInvoices(
 
   // ── 4) 새 창에서 열기 (브라우저 PDF 뷰어 → 인쇄) ────────────
   const mergedBytes = await mergedDoc.save()
-  const blob = new Blob([mergedBytes], { type: 'application/pdf' })
+  const blob = toPdfBlob(mergedBytes)
   const blobUrl = URL.createObjectURL(blob)
   window.open(blobUrl, '_blank')
 

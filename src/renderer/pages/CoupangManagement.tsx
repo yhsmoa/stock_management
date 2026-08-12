@@ -508,7 +508,7 @@ const CoupangManagement: React.FC = () => {
         }
 
         if (items.length > 0) {
-          const { data: insertedData, error } = await supabase
+          const { error } = await supabase
             .from('si_coupang_items')
             .upsert(items, { onConflict: 'option_id' });
 

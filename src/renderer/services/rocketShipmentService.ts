@@ -267,8 +267,11 @@ export function buildGrowthInboundWorkbook(rows: RocketShipmentRow[]): XLSX.Work
   })
 
   // 3행 헤더 · 4행 예시 · 5행~ 데이터 (origin A3 → 1·2행은 자동으로 빈 행)
+  //   origin 은 sheet_add_aoa 의 공식 옵션이다. aoa_to_sheet 에 넘겨도 런타임은
+  //   동작하지만 타입에 없어, 결과가 동일한 이쪽 API 를 쓴다.
   const aoa = [GROWTH_HEADER_ROW, GROWTH_EXAMPLE_ROW, ...dataRows]
-  const ws = XLSX.utils.aoa_to_sheet(aoa, { origin: 'A3' })
+  const ws = XLSX.utils.aoa_to_sheet([])
+  XLSX.utils.sheet_add_aoa(ws, aoa, { origin: 'A3' })
 
   // 숨김 열 재현 — 숨길 열에만 ColInfo 설정하고 표시 열은 비움(undefined).
   //   (표시 열에 빈 {} 를 넣으면 width 0 <col>이 생성돼 Excel에서 숨김처럼 보임.
