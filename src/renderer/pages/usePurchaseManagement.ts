@@ -260,8 +260,8 @@ export function usePurchaseManagement() {
   /* ── 창고 재고 (barcode → si_stocks.qty 합산) ──────────── */
   const [warehouseQtyMap, setWarehouseQtyMap] = useState<Map<string, number>>(new Map())
 
-  /* ── 필터 (입력(input) / 주문(order_qty) / 입고 / 반출 / NO 바코드 / 📌 노트) ─ */
-  type FilterKey = 'input' | 'order' | 'in_qty' | 'out_qty' | 'no_barcode' | 'note'
+  /* ── 필터 (입력(input) / 주문(order_qty) / 입고 / 반출 / C.재고 / NO 바코드 / 📌 노트) ─ */
+  type FilterKey = 'input' | 'order' | 'in_qty' | 'out_qty' | 'c_stock' | 'no_barcode' | 'note'
   const [activeFilter, setActiveFilter] = useState<FilterKey | null>(null)
 
   /* ── 상태 필터 (활성/비활성/전체) — 기본 'all'(전체) ─ */
@@ -336,6 +336,14 @@ export function usePurchaseManagement() {
     // 주문 필터: order_qty(주문 열) 가 1 이상인 행
     else if (activeFilter === 'order') {
       result = result.filter((item) => item.order_qty != null && item.order_qty > 0)
+    }
+    // C.재고 필터: 쿠팡 판매가능 재고(orderable_qty) 가 1 이상인 행
+    //   값은 si_rg_item_data(재고 SKU 엑셀)에서 옵션 ID 로 붙인다 — 표의 'C.재고' 열과 동일.
+    else if (activeFilter === 'c_stock') {
+      result = result.filter((item) => {
+        const data = item.vendor_item_id ? itemDataMap.get(item.vendor_item_id) : undefined
+        return (data?.orderable_qty ?? 0) > 0
+      })
     }
     // NO 바코드 필터: barcode 가 비어있는(null/'') 행만
     else if (activeFilter === 'no_barcode') {

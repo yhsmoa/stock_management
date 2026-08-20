@@ -51,6 +51,7 @@ const QTY_FILTER_LABELS: Record<string, string> = {
   order:  '주문',
   in_qty: '입고',
   out_qty: '반출',
+  c_stock: 'C.재고',
 }
 
 /** [기타] 필터 키 → 표시명 */
@@ -947,6 +948,13 @@ const PurchaseManagement: React.FC = () => {
               title="반출 수량이 1 이상인 행"
             >
               반출
+            </DropdownItem>
+            <DropdownItem
+              className={activeFilter === 'c_stock' ? 'active' : ''}
+              onClick={() => handleFilterToggle('c_stock')}
+              title="쿠팡 판매가능 재고(C.재고)가 1 이상인 행"
+            >
+              C.재고
             </DropdownItem>
           </DropdownMenu>
 
