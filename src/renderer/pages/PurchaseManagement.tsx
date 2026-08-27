@@ -54,6 +54,12 @@ const QTY_FILTER_LABELS: Record<string, string> = {
   c_stock: 'C.재고',
 }
 
+/** 조회수 열 — 헤더 hover 시 해당 날짜를 보여준다 */
+const VIEW_COLUMN_KEYS = new Set(['v1', 'v2', 'v3', 'v4', 'v5'])
+
+/** 툴팁이 화면 왼쪽 밖으로 나갈 수 있는 x 좌표 — 이보다 왼쪽이면 오른쪽에 띄운다 */
+const TOOLTIP_FLIP_X = 200
+
 /** [기타] 필터 키 → 표시명 */
 const ETC_FILTER_LABELS: Record<string, string> = {
   no_barcode: 'NO 바코드',
@@ -403,6 +409,10 @@ const PurchaseManagement: React.FC = () => {
 
   // ── 일괄 가격수정 모달 ───────────────────────────────────────
   const [bulkPriceModalOpen, setBulkPriceModalOpen] = useState(false)
+
+  // ── 조회수(V1~V5) 헤더 hover 툴팁 ───────────────────────────
+  //   마우스 위치 기준 왼쪽에 '열 이름 · 날짜' 를 띄운다.
+  const [headerTip, setHeaderTip] = useState<{ x: number; y: number; text: string } | null>(null)
 
   // ── 테이블 풀스크린 토글 (🔍 버튼) ──────────────────────────
   //   활성 시 .purchase-table-section.fullscreen 으로 viewport 전체 덮음
@@ -1128,8 +1138,30 @@ const PurchaseManagement: React.FC = () => {
                         c.colClass,
                         c.borderLeft && 'col-border-left',
                       ].filter(Boolean).join(' ')
+
+                      // ── V1~V5: 어느 날짜의 조회수인지 hover 로 확인 ──
+                      //   (업로드 날짜를 잘못 입력하면 순서가 뒤바뀌므로 눈으로 확인할 수단이 필요)
+                      const viewDate = VIEW_COLUMN_KEYS.has(c.key)
+                        ? (recentViewDates[Number(c.key[1]) - 1] ?? null)
+                        : undefined
+
                       return (
-                        <th key={c.key} className={cls}>
+                        <th
+                          key={c.key}
+                          className={cls}
+                          onMouseEnter={
+                            viewDate !== undefined
+                              ? (e) => setHeaderTip({
+                                  x: e.clientX,
+                                  y: e.clientY,
+                                  text: viewDate
+                                    ? `${c.label} · ${viewDate}${c.key === 'v5' ? ' (최신)' : ''}`
+                                    : `${c.label} · 데이터 없음`,
+                                })
+                              : undefined
+                          }
+                          onMouseLeave={viewDate !== undefined ? () => setHeaderTip(null) : undefined}
+                        >
                           {c.label}
                         </th>
                       )
@@ -1209,6 +1241,32 @@ const PurchaseManagement: React.FC = () => {
         )}
       </div>
       </div>
+
+      {/* ── V1~V5 헤더 툴팁 (마우스 왼쪽에 표시) ─────────────
+           화면 왼쪽 끝에 붙어 잘릴 상황에서만 오른쪽으로 뒤집는다. */}
+      {headerTip && (
+        <div
+          style={{
+            position: 'fixed',
+            left: headerTip.x < TOOLTIP_FLIP_X ? headerTip.x + 14 : headerTip.x - 10,
+            top: headerTip.y,
+            transform: headerTip.x < TOOLTIP_FLIP_X
+              ? 'translate(0, -50%)'
+              : 'translate(-100%, -50%)',
+            padding: '4px 8px',
+            borderRadius: '6px',
+            background: 'rgba(17, 24, 39, 0.92)',
+            color: '#fff',
+            fontSize: '12px',
+            fontWeight: 500,
+            whiteSpace: 'nowrap',
+            pointerEvents: 'none',
+            zIndex: 2100,
+          }}
+        >
+          {headerTip.text}
+        </div>
+      )}
 
       {/* ── 상품 상세 슬라이드 패널 ────────────────────────── */}
       <ProductDetailPanel
