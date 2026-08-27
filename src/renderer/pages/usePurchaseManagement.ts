@@ -158,6 +158,14 @@ function bulkSummary(label: string, ok: number, fails: string[], skipped: number
   return msg
 }
 
+// ── 오늘 날짜 (YYYY-MM-DD, 로컬 기준) ─────────────────────────
+//   조회수 업로드 날짜 검증용 — 문자열끼리 비교하면 시간대 영향이 없다
+const todayString = (): string => {
+  const d = new Date()
+  const p = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`
+}
+
 // ── 사용자 ID 조회 ────────────────────────────────────────────
 const getUserId = (): string | null => {
   const userStr = localStorage.getItem('user')
@@ -1106,12 +1114,29 @@ else{console.log('[조회수] 완료! 총 '+results.length+'건 CSV 저장됨');
     setViewsDateModalOpen(true)
   }, [])
 
-  /* ── [csv 업로드] STEP 2: 날짜 확인 → 파일 선택 트리거 ────── */
+  /* ── [csv 업로드] STEP 2: 날짜 확인 → 파일 선택 트리거 ──────
+     날짜를 잘못 입력하면 V1~V5 순서가 통째로 어긋나므로(연도 오타 1건이
+     계속 V5 를 차지) 형식·실재 여부·미래 날짜를 모두 막는다. */
   const handleViewsDateConfirm = useCallback(() => {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(viewsDateValue)) {
       alert('날짜를 YYYY-MM-DD 형식으로 입력해주세요.')
       return
     }
+
+    // 존재하지 않는 날짜 차단 (예: 2026-02-31 → Date 가 3월로 넘어간다)
+    const [y, m, d] = viewsDateValue.split('-').map(Number)
+    const parsed = new Date(y, m - 1, d)
+    if (parsed.getFullYear() !== y || parsed.getMonth() !== m - 1 || parsed.getDate() !== d) {
+      alert('존재하지 않는 날짜입니다. 다시 입력해주세요.')
+      return
+    }
+
+    // 미래 날짜 차단 (오늘까지만 허용)
+    if (viewsDateValue > todayString()) {
+      alert(`미래 날짜는 입력할 수 없습니다. (오늘: ${todayString()})`)
+      return
+    }
+
     setViewsDateModalOpen(false)
     viewsCsvInputRef.current?.click()
   }, [viewsDateValue])
