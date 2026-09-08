@@ -386,6 +386,8 @@ const PurchaseManagement: React.FC = () => {
     returnAggMap,
     copying,
     handleCopy,
+    exporting,
+    handleExcelExport,
     pageSize,
     setPageSize,
     orderSending,
@@ -758,6 +760,16 @@ const PurchaseManagement: React.FC = () => {
               />
             </label>
           </DropdownMenu>
+
+          {/* ── [엑셀] A~J 양식 다운로드 ────────────────────────── */}
+          <button
+            className="purchase-btn"
+            onClick={handleExcelExport}
+            disabled={exporting}
+            title="지정 양식(등록상품id·옵션id·노출ID·barcode·일반옵션id·쿠팡사이즈·상품명·옵션명)으로 엑셀 다운로드"
+          >
+            {exporting ? '생성 중...' : '엑셀'}
+          </button>
 
           {/* ── [주문] 입력값(input > 0) 내보내기 ───────────────── */}
           <DropdownMenu label={orderLabel} align="right">

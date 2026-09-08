@@ -1446,6 +1446,7 @@ else{console.log('[조회수] 완료! 총 '+results.length+'건 CSV 저장됨');
   // ══════════════════════════════════════════════════════════════
 
   const [copying, setCopying] = useState(false)
+  const [exporting, setExporting] = useState(false)
 
   /** TSV 안전용: 탭/개행 제거 */
   const sanitizeCell = (v: string | null | undefined): string =>
@@ -1515,6 +1516,95 @@ else{console.log('[조회수] 완료! 총 '+results.length+'건 CSV 저장됨');
       alert('복사 중 오류가 발생했습니다.')
     } finally {
       setCopying(false)
+    }
+  }
+
+  // ══════════════════════════════════════════════════════════════
+  // [엑셀] — 지정 양식(A~J)으로 xlsx 다운로드
+  //   A 등록상품id / B 옵션id / C 노출ID / D barcode / E 일반옵션id
+  //   F 크기(빈칸) / G 무게(빈칸) / H 쿠팡사이즈 / I 등록상품명 / J 옵션명
+  //   - 대상: 체크된 행 있으면 그 행, 없으면 현재 필터된 전체
+  // ══════════════════════════════════════════════════════════════
+
+  const handleExcelExport = async () => {
+    const targets = selectedIds.size > 0
+      ? filteredItems.filter((_, idx) => selectedIds.has(String(idx)))
+      : filteredItems
+    if (targets.length === 0) {
+      alert('다운로드할 데이터가 없습니다.')
+      return
+    }
+
+    setExporting(true)
+    try {
+      const userId = getUserId()
+
+      // H: 쿠팡 사이즈 (si_coupang_shipment_size.shipment_size_before, option_id 매칭)
+      const optionIds = targets
+        .map((r) => r.vendor_item_id)
+        .filter((v): v is string => !!v)
+      const sizeMap = userId
+        ? await fetchShipmentSizesByOptionIds(userId, optionIds)
+        : new Map<string, string>()
+
+      // E: 일반옵션id (si_coupang_items.option_id, barcode 매칭 — user 스코프)
+      const barcodes = Array.from(
+        new Set(targets.map((r) => r.barcode).filter((v): v is string => !!v)),
+      )
+      const generalOidMap = new Map<string, string>()
+      if (userId && barcodes.length > 0) {
+        const CHUNK = 200
+        for (let i = 0; i < barcodes.length; i += CHUNK) {
+          const chunk = barcodes.slice(i, i + CHUNK)
+          const { data, error } = await supabase
+            .from('si_coupang_items')
+            .select('barcode, option_id')
+            .eq('user_id', userId)
+            .in('barcode', chunk)
+          if (error) {
+            console.error('[엑셀] si_coupang_items 조회 오류:', error)
+            continue
+          }
+          for (const row of (data ?? []) as { barcode: string | null; option_id: string | null }[]) {
+            if (row.barcode && row.option_id && !generalOidMap.has(row.barcode)) {
+              generalOidMap.set(row.barcode, String(row.option_id))
+            }
+          }
+        }
+      }
+
+      // ── aoa 조립 (헤더 + 데이터) ──
+      const HEADERS = [
+        '등록상품id', '옵션id', '노출ID', 'barcode', '일반옵션id',
+        '크기', '무게', '쿠팡사이즈', '등록상품명', '옵션명',
+      ]
+      const rows = targets.map((r) => {
+        const bc = r.barcode ?? ''
+        const oid = r.vendor_item_id ?? ''
+        return [
+          r.seller_product_item_id ?? '',            // A 등록상품id
+          oid,                                       // B 옵션id
+          r.seller_product_id ?? '',                 // C 노출ID
+          bc,                                        // D barcode
+          bc ? (generalOidMap.get(bc) ?? '') : '',   // E 일반옵션id
+          '',                                        // F 크기
+          '',                                        // G 무게
+          oid ? (sizeMap.get(oid) ?? '') : '',       // H 쿠팡사이즈
+          r.seller_product_name ?? '',               // I 등록상품명
+          r.option_name ?? '',                       // J 옵션명
+        ]
+      })
+
+      const ws = XLSX.utils.aoa_to_sheet([HEADERS, ...rows])
+      const wb = XLSX.utils.book_new()
+      XLSX.utils.book_append_sheet(wb, ws, 'export')
+      const today = new Date().toISOString().slice(0, 10)
+      XLSX.writeFile(wb, `사입엑셀(${today}).xlsx`)
+    } catch (err) {
+      console.error('[엑셀] 실패:', err)
+      alert('엑셀 다운로드 중 오류가 발생했습니다.')
+    } finally {
+      setExporting(false)
     }
   }
 
@@ -1989,6 +2079,10 @@ else{console.log('[조회수] 완료! 총 '+results.length+'건 CSV 저장됨');
     // 클립보드 복사 (구글 시트 TSV)
     copying,
     handleCopy,
+
+    // 엑셀 다운로드 (A~J 양식)
+    exporting,
+    handleExcelExport,
 
     // 주문 전송
     orderSending,
