@@ -3,6 +3,13 @@ import * as XLSX from 'xlsx';
 import { supabase } from '../services/supabase';
 import { theme } from '../styles/theme';
 import UploadProgressModal from '../components/UploadProgressModal';
+import LabelPrintModal from '../components/label/LabelPrintModal';
+import {
+  buildLabelPrintRequest,
+  getLabelServiceUrl,
+  toLabelPrintItems,
+  type LabelPrintRequest,
+} from '../services/labelService';
 import './CoupangManagement.css';
 
 // ── 분류 드롭박스 옵션 목록 ────────────────────────────────────────
@@ -41,6 +48,7 @@ export interface CoupangItem {
   edit_stock?: number;
   package_type?: string;  // 분류 열
   note?: string;          // 비고 열
+  season?: string;        // 시즌 (DB 컬럼 — 화면엔 없고 라벨 바인딩에 쓴다)
 }
 
 const CoupangManagement: React.FC = () => {
@@ -62,6 +70,10 @@ const CoupangManagement: React.FC = () => {
   const [isBulkClassifyModalOpen, setIsBulkClassifyModalOpen] = useState(false)
   const [bulkPackageType, setBulkPackageType] = useState<string>('출고')
   const [bulkNote, setBulkNote] = useState('')
+
+  // ── 라벨출력 모달 상태 (label-service 임베드) ────────────────────
+  const [isLabelModalOpen, setIsLabelModalOpen] = useState(false)
+  const [labelRequest, setLabelRequest] = useState<LabelPrintRequest | null>(null)
 
   // ── 엑셀 분류 업로드 결과 모달 상태 ──────────────────────────────
   const [isExcelClassifyResultOpen, setIsExcelClassifyResultOpen] = useState(false)
@@ -188,6 +200,26 @@ const CoupangManagement: React.FC = () => {
       next.delete(optionId)
     }
     setSelectedOptionIds(next)
+  }
+
+  // ── 라벨출력 — 선택 행을 label-service 임베드로 보낸다 ───────────
+  //   바코드 없는 행(일반 배송)은 찍을 수 없어 제외하고 건수만 알린다.
+  const handleLabelPrint = () => {
+    if (!getLabelServiceUrl()) {
+      alert('라벨 서비스 주소(VITE_LABEL_SERVICE_URL)가 설정되지 않았습니다.')
+      return
+    }
+    const selected = items.filter((it) => selectedOptionIds.has(it.option_id))
+    const { items: printItems, skipped } = toLabelPrintItems(selected)
+    if (printItems.length === 0) {
+      alert('선택한 항목에 바코드가 없어 라벨을 출력할 수 없습니다.')
+      return
+    }
+    if (skipped > 0) {
+      alert(`바코드가 없는 ${skipped}개 항목은 제외하고 ${printItems.length}개만 출력합니다.`)
+    }
+    setLabelRequest(buildLabelPrintRequest(printItems))
+    setIsLabelModalOpen(true)
   }
 
   // ── 분류 드롭박스 변경 핸들러 ────────────────────────────────────
@@ -721,6 +753,15 @@ const CoupangManagement: React.FC = () => {
           분류 {selectedOptionIds.size > 0 && `(${selectedOptionIds.size})`}
         </button>
 
+        {/* 라벨출력 — 선택 행을 라벨 서비스(iframe)로 보내 QZ Tray 로 인쇄 */}
+        <button
+          onClick={handleLabelPrint}
+          disabled={selectedOptionIds.size === 0}
+          className="coupang-btn coupang-btn-classify"
+        >
+          라벨출력 {selectedOptionIds.size > 0 && `(${selectedOptionIds.size})`}
+        </button>
+
         {/* 엑셀 분류 업로드 — 바코드 기준 package_type/note 일괄 설정 */}
         <label className="coupang-btn coupang-btn-excel-classify">
           엑셀분류
@@ -1113,6 +1154,13 @@ const CoupangManagement: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* ── 라벨출력 모달 (label-service 임베드) ── */}
+      <LabelPrintModal
+        open={isLabelModalOpen}
+        request={labelRequest}
+        onClose={() => setIsLabelModalOpen(false)}
+      />
 
       {/*
         ── 엑셀 분류 업로드 결과 모달 ────────────────────────────────

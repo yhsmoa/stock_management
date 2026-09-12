@@ -64,7 +64,10 @@ Electron is built separately via `scripts/build-electron.mjs` (called manually; 
 - **Commit style**: Conventional Commits in Korean (`feat:`, `fix:`, `refactor:`, `style:` + Korean summary). See `git log` for examples.
 - **Path alias**: `@/*` → `src/*` (configured in `tsconfig.json` and `vite.config.ts`).
 - **TypeScript**: `strict: true`, `noUnusedLocals`, `noUnusedParameters`, `noFallthroughCasesInSwitch` are all on. Don't silence them with `// @ts-ignore`; fix the underlying issue.
-- **Env vars**: Only `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` are read by the renderer. The prod server uses `PORT`. No other env vars — if you think you need one, check if a header-based per-user key (Coupang pattern) fits better.
+- **Env vars**: The renderer reads `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`, and `VITE_LABEL_SERVICE_URL` (label-service 주소 — 사이드 메뉴 "라벨 설정" 링크와 상품관리 [라벨출력] iframe 에 쓴다; 비어 있으면 둘 다 숨김/비활성). The prod server uses `PORT`. No other env vars — if you think you need one, check if a header-based per-user key (Coupang pattern) fits better.
+
+### 라벨 출력 (label-service 연동)
+라벨 양식 편집·인쇄 엔진은 이 앱에 없다. 별도 서비스 **label-service**(`D:\project\label-service`, 같은 Supabase)가 `/print-embed` 를 iframe 으로 제공하고, 이 앱은 `services/labelService.ts` 로 선택 상품(`si_coupang_items` 행)을 postMessage 로 보내기만 한다. 보내는 필드 이름은 label-service 의 `SOURCE_PRODUCT_FIELDS.stock` 과 같아야 한다 — 바꾸면 양쪽을 같이 고친다. 모달은 `components/label/LabelPrintModal.tsx`.
 
 ## Reference
 

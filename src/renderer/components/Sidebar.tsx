@@ -12,6 +12,7 @@
 import React, { useState, useEffect, useMemo } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import type { AuthUser } from '../types/auth'
+import { labelSettingsUrl } from '../services/labelService'
 
 // ── 레이아웃 상수 ──────────────────────────────────────────────────
 export const SIDEBAR_WIDTH = 248            // 확장 폭
@@ -45,6 +46,8 @@ const ICON_PATHS: Record<string, string> = {
   truck: 'M8.25 18.75a1.5 1.5 0 01-3 0m3 0a1.5 1.5 0 00-3 0m3 0h6m-9 0H3.375a1.125 1.125 0 01-1.125-1.125V14.25m17.25 4.5a1.5 1.5 0 01-3 0m3 0a1.5 1.5 0 00-3 0m3 0h1.125c.621 0 1.129-.504 1.09-1.124a17.902 17.902 0 00-3.213-9.193 2.056 2.056 0 00-1.58-.86H14.25M16.5 18.75h-6m6 0V7.5m0 11.25H3.75V6a1.5 1.5 0 011.5-1.5h9a1.5 1.5 0 011.5 1.5v1.5',
   chart: 'M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 013 19.875v-6.75zM9.75 8.625c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v11.25c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V8.625zM16.5 4.125c0-.621.504-1.125 1.125-1.125h2.25C20.496 3 21 3.504 21 4.125v15.75c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V4.125z',
   chevron: 'm19.5 8.25-7.5 7.5-7.5-7.5',
+  tag:   'M9.568 3H5.25A2.25 2.25 0 003 5.25v4.318c0 .597.237 1.17.659 1.591l9.581 9.581c.699.699 1.78.872 2.607.33a18.095 18.095 0 005.223-5.223c.542-.827.369-1.908-.33-2.607L11.16 3.66A2.25 2.25 0 009.568 3zM6 6h.008v.008H6V6z',
+  external: 'M13.5 6H5.25A2.25 2.25 0 003 8.25v10.5A2.25 2.25 0 005.25 21h10.5A2.25 2.25 0 0018 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25',
   logout: 'M15.75 9V5.25A2.25 2.25 0 0013.5 3h-6a2.25 2.25 0 00-2.25 2.25v13.5A2.25 2.25 0 007.5 21h6a2.25 2.25 0 002.25-2.25V15m3 0l3-3m0 0l-3-3m3 3H9',
 }
 
@@ -65,6 +68,8 @@ type Leaf = { path: string; label: string; count?: number }
 type MenuItem =
   | { type: 'link'; path: string; icon: string; label: string; count?: number }
   | { type: 'group'; icon: string; label: string; children: Leaf[] }
+  /** 외부 서비스 — 새 탭. href 는 렌더 시점에 계산 (env 미설정이면 항목을 숨긴다) */
+  | { type: 'external'; href: () => string; icon: string; label: string }
 
 type Section = { label: string; items: MenuItem[] }
 
@@ -120,6 +125,8 @@ const SECTIONS: Section[] = [
           { path: '/rocket-shipment', label: '로켓그로스 출고' },
         ],
       },
+      // 라벨 양식 편집기는 별도 서비스(label-service) — 새 탭으로 연다
+      { type: 'external', href: labelSettingsUrl, icon: 'tag', label: '라벨 설정' },
     ],
   },
   {
@@ -198,6 +205,30 @@ const Sidebar: React.FC = () => {
 
   // ── 항목 렌더 ─────────────────────────────────────────────────
   const renderItem = (item: MenuItem) => {
+    // ── 외부 링크 (새 탭). 주소가 비어 있으면(env 미설정) 그리지 않는다 ──
+    if (item.type === 'external') {
+      const href = item.href()
+      if (!href || href.startsWith('/')) return null
+      return (
+        <a
+          key={item.label} href={href} target="_blank" rel="noopener noreferrer"
+          style={rowStyle(false, expanded)}
+          className="si-nav-row"
+          title={!expanded ? item.label : undefined}
+        >
+          <span style={{ ...iconWrap, color: C.muted }}>
+            <Icon name={item.icon} />
+          </span>
+          {expanded && <span style={{ flex: 1, ...labelStyle(false) }}>{item.label}</span>}
+          {expanded && (
+            <span style={{ display: 'inline-flex', color: C.muted }}>
+              <Icon name="external" size={13} />
+            </span>
+          )}
+        </a>
+      )
+    }
+
     if (item.type === 'link') {
       const isActive = currentPath === item.path
       return (
