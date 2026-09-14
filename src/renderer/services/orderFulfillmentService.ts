@@ -25,12 +25,15 @@ export interface FulfillmentAgg {
 
 export const EMPTY_AGG: FulfillmentAgg = { arrival: 0, packed: 0, cancel: 0, shipped: 0 }
 
-/** ft_order_items 상세 (드로어 열기용) */
+/** ft_order_items 상세 (드로어 열기 + 상태 판정용) */
 export interface OrderItemDetail {
   id: string
   personal_order_no: string
   vendor_option_id: string | null   // 쿠팡 option_id 매칭 키
-  set_seq: number | null            // 세트 순번 (비세트도 1부터). 중복 시 multi 판정
+  set_seq: number | null            // 세트 구성품 순번 (비세트도 1). 재주문 시 같은 순번 행이 다시 생김
+  set_total: number | null          // 세트 구성품 개수 (비세트 = 1)
+  order_qty: number | null          // 해당 행의 구매 수량
+  status: string | null             // PROCESSING / DONE
   item_name: string | null
   option_name: string | null
   product_no: string | null
@@ -48,32 +51,51 @@ export function makeFulfillmentKey(orderId: string, optionId: string | null | un
 // ── fulfillment 상태 (개인주문 '상태' 열 = 색 점) ─────────────────
 export type FulfillmentStatus = 'shipped' | 'green' | 'red' | 'gray' | 'multi' | 'cart' | 'none'
 
+/** deriveFulfillmentStatus 입력 — fetchFulfillmentData + fetchOrderCartKeys 결과 */
+export interface FulfillmentMaps {
+  aggMap: Map<string, FulfillmentAgg>          // 복합 키 → 합산 집계 (표 숫자 열용)
+  itemAggMap: Map<string, FulfillmentAgg>      // ft_order_items.id → 행별 집계 (판정용)
+  orderItemsMap: Map<string, OrderItemDetail[]>
+  cartKeys: Set<string>
+}
+
 /**
  * 주문행의 fulfillment 상태(색 점) 판정 — 순수 함수
  * - 개인주문 '상태' 열(usePersonalOrder.getRowStatus)과 고객문의 페이지가 공유.
  *   양쪽 표시가 어긋나지 않도록 로직을 이 함수 한 곳에 둔다.
- * - 판정 순서: multi → (카트/미주문) → 전량취소(red) → 전량출고(shipped)
- *              → 포장(green) → 미발송(gray)
+ * - 이 상태는 '중국 발송' 축만 본다. 쿠팡 배송 상태(결제완료~배송완료)와는 독립이며,
+ *   국내 재고로 발송한 건은 여기서 미주문/전량취소여도 정상이다.
+ *
+ * 데이터 구조 (ft_order_items):
+ *   - 세트상품은 구성품마다 행이 있다 (set_seq = 1..set_total). 입고/취소는 구성품별로,
+ *     포장/출고는 대표행(set_seq=1)에만 기록되는 것이 관찰된 패턴이다.
+ *   - 재주문(취소 → 다시 주문)은 같은 set_seq 의 행이 한 번 더 생긴다.
+ *   → 그래서 set_seq 별로 [구매 수량 − 취소 수량] = '유효 수량'을 합산하고,
+ *     세트의 유효 수량은 구성품 중 최솟값, 출고 수량은 구성품 중 최댓값으로 본다.
+ *
+ * 판정 순서:
+ *   (카트/미주문) → 확인 필요(multi) → 전량취소(red) → 출고완료(shipped) → 포장완료(green) → 미발송(gray)
+ *   - multi : 세트 구성품 일부만 취소됐거나, 유효 주문 행이 2건 이상이면서 유효 수량이 필요 수량을
+ *             초과할 때 (같은 건을 두 번 보낸 중복 주문, 출고 후 또 재주문, 두 번 출고 등).
+ *             취소 → 재주문 → 정상 출고/취소로 끝난 이력은 여기에 걸리지 않는다.
+ *   - red   : 유효 수량이 0 이하 (모든 세대가 취소 또는 출고 후 반품).
+ *   - shipped : 출고 수량이 필요 수량(qty) 또는 유효 수량 중 작은 쪽 이상.
+ *             (쿠팡 수량보다 적게 유효하면 — 예: 2개 중 1개 취소 + 1개 출고 — 남은 것을 다 보낸 것으로 본다)
+ *   - green : 유효 행에 포장 이력이 있음.
  *
  * @param orderId       쿠팡 주문번호 (없으면 'none')
  * @param vendorItemId  옵션 ID (복합 키 구성)
- * @param qty           주문 수량 (shippingCount) — 취소/출고 완료 판정 기준
+ * @param qty           쿠팡 주문 수량 (shippingCount) — 필요 수량 기준
  * @param maps          fetchFulfillmentData + fetchOrderCartKeys 결과
  */
 export function deriveFulfillmentStatus(
   orderId: string | null | undefined,
   vendorItemId: string | null | undefined,
   qty: number,
-  maps: {
-    aggMap: Map<string, FulfillmentAgg>
-    multiKeys: Set<string>
-    orderItemsMap: Map<string, OrderItemDetail[]>
-    cartKeys: Set<string>
-  },
+  maps: FulfillmentMaps,
 ): FulfillmentStatus {
   if (!orderId) return 'none'
   const key = makeFulfillmentKey(orderId, vendorItemId)
-  if (maps.multiKeys.has(key)) return 'multi'
 
   const itemsForKey = maps.orderItemsMap.get(key)
   // ft_order_items 매칭 없음 → ORDER 카트에 있으면 '카트', 아니면 '미주문'
@@ -81,11 +103,43 @@ export function deriveFulfillmentStatus(
     return maps.cartKeys.has(key) ? 'cart' : 'none'
   }
 
-  const agg = maps.aggMap.get(key) ?? EMPTY_AGG
-  if (qty > 0 && agg.cancel >= qty) return 'red'      // 전량취소
-  if (qty > 0 && agg.shipped >= qty) return 'shipped' // 전량출고
-  if (agg.packed > 0) return 'green'                  // 포장완료
-  return 'gray'                                       // 미발송
+  // ── 구성품(set_seq)별 합산 ─────────────────────────────────────
+  type SeqAgg = { ordered: number; cancel: number; shipped: number; packedLive: number; liveRows: number }
+  const bySeq = new Map<number, SeqAgg>()
+  for (const oi of itemsForKey) {
+    const seq = oi.set_seq ?? 1
+    const a = maps.itemAggMap.get(oi.id) ?? EMPTY_AGG
+    const ordered = Math.max(oi.order_qty ?? 1, 0)
+    const e = bySeq.get(seq) ?? { ordered: 0, cancel: 0, shipped: 0, packedLive: 0, liveRows: 0 }
+    e.ordered += ordered
+    e.cancel += a.cancel
+    e.shipped += a.shipped
+    if (a.cancel < ordered) {           // 취소로 소진되지 않은 '유효' 행
+      e.liveRows += 1
+      e.packedLive += a.packed
+    }
+    bySeq.set(seq, e)
+  }
+  const seqs = Array.from(bySeq.values())
+  const liveOf = (s: SeqAgg) => s.ordered - s.cancel
+  const liveUnits = Math.min(...seqs.map(liveOf))       // 세트: 모든 구성품이 살아 있어야 1세트
+  const maxLive = Math.max(...seqs.map(liveOf))
+  const shippedUnits = Math.max(...seqs.map((s) => s.shipped))
+  const liveRows = Math.max(...seqs.map((s) => s.liveRows))
+  const packedLive = seqs.reduce((sum, s) => sum + s.packedLive, 0)
+
+  // 1) 세트 구성품 간 유효 수량 불일치 (일부 구성품만 취소) → 확인 필요
+  if (seqs.length > 1 && liveUnits !== maxLive) return 'multi'
+  // 2) 유효 주문 행 2건 이상 + 유효 수량이 필요 수량 초과 → 중복 주문/중복 출고 확인 필요
+  //    (한 행에 여분을 더 주문한 경우는 liveRows=1 이라 걸리지 않음)
+  if (qty > 0 && liveRows >= 2 && liveUnits > qty) return 'multi'
+  // 3) 남은 유효 수량 없음 → 전량취소
+  if (liveUnits <= 0) return 'red'
+  // 4) 필요 수량(또는 남은 유효 수량) 출고 → 출고완료
+  if (qty > 0 && shippedUnits >= Math.min(qty, liveUnits)) return 'shipped'
+  // 5) 유효 행 포장 이력 → 포장완료
+  if (packedLive > 0) return 'green'
+  return 'gray'                                           // 미발송
 }
 
 /** FulfillmentDrawer 이력 행 */
@@ -105,11 +159,17 @@ export interface FulfillmentRow {
 // - 여러 배치를 Promise.all 로 병렬 실행 → RTT 1회로 단축
 // ══════════════════════════════════════════════════════════════════
 
+/**
+ * @param userId  지정 시 `user_id = userId` 로 격리. 쿠팡 주문번호는 고객 단위라
+ *                다른 판매 계정의 구매주문과 같은 번호를 공유할 수 있으므로,
+ *                personal_order_no 로 조회할 때는 반드시 넘긴다.
+ */
 async function batchIn<T>(
   table: string,
   select: string,
   column: string,
   ids: string[],
+  userId?: string,
 ): Promise<T[]> {
   if (ids.length === 0) return []
 
@@ -122,9 +182,9 @@ async function batchIn<T>(
   // 병렬 실행 (순차 await for-loop → Promise.all)
   const results = await Promise.all(
     chunks.map(async (chunk): Promise<T[]> => {
-      const { data, error } = await (orderSupabase.from(table) as any)
-        .select(select)
-        .in(column, chunk)
+      let q = (orderSupabase.from(table) as any).select(select).in(column, chunk)
+      if (userId) q = q.eq('user_id', userId)
+      const { data, error } = await q
       if (error) throw error
       return (data ?? []) as T[]
     }),
@@ -147,34 +207,36 @@ async function batchIn<T>(
  * @param orderIds     - coupang_personal_orders.order_id 배열
  * @param orderUserId  - purchase_agent ft_users.id (si_users.order_user_id)
  * @returns
- *   - aggMap        : 복합 키 → FulfillmentAgg (여러 ft_order_items 합산)
- *   - multiKeys     : set_seq 중복이 발견된 복합 키 집합 ('multi' 상태 판정용)
+ *   - aggMap        : 복합 키 → FulfillmentAgg (여러 ft_order_items 합산 — 표의 입고/포장/취소/출고 열)
+ *   - itemAggMap    : ft_order_items.id → FulfillmentAgg (행별 — deriveFulfillmentStatus 판정용)
  *   - orderItemsMap : 복합 키 → OrderItemDetail[] (드로어에 전체 전달)
+ *   - reorderCountMap : set_seq=1 행이 2건 이상인 키 → 차수 ('N차' 배지)
  */
 export async function fetchFulfillmentData(
   orderIds: string[],
   orderUserId: string,
 ): Promise<{
   aggMap: Map<string, FulfillmentAgg>
-  multiKeys: Set<string>
+  itemAggMap: Map<string, FulfillmentAgg>
   orderItemsMap: Map<string, OrderItemDetail[]>
   reorderCountMap: Map<string, number>
 }> {
   const aggMap = new Map<string, FulfillmentAgg>()
-  const multiKeys = new Set<string>()
+  const itemAggMap = new Map<string, FulfillmentAgg>()
   const orderItemsMap = new Map<string, OrderItemDetail[]>()
   const reorderCountMap = new Map<string, number>()
 
   if (orderIds.length === 0 || !orderUserId) {
-    return { aggMap, multiKeys, orderItemsMap, reorderCountMap }
+    return { aggMap, itemAggMap, orderItemsMap, reorderCountMap }
   }
 
-  // ── 1) ft_order_items 조회 (personal_order_no = our order_id) ──
+  // ── 1) ft_order_items 조회 (personal_order_no = our order_id, user_id 격리) ──
   const orderItems = await batchIn<OrderItemDetail>(
     'ft_order_items',
-    'id, personal_order_no, vendor_option_id, set_seq, item_name, option_name, product_no, item_no, order_no, 1688_order_id, created_at',
+    'id, personal_order_no, vendor_option_id, set_seq, set_total, order_qty, status, item_name, option_name, product_no, item_no, order_no, 1688_order_id, created_at',
     'personal_order_no',
     orderIds,
+    orderUserId,
   )
 
   // 복합 키(order_id + option_id) 기반 매핑
@@ -194,32 +256,25 @@ export async function fetchFulfillmentData(
     arr.sort((a, b) => (a.created_at ?? '').localeCompare(b.created_at ?? ''))
   }
 
-  // ── multi 판정 + 재주문 차수 계산 ──────────────────────────────
-  // - 세트 상품(set_seq=1,2,...)은 정상 → 중복 없음
-  // - 재주문으로 동일 set_seq 재등장 시 multi
-  // - set_seq=1 이 N번 나오면 N차 재주문 → reorderCountMap 에 기록
+  // ── 재주문 차수 계산 ('N차' 배지) ──────────────────────────────
+  // - 세트 상품(set_seq=1,2,...)은 구성품이라 중복이 아님
+  // - set_seq=1 (대표행) 이 N번 나오면 N차 재주문 → reorderCountMap 에 기록
+  //   (중복/이력 확인 여부는 deriveFulfillmentStatus 가 행별 집계로 판정)
   for (const [key, arr] of orderItemsMap) {
-    const seqCount = new Map<number | null, number>()
-    for (const oi of arr) {
-      seqCount.set(oi.set_seq, (seqCount.get(oi.set_seq) ?? 0) + 1)
-    }
-    for (const c of seqCount.values()) {
-      if (c >= 2) { multiKeys.add(key); break }
-    }
-    const seq1Count = seqCount.get(1) ?? 0
+    const seq1Count = arr.filter((oi) => (oi.set_seq ?? 1) === 1).length
     if (seq1Count >= 2) reorderCountMap.set(key, seq1Count)
   }
 
   const itemIds = orderItems.map((oi) => oi.id)
-  if (itemIds.length === 0) return { aggMap, multiKeys, orderItemsMap, reorderCountMap }
+  if (itemIds.length === 0) return { aggMap, itemAggMap, orderItemsMap, reorderCountMap }
 
-  // ── 2) inbound + outbound 병렬 조회 ────────────────────────────
+  // ── 2) inbound + outbound 병렬 조회 (user_id 격리) ─────────────
   const [inbounds, outbounds] = await Promise.all([
     batchIn<{
       order_item_id: string
       type: string
       quantity: number | null
-    }>('ft_fulfillment_inbounds', 'order_item_id, type, quantity', 'order_item_id', itemIds),
+    }>('ft_fulfillment_inbounds', 'order_item_id, type, quantity', 'order_item_id', itemIds, orderUserId),
     batchIn<{
       order_item_id: string
       type: string
@@ -230,30 +285,36 @@ export async function fetchFulfillmentData(
       'order_item_id, type, quantity, shipment_no',
       'order_item_id',
       itemIds,
+      orderUserId,
     ),
   ])
 
-  // ── 3) 집계: 복합 키 → FulfillmentAgg ──────────────────────────
+  // ── 3) 집계: 복합 키 합산(aggMap) + 행별(itemAggMap) ───────────
   const allFulfillments = [
     ...inbounds.map((f) => ({ ...f, shipment_no: null as string | null })),
     ...outbounds,
   ]
 
-  for (const f of allFulfillments) {
-    const key = itemToKey.get(f.order_item_id)
-    if (!key) continue
-
-    if (!aggMap.has(key)) aggMap.set(key, { ...EMPTY_AGG })
-    const entry = aggMap.get(key)!
+  const bump = (entry: FulfillmentAgg, f: (typeof allFulfillments)[number]) => {
     const qty = f.quantity ?? 0
-
     if (f.type === 'ARRIVAL') entry.arrival += qty
     if (f.type === 'PACKED') entry.packed += qty
     if (f.type === 'CANCEL' || f.type === 'RETURN') entry.cancel += qty
     if (f.shipment_no) entry.shipped += qty
   }
 
-  return { aggMap, multiKeys, orderItemsMap, reorderCountMap }
+  for (const f of allFulfillments) {
+    const key = itemToKey.get(f.order_item_id)
+    if (!key) continue
+
+    if (!aggMap.has(key)) aggMap.set(key, { ...EMPTY_AGG })
+    bump(aggMap.get(key)!, f)
+
+    if (!itemAggMap.has(f.order_item_id)) itemAggMap.set(f.order_item_id, { ...EMPTY_AGG })
+    bump(itemAggMap.get(f.order_item_id)!, f)
+  }
+
+  return { aggMap, itemAggMap, orderItemsMap, reorderCountMap }
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -270,23 +331,25 @@ export async function fetchFulfillmentData(
  *
  * @param orderIds     - coupang_personal_orders.order_id 배열 (현재 로드된 주문)
  * @param orderUserId  - purchase_agent ft_users.id (= si_users.order_user_id)
+ * @param statuses     - 대상 카트 상태 (기본 ['ORDER']=주문대기. 전송 중복 검사 시 ['NEW','ORDER'])
  * @returns Set<`${personal_order_no}|${vendor_option_id ?? ''}`>
  */
 export async function fetchOrderCartKeys(
   orderIds: string[],
   orderUserId: string,
+  statuses: string[] = ['ORDER'],
 ): Promise<Set<string>> {
   const keys = new Set<string>()
   if (!isOrderSupabaseConfigured || !orderUserId || orderIds.length === 0) return keys
 
-  // ── 1) status='ORDER' 카트 id 조회 (전 구간 페이지네이션 루프) ──
+  // ── 1) 대상 상태 카트 id 조회 (전 구간 페이지네이션 루프) ──
   const cartIds: string[] = []
   let from = 0
   while (true) {
     const { data, error } = await (orderSupabase.from('ft_carts') as any)
       .select('id')
       .eq('user_id', orderUserId)
-      .eq('status', 'ORDER')
+      .in('status', statuses)
       .range(from, from + PAGE_SIZE - 1)
     if (error) {
       console.error('[fetchOrderCartKeys:ft_carts]', error)

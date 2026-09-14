@@ -328,7 +328,7 @@ const CustomerInquiry: React.FC = () => {
             inq.inquiryId,
             deriveFulfillmentStatus(oid, vId, qty, {
               aggMap: fdata.aggMap,
-              multiKeys: fdata.multiKeys,
+              itemAggMap: fdata.itemAggMap,
               orderItemsMap: fdata.orderItemsMap,
               cartKeys,
             }),

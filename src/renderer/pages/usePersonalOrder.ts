@@ -107,7 +107,7 @@ export const STATUS_DOT_LABELS: Record<StatusType, string> = {
   green: '포장완료',
   red: '전량취소',
   gray: '미발송',
-  multi: '이력 확인 필요',
+  multi: '확인 필요 (중복 주문·세트 일부 취소)',
   cart: '카트',
   none: '미주문',
 }
@@ -308,7 +308,8 @@ export function usePersonalOrder() {
 
   // ── fulfillment 상태 (키: `${order_id}|${option_id}`) ─────────
   const [aggMap, setAggMap] = useState<Map<string, FulfillmentAgg>>(new Map())
-  const [multiKeys, setMultiKeys] = useState<Set<string>>(new Set())
+  // ft_order_items.id → 행별 집계 (재주문 세대·세트 구성품 단위 판정용)
+  const [itemAggMap, setItemAggMap] = useState<Map<string, FulfillmentAgg>>(new Map())
   const [orderItemsMap, setOrderItemsMap] = useState<Map<string, OrderItemDetail[]>>(new Map())
   const [reorderCountMap, setReorderCountMap] = useState<Map<string, number>>(new Map())
   // ORDER 카트 매칭 키 집합 (복합 키: order_id|vendor_item_id) — '카트(🛒)' 판정용
@@ -381,16 +382,14 @@ export function usePersonalOrder() {
   }, [aggMap])
 
   // ── 상태 점 판별 ──────────────────────────────────────────────
-  //   판정 규칙 (복합 키 기준):
-  //     multiKeys 포함 → multi (set_seq 중복 = 이력 확인 필요)
-  //     매칭 없음       → none  (미주문)
-  //     그 외           → 기존 red / green / gray 분기
+  //   판정 규칙은 orderFulfillmentService.deriveFulfillmentStatus 한 곳에 둔다
+  //   (재주문 세대·세트 구성품 단위로 유효 수량/출고 수량을 계산).
   const getRowStatus = useCallback(
     (row: PersonalOrderRow): StatusType =>
       deriveFulfillmentStatus(row.order_id, row.vendor_item_id, row.shipping_count ?? 0, {
-        aggMap, multiKeys, orderItemsMap, cartKeys: cartKeySet,
+        aggMap, itemAggMap, orderItemsMap, cartKeys: cartKeySet,
       }),
-    [aggMap, multiKeys, orderItemsMap, cartKeySet],
+    [aggMap, itemAggMap, orderItemsMap, cartKeySet],
   )
 
   // ── fulfillment 데이터 로드 ─────────────────────────────────────
@@ -398,7 +397,7 @@ export function usePersonalOrder() {
     const { orderUserId } = getUserInfo()
     if (!orderUserId || orderRows.length === 0) {
       setAggMap(new Map())
-      setMultiKeys(new Set())
+      setItemAggMap(new Map())
       setOrderItemsMap(new Map())
       setReorderCountMap(new Map())
       setCartKeySet(new Set())
@@ -413,7 +412,7 @@ export function usePersonalOrder() {
         fetchOrderCartKeys(orderIds, orderUserId),
       ])
       setAggMap(result.aggMap)
-      setMultiKeys(result.multiKeys)
+      setItemAggMap(result.itemAggMap)
       setOrderItemsMap(result.orderItemsMap)
       setReorderCountMap(result.reorderCountMap)
       setCartKeySet(cartKeys)
@@ -701,32 +700,16 @@ export function usePersonalOrder() {
       })
     }
 
-    // ── 상태 점 판정 인라인 (복합 키 기준, getRowStatus 와 동일 로직) ──
-    const computeStatus = (row: PersonalOrderRow): StatusType => {
-      if (!row.order_id) return 'none'
-      const key = makeFulfillmentKey(row.order_id, row.vendor_item_id)
-      if (multiKeys.has(key)) return 'multi'
-      const itemsForKey = orderItemsMap.get(key)
-      // ft_order_items 매칭 없음 → ORDER 카트에 있으면 '카트(🛒)', 아니면 '미주문'
-      if (!itemsForKey || itemsForKey.length === 0) {
-        return cartKeySet.has(key) ? 'cart' : 'none'
-      }
-      const agg = aggMap.get(key) ?? EMPTY_AGG
-      const qty = row.shipping_count ?? 0
-      if (qty > 0 && agg.cancel >= qty) return 'red'
-      if (qty > 0 && agg.shipped >= qty) return 'shipped'  // 전량 출고
-      if (agg.packed > 0) return 'green'
-      return 'gray'
-    }
+    // ── 상태 점 판정은 getRowStatus(= deriveFulfillmentStatus) 공유 ──
 
     // 미주문 필터 (카트 행은 별도 상태 → 제외됨)
     if (showUnorderedOnly) {
-      result = result.filter((row) => computeStatus(row) === 'none')
+      result = result.filter((row) => getRowStatus(row) === 'none')
     }
 
     // 🛒 카트 필터
     if (showCartOnly) {
-      result = result.filter((row) => computeStatus(row) === 'cart')
+      result = result.filter((row) => getRowStatus(row) === 'cart')
     }
 
     // 출고중지 필터
@@ -748,7 +731,7 @@ export function usePersonalOrder() {
 
     // 상태 점 필터 (멀티 선택 OR)
     if (selectedStatuses.size > 0) {
-      result = result.filter((row) => selectedStatuses.has(computeStatus(row)))
+      result = result.filter((row) => selectedStatuses.has(getRowStatus(row)))
     }
 
     // 재주문 필터 (2차 이상)
@@ -774,7 +757,7 @@ export function usePersonalOrder() {
       const dateB = b.ordered_at ? new Date(b.ordered_at).getTime() : 0
       return dateA - dateB
     })
-  }, [items, selectedTabs, appliedSearch, showUnorderedOnly, showCartOnly, showReleaseStopOnly, showNoInvoiceOnly, showReorderOnly, showNoteOnly, selectedStatuses, invoiceOrderIds, trackingMap, aggMap, multiKeys, orderItemsMap, reorderCountMap, cartKeySet, noteMap])
+  }, [items, selectedTabs, appliedSearch, showUnorderedOnly, showCartOnly, showReleaseStopOnly, showNoInvoiceOnly, showReorderOnly, showNoteOnly, selectedStatuses, invoiceOrderIds, trackingMap, getRowStatus, reorderCountMap, noteMap])
 
   // ── 합배송: 주문번호별 라인(상품) 개수 (전체 items 기준) ──────────
   //   1개면 단일주문, 2개 이상이면 합배송(여러 상품 한 주문)
@@ -904,7 +887,7 @@ export function usePersonalOrder() {
   const [cartsLoading, setCartsLoading] = useState(false)
 
   /** [주문 전송] 버튼 onClick — 검증 통과 시 모달만 오픈 */
-  const handleOrderSend = useCallback(() => {
+  const handleOrderSend = useCallback(async () => {
     if (selectedIds.size === 0) {
       alert('전송할 주문을 선택해 주세요.')
       return
@@ -919,6 +902,34 @@ export function usePersonalOrder() {
       alert('전송할 주문이 없습니다.')
       return
     }
+
+    // ── 중복 전송 가드 ──────────────────────────────────────────
+    //   같은 건을 신규·재주문 카트에 각각 보내 두 번 구매되는 사고를 막는다.
+    //   이미 구매주문이 진행 중(미발송/포장/출고/확인필요)이거나 아직 처리 전인
+    //   카트(NEW·ORDER)에 담긴 행이 섞여 있으면 확인을 받는다.
+    //   미주문(none)·전량취소(red) 는 정상 전송 대상.
+    let dupRows: PersonalOrderRow[] = []
+    try {
+      const orderIds = Array.from(new Set(targetRows.map((r) => r.order_id).filter(Boolean)))
+      const pendingCartKeys = await fetchOrderCartKeys(orderIds, orderUserId, ['NEW', 'ORDER'])
+      dupRows = targetRows.filter((r) => {
+        const st = getRowStatus(r)
+        if (st !== 'none' && st !== 'red') return true
+        return !!r.order_id && pendingCartKeys.has(makeFulfillmentKey(r.order_id, r.vendor_item_id))
+      })
+    } catch (err) {
+      // 검사 실패 시에도 전송 자체는 막지 않는다 (사용자 판단)
+      console.error('[주문 전송] 중복 검사 실패:', err)
+    }
+    if (dupRows.length > 0) {
+      const sample = dupRows.slice(0, 5).map((r) => `· ${r.order_id} ${r.item_name}`).join('\n')
+      const ok = confirm(
+        `이미 주문이 진행 중이거나 카트에 담긴 행이 ${dupRows.length}건 있습니다.\n` +
+        `그대로 보내면 중복 주문이 됩니다. 계속하시겠습니까?\n\n${sample}${dupRows.length > 5 ? '\n…' : ''}`,
+      )
+      if (!ok) return
+    }
+
     setOrderSendModalOpen(true)
 
     // 기존 카트 목록 조회 (실패해도 '신규' 생성은 가능하도록 모달은 유지)
@@ -931,7 +942,7 @@ export function usePersonalOrder() {
         setCarts([])
       })
       .finally(() => setCartsLoading(false))
-  }, [selectedIds, filteredItems, getUserInfo])
+  }, [selectedIds, filteredItems, getUserInfo, getRowStatus])
 
   /** 모달에서 [저장] 클릭 시 — 실제 전송 + 사용자 알림 */
   const handleConfirmOrderSend = useCallback(async (target: CartTarget) => {
