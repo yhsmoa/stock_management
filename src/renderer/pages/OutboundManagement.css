@@ -53,6 +53,19 @@
   color: #EF4444;
 }
 
+/* ── [보관비만] 체크박스 (기준 드롭박스 옆) ─────────────────── */
+.outbound-fee-only {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  color: #374151;
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+
 /* ── [반출 xlsx] 버튼 (초록) ───────────────────────────────────
    .purchase-btn 의 형태(둥근 알약·입체감)를 그대로 쓰고 색만 초록으로. */
 .purchase-btn.outbound-export-btn {

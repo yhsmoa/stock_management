@@ -68,6 +68,8 @@ const OutboundManagement: React.FC = () => {
     handleSearchClear,
     sort,
     setSort,
+    feeOnly,
+    setFeeOnly,
     currentPage,
     totalPages,
     pageSize,
@@ -200,6 +202,18 @@ const OutboundManagement: React.FC = () => {
                 <DropdownItem className={sort.key === 'stock' && sort.dir === 'desc' ? 'active' : ''} onClick={() => setSort('stock', 'desc')}>내림차순</DropdownItem>
               </DropdownSubmenu>
             </DropdownMenu>
+
+            {/* ── [보관비만] 보관비가 있는 행만 표시 ─────────────
+                 상황판·전체선택·반출 xlsx 모두 필터된 결과 기준으로 동작한다. */}
+            <label className="outbound-fee-only">
+              <input
+                type="checkbox"
+                className="purchase-checkbox"
+                checked={feeOnly}
+                onChange={(e) => setFeeOnly(e.target.checked)}
+              />
+              보관비만
+            </label>
 
             {/* 합계는 상단 상황판에 있으므로 여기서는 건수·선택수만 */}
             <span className="purchase-filter-count">

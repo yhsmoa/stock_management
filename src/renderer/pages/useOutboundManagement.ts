@@ -97,6 +97,9 @@ export interface OutboundSort {
 /** 기본 정렬 — 보관비가 높은 순 */
 const DEFAULT_SORT: OutboundSort = { key: 'storage', dir: 'desc' }
 
+// ── 보관비 존재 여부 ([보관비만] 필터) ─────────────────────────
+const hasStorageFee = (row: RgItemData): boolean => (row.monthly_storage_fee ?? 0) > 0
+
 // ── 사용자 ID 조회 ────────────────────────────────────────────
 const getUserId = (): string | null => {
   const userStr = localStorage.getItem('user')
@@ -133,6 +136,18 @@ export function useOutboundManagement() {
     setSortRaw({ key, dir })
     setCurrentPage(1)
   }, [])
+
+  /* ── [보관비만] 필터 — 보관비(monthly_storage_fee)가 있는 행만 ── */
+  const [feeOnly, setFeeOnlyRaw] = useState(false)
+
+  /** 켜는 순간 보관비 없는 행의 기존 선택은 해제 — 체크 대상이 필터 결과와 일치하도록 */
+  const setFeeOnly = useCallback((on: boolean) => {
+    setFeeOnlyRaw(on)
+    setCurrentPage(1)
+    if (!on) return
+    const feeKeys = new Set(rows.filter(hasStorageFee).map(rowKeyOf))
+    setSelectedKeys((prev) => new Set([...prev].filter((k) => feeKeys.has(k))))
+  }, [rows])
 
   /** pageSize 변경 시 항상 1페이지로 리셋 (out-of-range 방지) */
   const setPageSize = useCallback((n: number) => {
@@ -184,6 +199,9 @@ export function useOutboundManagement() {
   const filteredRows = useMemo(() => {
     let result = rows
 
+    // ── STEP 0: [보관비만] — 보관비가 있는 행만 ─────────────────
+    if (feeOnly) result = result.filter(hasStorageFee)
+
     // ── STEP A: 검색어 (콤마·개행·탭 구분 다중 검색, OR 매칭) ──
     //   숫자 토큰 = Inventory/Option/SKU ID 정확 일치,
     //   그 외 = 상품명/옵션명/등급 부분 일치.
@@ -234,7 +252,7 @@ export function useOutboundManagement() {
       if (c !== 0) return c
       return Number(a.option_id ?? 0) - Number(b.option_id ?? 0)
     })
-  }, [rows, searchQuery, sort, groupAggMap])
+  }, [rows, feeOnly, searchQuery, sort, groupAggMap])
 
   /* ── 합계 (상황판·툴바 표시용) ───────────────────────────── */
   const totals = useMemo(() => {
@@ -414,6 +432,10 @@ export function useOutboundManagement() {
     // 정렬
     sort,
     setSort,
+
+    // [보관비만] 필터
+    feeOnly,
+    setFeeOnly,
 
     // 페이지네이션
     currentPage,
