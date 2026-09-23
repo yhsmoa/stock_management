@@ -23,7 +23,7 @@ npm run build:electron      # web build + electron-builder → release/ (Windows
 npm start                   # Node/Express prod server (src/server/prodServer.js) serving dist/ + Coupang proxy — this is what Railway runs
 ```
 
-There is no lint, test, or typecheck script. `tsc --noEmit` is not wired up; TypeScript errors only surface via Vite's build. If you add checks, wire them into `package.json` scripts rather than inventing ad-hoc commands.
+There is no lint or test script. `npm run typecheck` (`tsc --noEmit`, covers `src/` except `prodServer.js`) is the only static check — run it before committing. If you add checks, wire them into `package.json` scripts rather than inventing ad-hoc commands.
 
 ## Big picture
 
@@ -64,10 +64,17 @@ Electron is built separately via `scripts/build-electron.mjs` (called manually; 
 - **Commit style**: Conventional Commits in Korean (`feat:`, `fix:`, `refactor:`, `style:` + Korean summary). See `git log` for examples.
 - **Path alias**: `@/*` → `src/*` (configured in `tsconfig.json` and `vite.config.ts`).
 - **TypeScript**: `strict: true`, `noUnusedLocals`, `noUnusedParameters`, `noFallthroughCasesInSwitch` are all on. Don't silence them with `// @ts-ignore`; fix the underlying issue.
-- **Env vars**: The renderer reads `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`, and `VITE_LABEL_SERVICE_URL` (label-service 주소 — 사이드 메뉴 "라벨 설정" 링크와 상품관리 [라벨출력] iframe 에 쓴다; 비어 있으면 둘 다 숨김/비활성). The prod server uses `PORT`. No other env vars — if you think you need one, check if a header-based per-user key (Coupang pattern) fits better.
+- **Env vars**: The renderer reads `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`. The prod server uses `PORT`, plus `QZ_CERTIFICATE` / `QZ_PRIVATE_KEY` (라벨 인쇄 서명 — 아래 절). The Vite dev server reads the same two QZ vars from `.env` (no `VITE_` prefix, so they never reach the browser). No other env vars — if you think you need one, check if a header-based per-user key (Coupang pattern) fits better.
 
-### 라벨 출력 (label-service 연동)
-라벨 양식 편집·인쇄 엔진은 이 앱에 없다. 별도 서비스 **label-service**(`D:\project\label-service`, 같은 Supabase)가 `/print-embed` 를 iframe 으로 제공하고, 이 앱은 `services/labelService.ts` 로 선택 상품(`si_coupang_items` 행)을 postMessage 로 보내기만 한다. 보내는 필드 이름은 label-service 의 `SOURCE_PRODUCT_FIELDS.stock` 과 같아야 한다 — 바꾸면 양쪽을 같이 고친다. 모달은 `components/label/LabelPrintModal.tsx`.
+### 라벨 출력 (내장 — QZ Tray)
+라벨 양식 편집기(`/label-settings`, 사이드 메뉴 물류 › 라벨 설정)와 상품관리 [라벨출력] 모달이 이 앱 안에 있다. 원래 별도 서비스 label-service(Next.js, iframe)였는데 iframe 제약(저장소 분리·localhost 권한) 때문에 2026-09 에 옮겨 왔다 — label-service 는 아이엠몽 로켓용으로 남아 있고 **코드를 공유하지 않는 복사본**이다.
+- **구조**: 엔진 `utils/label/` (labelTypes·labelRender·tspl·zpl·labelJob·qzTray·careSymbols·localPrinterMap), 문구 `utils/label/ko.json` + `i18n.ts`(`t()` — i18next 호출 모양만 흉내, 한국어만), 서비스 `services/labelTemplateService.ts`(템플릿·기록·계정) · `labelPrintService.ts`(인쇄) · `labelService.ts`(상품 행 → 인쇄 항목), 화면 `pages/LabelSettings.tsx` + `components/label-settings/*`, `components/label/*`(모달).
+- **데이터**: 같은 Supabase 의 `label_templates`·`label_print_logs`. 이 앱은 `source='stock'` 만 읽고 쓴다(`APP_LABEL_SOURCE`) — 같은 표의 `rocket` 행은 label-service 것이니 건드리지 않는다. 권한 규칙(내 것+공용, `user_ids` 는 null 또는 [내 id], 기본 템플릿 그룹당 1개)은 서비스가 브라우저에서 강제한다(RLS 없음).
+- **QZ 서명**: `/api/qz/cert`·`/api/qz/sign` 이 개발(`src/server/qzSignProxy.ts`)과 운영(`prodServer.js`) 두 곳에 있다 — 쿠팡 프록시처럼 **양쪽을 같이 고친다**. 인증서·키는 label-service 와 같은 값이라 인쇄 PC 의 `override.crt` 를 바꿀 필요가 없다.
+- **프린터 지정**: 템플릿별로 이 PC 의 localStorage(`ls_local_printer_map_v1`). 라벨 설정 프린터 탭과 모달이 같은 값을 공유한다.
+- **필드 규약**: `labelService.ts` 의 `toLabelPrintItems()` 가 만드는 data 키는 `SOURCE_PRODUCT_FIELDS.stock` 과 같아야 한다 — 바꾸면 양쪽을 같이 고친다.
+- **명령 언어**: 템플릿의 `printer_lang`(TSPL2/ZPL)이 프린터 기종과 맞아야 한다. BIXOLON(BPL-Z)에 TSPL 을 보내면 라벨 대신 프린터 정보 문구가 찍힌다.
+- **진단**: 상품관리 URL 에 `?labelDebug=1` 을 붙이면 모달에 "인쇄 명령 저장" 버튼이 생긴다 (인쇄하지 않고 바이트를 파일로).
 
 ## Reference
 

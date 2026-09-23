@@ -1,7 +1,7 @@
 /* ================================================================
    프로덕션 서버 (Railway 배포용)
-   - Express: 쿠팡 API 프록시 + dist/ 정적 파일 서빙 + SPA fallback
-   - coupangProxy.ts (Vite 전용)의 로직을 CommonJS로 재구현
+   - Express: 쿠팡 API 프록시 + QZ Tray 서명(라벨 인쇄) + dist/ 정적 파일 서빙 + SPA fallback
+   - coupangProxy.ts · qzSignProxy.ts (Vite 전용)의 로직을 CommonJS로 재구현
    ================================================================ */
 
 const express = require('express')
@@ -475,6 +475,66 @@ app.post('/api/coupang/cc-inquiry-confirm', async (req, res) => {
   } catch (error) {
     console.error('[prod-server] cc-inquiry-confirm 오류:', error.message)
     res.status(500).json({ success: false, error: error.message })
+  }
+})
+
+// ══════════════════════════════════════════════════════════════════
+// QZ Tray 인증서 · 요청 서명 (라벨 인쇄) — qzSignProxy.ts 와 같은 로직
+//   env QZ_CERTIFICATE / QZ_PRIVATE_KEY (\n 이스케이프 PEM). 개인키는 브라우저로 나가지 않는다.
+//   인쇄 PC 의 QZ Tray 가 같은 인증서를 override.crt 로 신뢰하면 허용 창 없이 인쇄된다.
+// ══════════════════════════════════════════════════════════════════
+
+/** 클라이언트(utils/label/qzTray.ts)의 setSignatureAlgorithm('SHA512') 과 같아야 한다 */
+const QZ_SIGN_ALGORITHM = 'RSA-SHA512'
+/** 해시 문자열(64자) + 여유. 이보다 길면 정상 요청이 아니다 */
+const QZ_MAX_REQUEST_LEN = 512
+
+/** env 의 \n 이스케이프를 실제 개행으로 */
+function readPem(raw) {
+  if (!raw) return null
+  return raw.replace(/\\n/g, '\n').trim()
+}
+
+const QZ_CERTIFICATE = readPem(process.env.QZ_CERTIFICATE)
+const QZ_PRIVATE_KEY = (() => {
+  const pem = readPem(process.env.QZ_PRIVATE_KEY)
+  if (!pem) return null
+  try {
+    return crypto.createPrivateKey(pem)
+  } catch (error) {
+    console.error('[prod-server] QZ_PRIVATE_KEY 파싱 실패:', error.message)
+    return null
+  }
+})()
+
+// ── GET /api/qz/cert — 공개 인증서 (?download=1 → override.crt) ──
+//   없으면 404 → 클라이언트는 익명 모드(허용 창이 뜸)로 동작
+app.get('/api/qz/cert', (req, res) => {
+  if (!QZ_CERTIFICATE) return res.status(404).send('QZ_CERTIFICATE 가 설정되지 않았습니다.')
+  res.set('Content-Type', 'application/x-pem-file; charset=utf-8')
+  res.set('Cache-Control', 'no-store')
+  if (req.query.download === '1') {
+    res.set('Content-Disposition', 'attachment; filename="override.crt"')
+  }
+  res.send(QZ_CERTIFICATE + '\n')
+})
+
+// ── POST /api/qz/sign — 요청 서명 (body: { request }) ───────────
+app.post('/api/qz/sign', (req, res) => {
+  try {
+    if (!QZ_PRIVATE_KEY) {
+      return res.status(404).json({ success: false, error: 'QZ_PRIVATE_KEY 가 설정되지 않았습니다.' })
+    }
+    const toSign = req.body && req.body.request
+    if (typeof toSign !== 'string' || !toSign || toSign.length > QZ_MAX_REQUEST_LEN) {
+      return res.status(400).json({ success: false, error: '서명할 요청 문자열이 올바르지 않습니다.' })
+    }
+    const signer = crypto.createSign(QZ_SIGN_ALGORITHM)
+    signer.update(toSign, 'utf8')
+    res.json({ success: true, signature: signer.sign(QZ_PRIVATE_KEY, 'base64') })
+  } catch (error) {
+    console.error('[prod-server] QZ 서명 오류:', error.message)
+    res.status(500).json({ success: false, error: '서명 중 오류가 발생했습니다.' })
   }
 })
 

@@ -25,8 +25,10 @@
     "@supabase/supabase-js": "^2.39.3",
     "exceljs": "^4.4.0",
     "express": "^4.22.1",
+    "jsbarcode": "^3.12.3",
     "pdf-lib": "^1.17.1",
     "pdfjs-dist": "^5.6.205",
+    "qrcode": "^1.5.4",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "react-hook-form": "^7.71.1",
@@ -37,6 +39,7 @@
   },
   "devDependencies": {
     "@types/jsbarcode": "^3.11.4",
+    "@types/qrcode": "^1.5.6",
     "@types/react": "^18.2.48",
     "@types/react-dom": "^18.2.18",
     "@vitejs/plugin-react": "^4.2.1",

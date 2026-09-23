@@ -1,0 +1,932 @@
+/* ============================================================ */
+/* 라벨 설정 — 3분할 편집기                                       */
+/*   왼쪽: 템플릿·기본정보·프린터 / 가운데: 캔버스 / 오른쪽: 요소   */
+/* ============================================================ */
+
+.ls-layout {
+  /* Layout 의 main(height 100vh, overflow hidden) 을 꽉 채운다 — 스크롤은 이 페이지가 관리 */
+  height: 100%;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+}
+
+.ls-main-content {
+  display: flex;
+  flex: 1;
+  width: 100%;
+  min-height: 0;
+}
+
+.ls-content {
+  flex: 1;
+  min-width: 0;
+  height: 100%; /* 상단 바 없음 — 왼쪽 사이드바만 있는 Layout 기준 */
+  display: flex;
+  flex-direction: column;
+  padding: 14px 18px 18px;
+  background-color: #f5f5f5;
+}
+
+/* ============================================================ */
+/* 헤더                                                          */
+/* ============================================================ */
+.ls-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+  flex: 0 0 auto;
+}
+
+.ls-title {
+  color: #333;
+  font-size: 1.6rem;
+  margin: 0;
+}
+
+.ls-header-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.ls-qz-badge {
+  font-size: 12px;
+  padding: 5px 11px;
+  border-radius: 999px;
+  border: 1px solid #d1d5db;
+  color: #6b7280;
+  background: #fff;
+  white-space: nowrap;
+}
+
+.ls-qz-badge.ok {
+  border-color: #10b981;
+  color: #065f46;
+  background: #ecfdf5;
+}
+
+.ls-qz-badge.off {
+  border-color: #f59e0b;
+  color: #92400e;
+  background: #fffbeb;
+}
+
+.ls-dirty {
+  font-size: 12px;
+  color: #b45309;
+  white-space: nowrap;
+}
+
+/* 헤더 — QZ Tray 인증서 내려받기 (링크지만 버튼처럼) */
+.ls-cert-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  padding: 5px 11px;
+  border-radius: 999px;
+  text-decoration: none;
+  line-height: 1.2;
+}
+
+.ls-cert-link:hover { color: #111; border-color: #9ca3af; }
+
+/* ============================================================ */
+/* 3분할 작업 영역                                                */
+/* ============================================================ */
+.ls-workspace {
+  display: grid;
+  grid-template-columns: 320px minmax(0, 1fr) 340px;
+  gap: 12px;
+  flex: 1;
+  min-height: 0;
+}
+
+.ls-col {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+  min-width: 0;
+}
+
+.ls-col-left,
+.ls-col-right {
+  overflow-y: auto;
+  padding-right: 2px;
+}
+
+.ls-col-center {
+  overflow: hidden;
+  background: #fff;
+  border-radius: 8px;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  gap: 0;
+}
+
+/* 1400px 아래에서는 오른쪽 칸을 접어 2분할로 */
+@media (max-width: 1400px) {
+  .ls-workspace {
+    grid-template-columns: 280px minmax(0, 1fr);
+    grid-template-rows: 1fr auto;
+  }
+  .ls-col-right {
+    grid-column: 1 / -1;
+    max-height: 320px;
+  }
+}
+
+@media (max-width: 900px) {
+  .ls-content {
+    height: auto;
+  }
+  .ls-workspace {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ============================================================ */
+/* 패널 공통                                                     */
+/* ============================================================ */
+.ls-panel {
+  background: #fff;
+  border-radius: 8px;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  padding: 13px 14px;
+  flex: 0 0 auto;
+}
+
+/* 패널 제목 — 배지 형태로 구획이 한눈에 보이게 */
+.ls-panel-title {
+  font-size: 12.5px;
+  font-weight: 700;
+  color: #fff;
+  margin: -13px -14px 12px;
+  padding: 7px 14px;
+  background: #1f2937;
+  border-radius: 8px 8px 0 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+  letter-spacing: 0.02em;
+}
+
+.ls-panel-title .ls-count {
+  color: #e5e7eb;
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.ls-panel-title .ls-btn-ghost {
+  color: #e5e7eb;
+  border-color: rgba(255, 255, 255, 0.35);
+}
+
+.ls-panel-title .ls-btn-ghost:hover:not(:disabled) { background: rgba(255, 255, 255, 0.12); }
+.ls-panel-title .ls-size-readout { color: #d1d5db; }
+
+.ls-count {
+  font-size: 11px;
+  font-weight: 600;
+  color: #6b7280;
+  background: #f3f4f6;
+  border-radius: 999px;
+  padding: 1px 8px;
+}
+
+/* 소제목(내용 · 위치 · 글자 · 영역 …) — 작은 배지 + 구분선 */
+.ls-sub-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 14px 0 9px;
+  font-size: 11.5px;
+  font-weight: 700;
+  color: #1e3a8a;
+}
+
+.ls-sub-title::before {
+  content: '';
+  display: inline-block;
+  width: 4px;
+  height: 14px;
+  border-radius: 2px;
+  background: #2563eb;
+}
+
+.ls-sub-title::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: #e5e7eb;
+}
+
+.ls-hint {
+  font-size: 11px;
+  color: #9ca3af;
+  line-height: 1.5;
+}
+
+.ls-mt8 { margin-top: 8px; }
+.ls-mb8 { margin-bottom: 8px; }
+
+/* 영역 텍스트 — 줄 수·축소 결과 안내 */
+.ls-fit-readout {
+  font-size: 12px;
+  color: #374151;
+  padding: 6px 8px;
+  background: #f9fafb;
+  border: 1px solid #f0f0f0;
+  border-radius: 5px;
+  line-height: 1.5;
+}
+
+.ls-fit-readout em { font-style: normal; color: #2563eb; }
+.ls-fit-readout strong { color: #dc2626; }
+
+.ls-hint-warn {
+  color: #92400e;
+  background: #fffbeb;
+  border-left: 3px solid #f59e0b;
+  padding: 6px 9px;
+  border-radius: 0 5px 5px 0;
+}
+
+/* ============================================================ */
+/* 템플릿 보드 — 탭 하나짜리 카드 (템플릿/기본정보/미리보기데이터/프린터) */
+/* ============================================================ */
+.ls-board { padding-bottom: 6px; }
+
+.ls-tabs {
+  display: flex;
+  gap: 2px;
+  margin: -13px -14px 12px;
+  padding: 4px;
+  background: #1f2937;
+  border-radius: 8px 8px 0 0;
+}
+
+.ls-tab {
+  flex: 1;
+  border: none;
+  background: transparent;
+  color: #cbd5e1;
+  font-size: 11.5px;
+  font-weight: 600;
+  padding: 7px 4px;
+  border-radius: 6px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background-color 0.15s, color 0.15s;
+}
+
+.ls-tab:hover { background: rgba(255, 255, 255, 0.08); color: #fff; }
+.ls-tab.active { background: #fff; color: #1f2937; }
+
+.ls-tab-body { min-height: 40px; }
+
+/* 탭 내용 안에서 쓰는 얇은 제목 줄 (SampleDataPanel/LocalPrinterPanel) */
+.ls-panel-inline-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: #111;
+  margin-bottom: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+/* 사용할 수 있는 사업자 — 공용 토글 + 체크리스트 */
+.ls-user-shared {
+  padding: 7px 9px;
+  margin-bottom: 6px;
+  background: #f3f4f6;
+  border: 1px solid #e5e7eb;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.ls-user-shared span { font-weight: 600; }
+
+.ls-user-checklist {
+  display: flex;
+  flex-direction: column;
+  max-height: 160px;
+  overflow-y: auto;
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 5px;
+  margin-bottom: 4px;
+}
+
+.ls-user-checklist .ls-check {
+  /* .ls-check 의 align-self:end 는 그리드 셀 안에서 "아래 정렬"용이었는데,
+     여기 부모는 flex-direction:column 이라 그 값이 "오른쪽 정렬"로 뒤집혀
+     체크박스가 오른쪽으로 밀려나 보였다 — 이 안에서는 꽉 채워 왼쪽부터 채운다 */
+  align-self: stretch;
+  justify-content: flex-start;
+  width: 100%;
+  padding: 6px 9px;
+  border-radius: 0;
+  cursor: pointer;
+}
+
+.ls-user-checklist .ls-check + .ls-check { border-top: 1px solid #f3f4f6; }
+.ls-user-checklist .ls-check:hover { background: #f9fafb; }
+.ls-user-checklist .ls-check:has(input:checked) { background: #eff6ff; }
+
+/* 대상 (성인/키즈) — 가로 두 칸 체크 */
+.ls-audience-checks {
+  display: flex;
+  gap: 8px;
+}
+
+.ls-audience-checks .ls-check {
+  flex: 1;
+  align-self: stretch;
+  padding: 7px 9px;
+  border: 1px solid #e5e7eb;
+  border-radius: 5px;
+  background: #fff;
+}
+
+.ls-audience-checks .ls-check:has(input:checked) { background: #eff6ff; border-color: #bfdbfe; }
+.ls-audience-checks .ls-check em { font-style: normal; color: #9ca3af; font-size: 11px; }
+
+/* 다중 선택 — 우측 패널 요약 액션 */
+.ls-multi-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.ls-btn-danger-sm {
+  background: #fee2e2;
+  color: #b91c1c;
+  border: 1px solid #fecaca;
+}
+.ls-btn-danger-sm:hover:not(:disabled) { background: #fecaca; }
+
+/* 프린터 표 — 템플릿별 첫 칸 (이름 + 설명 + 종류/대상/dpi) */
+.ls-map-tpl-name { font-weight: 600; color: #111; }
+.ls-map-tpl-desc { font-size: 11px; color: #4b5563; margin-top: 1px; }
+.ls-map-tpl-meta { font-size: 10.5px; color: #9ca3af; margin-top: 1px; }
+
+/* 프린터 매핑 표 — 자리 × 라벨 종류 */
+.ls-map-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.ls-map-table th {
+  text-align: left;
+  font-weight: 600;
+  color: #6b7280;
+  font-size: 11px;
+  padding: 2px 4px 6px;
+}
+
+.ls-map-table td {
+  padding: 3px 4px;
+  vertical-align: middle;
+  border-top: 1px solid #f3f4f6;
+}
+
+.ls-map-table select {
+  width: 100%;
+  min-width: 0;
+  padding: 5px 6px;
+  border: 1px solid #d1d5db;
+  border-radius: 5px;
+  font-size: 12px;
+  background: #fff;
+}
+
+.ls-map-table select.is-missing { border-color: #f59e0b; color: #92400e; }
+
+.ls-map-saved,
+.ls-map-error {
+  display: block;
+  font-size: 10.5px;
+  margin-top: 2px;
+}
+
+.ls-map-saved { color: #15803d; }
+.ls-map-error { color: #b91c1c; }
+
+/* 미리보기 데이터 */
+.ls-sample-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 10px;
+}
+
+.ls-sample-grid .ls-field:has(textarea) { grid-column: span 2; }
+
+/* ============================================================ */
+/* 폼                                                            */
+/* ============================================================ */
+.ls-grid-2 {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 9px 10px;
+}
+
+.ls-row-2 {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.ls-col-2 { grid-column: span 2; }
+
+.ls-field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.ls-field > span {
+  font-size: 11px;
+  color: #6b7280;
+  line-height: 1.4;
+}
+
+.ls-field input[type='text'],
+.ls-field input[type='number'],
+.ls-field input:not([type]),
+.ls-field select,
+.ls-field textarea,
+.ls-row-2 select {
+  padding: 6px 8px;
+  border: 1px solid #d1d5db;
+  border-radius: 5px;
+  font-size: 12.5px;
+  background: #fff;
+  color: #111;
+  min-width: 0;
+  width: 100%;
+  font-family: inherit;
+}
+
+.ls-field textarea {
+  resize: vertical;
+  line-height: 1.45;
+}
+
+.ls-field input:focus,
+.ls-field select:focus,
+.ls-field textarea:focus {
+  outline: none;
+  border-color: #2563eb;
+}
+
+.ls-check {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  align-self: end;
+  padding-bottom: 4px;
+  cursor: pointer;
+}
+
+.ls-check input {
+  width: 15px;
+  height: 15px;
+  flex: 0 0 auto;
+}
+
+.ls-check span { font-size: 12.5px; color: #374151; }
+
+.ls-inline-checks {
+  flex-direction: row;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+.ls-inline-checks .ls-check { align-self: center; padding-bottom: 0; }
+
+/* 데이터필드 / 직접입력 전환 */
+.ls-seg {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  overflow: hidden;
+  margin-bottom: 9px;
+}
+
+.ls-seg button {
+  border: none;
+  background: #fff;
+  padding: 7px 6px;
+  font-size: 12px;
+  color: #6b7280;
+  cursor: pointer;
+}
+
+.ls-seg button + button { border-left: 1px solid #d1d5db; }
+.ls-seg button.active { background: #111827; color: #fff; font-weight: 600; }
+
+.ls-resolved {
+  margin-top: 8px;
+  padding: 7px 9px;
+  background: #f9fafb;
+  border: 1px solid #f0f0f0;
+  border-radius: 5px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.ls-resolved span { font-size: 11px; color: #9ca3af; }
+
+.ls-resolved code {
+  font-size: 12px;
+  color: #111;
+  word-break: break-all;
+  font-family: ui-monospace, Consolas, monospace;
+}
+
+.ls-size-readout {
+  font-size: 11px;
+  font-weight: 500;
+  color: #6b7280;
+  font-family: ui-monospace, Consolas, monospace;
+}
+
+.ls-font-missing {
+  font-style: normal;
+  color: #b45309;
+}
+
+/* ============================================================ */
+/* 템플릿 목록                                                    */
+/* ============================================================ */
+.ls-list-items {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  max-height: 260px;
+  overflow-y: auto;
+  margin-top: 9px;
+}
+
+.ls-list-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  text-align: left;
+  padding: 8px 10px;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  background: #fff;
+  cursor: pointer;
+  transition: border-color 0.15s, background-color 0.15s;
+}
+
+.ls-list-item:hover { background: #f9fafb; border-color: #d1d5db; }
+.ls-list-item.active { border-color: #18181b; background: #f4f4f5; }
+
+.ls-item-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: #111;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.ls-default-badge {
+  font-size: 10px;
+  font-weight: 600;
+  color: #065f46;
+  background: #d1fae5;
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+
+/* 두 번째 줄 — 작업자용 설명 */
+.ls-item-desc {
+  font-size: 12px;
+  color: #374151;
+  line-height: 1.35;
+  word-break: break-all;
+}
+
+.ls-item-desc.is-empty { color: #c4c4c4; font-style: italic; }
+
+.ls-item-meta { font-size: 11px; color: #6b7280; }
+
+/* ============================================================ */
+/* 요소 목록                                                      */
+/* ============================================================ */
+.ls-el-panel { flex: 0 0 auto; }
+
+.ls-el-list {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.ls-el-row {
+  display: grid;
+  grid-template-columns: 46px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 7px;
+  border: 1px solid #e5e7eb;
+  border-radius: 5px;
+  font-size: 12px;
+  cursor: pointer;
+  background: #fff;
+}
+
+.ls-el-row:hover { background: #f9fafb; }
+.ls-el-row.active { border-color: #2563eb; background: #eff6ff; }
+.ls-el-row.is-hidden { opacity: 0.45; }
+
+.ls-el-type {
+  font-size: 10.5px;
+  color: #6b7280;
+  background: #f3f4f6;
+  border-radius: 3px;
+  padding: 1px 4px;
+  text-align: center;
+}
+
+.ls-el-desc {
+  color: #111;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.ls-el-warn { color: #d97706; flex: 0 0 auto; }
+
+.ls-el-tools {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+}
+
+.ls-el-tool {
+  border: none;
+  background: transparent;
+  color: #6b7280;
+  font-size: 11px;
+  line-height: 1;
+  padding: 3px 3px;
+  cursor: pointer;
+  border-radius: 3px;
+}
+
+.ls-el-tool:hover:not(:disabled) { background: #e5e7eb; color: #111; }
+.ls-el-tool:disabled { opacity: 0.25; cursor: default; }
+.ls-el-tool.ls-el-del { color: #ef4444; font-size: 15px; }
+.ls-el-tool.ls-el-del:hover { background: #fee2e2; }
+
+.ls-props-panel { flex: 0 0 auto; }
+
+/* ============================================================ */
+/* 캔버스 툴바                                                    */
+/* ============================================================ */
+.lc-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 9px 12px;
+  border-bottom: 1px solid #e5e7eb;
+  background: #fafafa;
+  border-radius: 8px 8px 0 0;
+  flex: 0 0 auto;
+}
+
+.lc-tool-group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.lc-sep {
+  width: 1px;
+  height: 20px;
+  background: #e5e7eb;
+}
+
+.lc-spacer { flex: 1 1 auto; }
+
+.lc-inline {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: #4b5563;
+  white-space: nowrap;
+}
+
+.lc-inline select {
+  padding: 3px 5px;
+  border: 1px solid #d1d5db;
+  border-radius: 4px;
+  font-size: 12px;
+  background: #fff;
+}
+
+.lc-inline input[type='checkbox'] { width: 14px; height: 14px; }
+
+.lc-zoom input[type='range'] { width: 92px; }
+
+.lc-zoom-val {
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 11px;
+  color: #6b7280;
+  width: 34px;
+}
+
+/* ============================================================ */
+/* 캔버스 무대                                                    */
+/* ============================================================ */
+.ls-stage-wrap {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 22px;
+  background: #eef0f3;
+}
+
+.lc-frame {
+  display: grid;
+  grid-template-rows: auto auto;
+  flex: 0 0 auto;
+}
+
+.lc-corner { background: #f9fafb; }
+
+.lc-ruler {
+  background: #f9fafb;
+  display: block;
+}
+
+.lc-stage {
+  position: relative;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.18);
+  background: #fff;
+}
+
+.lc-paper {
+  position: absolute;
+  inset: 0;
+}
+
+.lc-overlay {
+  position: absolute;
+  inset: 0;
+  touch-action: none;
+}
+
+.ls-canvas-foot {
+  flex: 0 0 auto;
+  padding: 8px 12px;
+  font-size: 11.5px;
+  color: #9ca3af;
+  border-top: 1px solid #f0f0f0;
+  background: #fff;
+  border-radius: 0 0 8px 8px;
+}
+
+/* ============================================================ */
+/* 버튼                                                          */
+/* ============================================================ */
+.ls-btn,
+.ls-btn-sm,
+.ls-btn-xs,
+.ls-btn-icon,
+.ls-btn-primary,
+.ls-btn-danger,
+.ls-btn-ghost {
+  border: none;
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 13px;
+  padding: 7px 13px;
+  transition: background-color 0.15s;
+  white-space: nowrap;
+  font-family: inherit;
+}
+
+.ls-btn { background: #e5e7eb; color: #111; }
+.ls-btn:hover:not(:disabled) { background: #d1d5db; }
+
+.ls-btn-sm {
+  background: #f3f4f6;
+  color: #374151;
+  font-size: 12px;
+  padding: 5px 9px;
+  border: 1px solid #e5e7eb;
+}
+.ls-btn-sm:hover:not(:disabled) { background: #e5e7eb; }
+
+.ls-btn-xs {
+  font-size: 11px;
+  padding: 3px 8px;
+}
+
+.ls-btn-icon {
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  color: #374151;
+  font-size: 13px;
+  padding: 4px 8px;
+  line-height: 1.1;
+}
+.ls-btn-icon:hover:not(:disabled) { background: #eef2ff; border-color: #c7d2fe; }
+
+.ls-btn-primary { background: #18181b; color: #fff; }
+.ls-btn-primary:hover:not(:disabled) { background: #27272a; }
+
+.ls-btn-danger { background: #fee2e2; color: #b91c1c; }
+.ls-btn-danger:hover:not(:disabled) { background: #fecaca; }
+
+.ls-btn-ghost {
+  background: transparent;
+  color: #6b7280;
+  border: 1px solid #d1d5db;
+}
+.ls-btn-ghost:hover:not(:disabled) { background: #f9fafb; }
+
+button:disabled { opacity: 0.45; cursor: not-allowed; }
+
+/* ============================================================ */
+/* 상태 표시                                                      */
+/* ============================================================ */
+.ls-empty {
+  padding: 18px;
+  text-align: center;
+  color: #9ca3af;
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+
+.ls-empty-lg {
+  margin: auto;
+  padding: 60px 20px;
+}
+
+.ls-warn {
+  margin-top: 10px;
+  padding: 8px 11px;
+  background: #fffbeb;
+  border-left: 3px solid #f59e0b;
+  border-radius: 0 5px 5px 0;
+  color: #92400e;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.ls-warn-sm {
+  margin: 0 0 10px;
+  font-size: 11.5px;
+}
+
+/* ── 토스트 ── */
+.ls-toast {
+  position: fixed;
+  left: 50%;
+  bottom: 32px;
+  transform: translateX(-50%);
+  z-index: 3000;
+  padding: 11px 20px;
+  border-radius: 8px;
+  font-size: 13.5px;
+  color: #fff;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25);
+  max-width: 70vw;
+  white-space: pre-line;
+}
+
+.ls-toast.ok { background: #16a34a; }
+.ls-toast.err { background: #dc2626; }

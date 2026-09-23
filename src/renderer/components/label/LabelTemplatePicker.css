@@ -1,0 +1,184 @@
+/* ============================================================ */
+/* 템플릿 선택 — [라벨출력] 모달의 출력 버튼 위 블록               */
+/*   종류(라벨 스티커/케어 라벨) 별로 성인·키즈 한 줄씩          */
+/*   드롭다운은 두 줄(이름 / 설명)이라 직접 그린다               */
+/* ============================================================ */
+.ltp-block {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.ltp-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: #374151;
+  letter-spacing: 0.01em;
+}
+
+.ltp-empty {
+  font-size: 12px;
+  color: #9ca3af;
+}
+
+/* 한 줄 — [대상 배지] [드롭다운] */
+.ltp-row {
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+}
+
+.ltp-aud {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 4px 8px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.ltp-aud em {
+  font-style: normal;
+  font-size: 11px;
+  font-weight: 700;
+  opacity: 0.8;
+}
+
+.ltp-aud-adult { background: #eef2ff; color: #3730a3; }
+.ltp-aud-kids  { background: #fff7ed; color: #c2410c; }
+
+/* ============================================================ */
+/* 두 줄 드롭다운                                                */
+/* ============================================================ */
+.ltp-select {
+  position: relative;
+  min-width: 0;
+}
+
+.ltp-select-btn {
+  width: 100%;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-rows: auto auto;
+  column-gap: 8px;
+  text-align: left;
+  padding: 6px 10px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  background: #fff;
+  cursor: pointer;
+  font-family: inherit;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.ltp-select-btn:hover:not(:disabled) { border-color: #9ca3af; }
+.ltp-select.open .ltp-select-btn { border-color: #2563eb; box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.15); }
+
+.ltp-select-btn:disabled {
+  background: #f9fafb;
+  cursor: not-allowed;
+  opacity: 0.7;
+}
+
+/* 템플릿이 없어서 값이 비어 있는 상태 — 눈에 띄게 */
+.ltp-select-btn.is-missing {
+  border-color: #f59e0b;
+  background: #fffbeb;
+}
+
+.ltp-select-btn .ltp-caret {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  align-self: center;
+  color: #6b7280;
+  font-size: 12px;
+}
+
+/* 이름(1줄) / 설명(2줄) — 버튼과 옵션이 같은 모양 */
+.ltp-name {
+  grid-column: 1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #111827;
+  line-height: 1.35;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ltp-desc {
+  grid-column: 1;
+  font-size: 12px;
+  color: #4b5563;
+  line-height: 1.35;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ltp-desc.is-empty { color: #b8b8b8; font-style: italic; }
+
+.ltp-placeholder {
+  grid-column: 1;
+  grid-row: 1 / span 2;
+  align-self: center;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: #b45309;
+  line-height: 1.35;
+  white-space: normal;
+  word-break: keep-all;
+}
+
+.ltp-default {
+  font-style: normal;
+  font-size: 10px;
+  font-weight: 600;
+  color: #065f46;
+  background: #d1fae5;
+  border-radius: 4px;
+  padding: 0 5px;
+  flex: 0 0 auto;
+}
+
+/* 펼쳐진 목록 */
+.ltp-menu {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: calc(100% + 4px);
+  z-index: 20;
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  background: #fff;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.16);
+  max-height: 260px;
+  overflow-y: auto;
+}
+
+.ltp-option {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 6px 9px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.ltp-option:hover { background: #f3f4f6; }
+.ltp-option.active { background: #eff6ff; }
+.ltp-option .ltp-name,
+.ltp-option .ltp-desc { white-space: normal; word-break: break-all; }

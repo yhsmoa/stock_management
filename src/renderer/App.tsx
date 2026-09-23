@@ -18,6 +18,7 @@ import ItemInfo from './pages/ItemInfo'
 import AnalysisManagement from './pages/AnalysisManagement'
 import CustomerInquiry from './pages/CustomerInquiry'
 import CoupangInquiry from './pages/CoupangInquiry'
+import LabelSettings from './pages/LabelSettings'
 
 /* ================================================================
    라우터 (react-router v6 데이터 라우터)
@@ -52,6 +53,7 @@ const router = createBrowserRouter([
       { path: '/shipment-list', element: <ShipmentList /> },
       { path: '/rocket-shipment', element: <RocketShipment /> },
       { path: '/coupang-return', element: <Export /> },
+      { path: '/label-settings', element: <LabelSettings /> },
     ],
   },
 

@@ -4,12 +4,8 @@ import { supabase } from '../services/supabase';
 import { theme } from '../styles/theme';
 import UploadProgressModal from '../components/UploadProgressModal';
 import LabelPrintModal from '../components/label/LabelPrintModal';
-import {
-  buildLabelPrintRequest,
-  getLabelServiceUrl,
-  toLabelPrintItems,
-  type LabelPrintRequest,
-} from '../services/labelService';
+import { toLabelPrintItems } from '../services/labelService';
+import type { LabelPrintItem } from '../services/labelPrintService';
 import './CoupangManagement.css';
 
 // ── 분류 드롭박스 옵션 목록 ────────────────────────────────────────
@@ -71,9 +67,9 @@ const CoupangManagement: React.FC = () => {
   const [bulkPackageType, setBulkPackageType] = useState<string>('출고')
   const [bulkNote, setBulkNote] = useState('')
 
-  // ── 라벨출력 모달 상태 (label-service 임베드) ────────────────────
+  // ── 라벨출력 모달 상태 ───────────────────────────────────────────
   const [isLabelModalOpen, setIsLabelModalOpen] = useState(false)
-  const [labelRequest, setLabelRequest] = useState<LabelPrintRequest | null>(null)
+  const [labelItems, setLabelItems] = useState<LabelPrintItem[]>([])
 
   // ── 엑셀 분류 업로드 결과 모달 상태 ──────────────────────────────
   const [isExcelClassifyResultOpen, setIsExcelClassifyResultOpen] = useState(false)
@@ -202,13 +198,9 @@ const CoupangManagement: React.FC = () => {
     setSelectedOptionIds(next)
   }
 
-  // ── 라벨출력 — 선택 행을 label-service 임베드로 보낸다 ───────────
+  // ── 라벨출력 — 선택 행을 라벨출력 모달로 (QZ Tray 인쇄) ────────────
   //   바코드 없는 행(일반 배송)은 찍을 수 없어 제외하고 건수만 알린다.
   const handleLabelPrint = () => {
-    if (!getLabelServiceUrl()) {
-      alert('라벨 서비스 주소(VITE_LABEL_SERVICE_URL)가 설정되지 않았습니다.')
-      return
-    }
     const selected = items.filter((it) => selectedOptionIds.has(it.option_id))
     const { items: printItems, skipped } = toLabelPrintItems(selected)
     if (printItems.length === 0) {
@@ -218,7 +210,7 @@ const CoupangManagement: React.FC = () => {
     if (skipped > 0) {
       alert(`바코드가 없는 ${skipped}개 항목은 제외하고 ${printItems.length}개만 출력합니다.`)
     }
-    setLabelRequest(buildLabelPrintRequest(printItems))
+    setLabelItems(printItems)
     setIsLabelModalOpen(true)
   }
 
@@ -753,7 +745,7 @@ const CoupangManagement: React.FC = () => {
           분류 {selectedOptionIds.size > 0 && `(${selectedOptionIds.size})`}
         </button>
 
-        {/* 라벨출력 — 선택 행을 라벨 서비스(iframe)로 보내 QZ Tray 로 인쇄 */}
+        {/* 라벨출력 — 선택 행을 QZ Tray 로 인쇄 (템플릿은 [라벨 설정]) */}
         <button
           onClick={handleLabelPrint}
           disabled={selectedOptionIds.size === 0}
@@ -1155,10 +1147,10 @@ const CoupangManagement: React.FC = () => {
         </div>
       )}
 
-      {/* ── 라벨출력 모달 (label-service 임베드) ── */}
+      {/* ── 라벨출력 모달 ── */}
       <LabelPrintModal
         open={isLabelModalOpen}
-        request={labelRequest}
+        items={labelItems}
         onClose={() => setIsLabelModalOpen(false)}
       />
 

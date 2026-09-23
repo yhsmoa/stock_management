@@ -1,0 +1,79 @@
+/* ============================================================ */
+/* 이 PC 프린터 — [라벨출력] 모달에서 템플릿별 프린터 지정      */
+/* ============================================================ */
+.epp-root {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.epp-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.epp-title { font-size: 12px; font-weight: 700; color: #374151; }
+
+.epp-refresh {
+  font-size: 11px;
+  padding: 3px 8px;
+  border: 1px solid #d1d5db;
+  border-radius: 4px;
+  background: #fff;
+  color: #374151;
+  cursor: pointer;
+}
+
+.epp-refresh:disabled { color: #9ca3af; cursor: default; }
+
+/* 한 줄 — [템플릿 이름] [프린터 선택] */
+.epp-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr);
+  gap: 8px;
+  align-items: center;
+}
+
+.epp-name {
+  font-size: 12px;
+  color: #111827;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.epp-row select {
+  min-width: 0;
+  width: 100%;
+  padding: 5px 6px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  font-size: 12px;
+  font-family: inherit;
+  background: #fff;
+}
+
+.epp-row select.is-missing { border-color: #ef4444; background: #fef2f2; }
+
+.epp-warn {
+  font-size: 11px;
+  color: #b91c1c;
+  background: #fef2f2;
+  border-radius: 4px;
+  padding: 4px 8px;
+}
+
+.epp-warn { white-space: pre-line; }
+.epp-detail { margin-top: 2px; color: #7f1d1d; opacity: 0.8; word-break: break-all; }
+
+.epp-hint { font-size: 11px; color: #9ca3af; line-height: 1.5; }
+
+/* 한 템플릿 = [행] + (해상도 경고) */
+.epp-row-wrap { display: flex; flex-direction: column; gap: 3px; }
+.epp-row-warn { font-size: 11px; color: #b45309; line-height: 1.4; }

@@ -1,0 +1,79 @@
+/* ============================================================ */
+/* 라벨출력 모달 본문 — 템플릿 선택 · 이 PC 프린터 · 출력 버튼       */
+/*   모달 틀(오버레이·헤더)은 LabelPrintModal.tsx 의 inline theme */
+/*   LabelTemplatePicker.css · PrinterAssignPanel.css 와 함께 쓴다 */
+/* ============================================================ */
+.pe-root {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px 16px;
+  overflow-y: auto;
+  background: #fff;
+  font-family: "NanumSquare", "Malgun Gothic", sans-serif;
+  color: #111827;
+}
+
+.pe-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.pe-count { font-size: 13px; color: #4b5563; }
+.pe-aud { font-size: 12px; color: #6b7280; }
+
+/* 템플릿 선택 블록 — LabelTemplatePicker.css 와 함께 */
+.pe-plan {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #f9fafb;
+}
+
+.pe-hint { font-size: 11px; color: #9ca3af; line-height: 1.5; }
+
+.pe-flash-row { display: flex; flex-wrap: wrap; gap: 6px; }
+
+.pe-flash {
+  font-size: 12px;
+  font-weight: 600;
+  color: #15803d;
+  background: #dcfce7;
+  border-radius: 999px;
+  padding: 4px 10px;
+}
+
+/* ============================================================ */
+/* 출력 버튼                                                      */
+/* ============================================================ */
+.pe-buttons { display: flex; gap: 8px; }
+
+.pe-btn {
+  flex: 1;
+  min-height: 42px;
+  padding: 10px 8px;
+  border: none;
+  border-radius: 6px;
+  color: #fff;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  word-break: keep-all;
+  font-family: inherit;
+}
+
+.pe-btn:disabled { background: #d1d5db; color: #9ca3af; cursor: not-allowed; }
+.pe-btn-print { background: #18181b; }
+.pe-btn-print:hover:not(:disabled) { background: #27272a; }
+.pe-btn-all { background: #0d9488; }
+.pe-btn-all:hover:not(:disabled) { background: #0f766e; }
+
+/* 진단 (?labelDebug=1) — 인쇄 명령을 파일로 저장 */
+.pe-debug { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.pe-btn-debug { background: #6b7280; flex: 0 0 auto; padding: 10px 14px; }
+.pe-btn-debug:hover:not(:disabled) { background: #4b5563; }
