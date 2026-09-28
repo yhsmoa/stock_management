@@ -154,6 +154,25 @@ function toCoupangDate(date: string): string {
 }
 
 // ══════════════════════════════════════════════════════════════════
+// 쿠팡 응답 검증 — 에러 본문을 '0건'으로 오인하지 않도록
+//   프록시(callCoupangAPI)는 HTTP 상태와 무관하게 쿠팡 JSON 을 그대로
+//   { success: true, data } 로 넘긴다. 인증 실패·IP 미허용·호출 제한 같은
+//   쿠팡 에러도 success=true 로 오므로, 여기서 걸러내지 않으면
+//   "조회 0건" 으로 처리되고 → 저장 단계의 prune 이 기존 주문을 전부 지운다.
+//   성공 판정: data 가 배열이거나, 성공 코드(200/SUCCESS)인 경우만.
+// ══════════════════════════════════════════════════════════════════
+
+const COUPANG_SUCCESS_CODES = new Set(['200', 'SUCCESS'])
+
+function assertCoupangListResponse(apiData: any, label: string): void {
+  if (Array.isArray(apiData?.data)) return
+  if (COUPANG_SUCCESS_CODES.has(String(apiData?.code ?? ''))) return
+  const detail = apiData?.message
+    ?? (apiData == null ? '응답 없음' : JSON.stringify(apiData).slice(0, 200))
+  throw new Error(`쿠팡 ${label} 조회 실패: ${detail}`)
+}
+
+// ══════════════════════════════════════════════════════════════════
 // 쿠팡 발주서 API 호출
 // ══════════════════════════════════════════════════════════════════
 
@@ -178,6 +197,7 @@ async function fetchOrdersheetsPage(
       if (!json.success) {
         throw new Error(json.error || `발주서 조회 실패 (status=${res.status})`)
       }
+      assertCoupangListResponse(json.data, '발주서')
       return json.data
     } catch (err: any) {
       lastErr = err
@@ -295,6 +315,7 @@ async function fetchReturnRequestsPage(
       if (!json.success) {
         throw new Error(json.error || `반품요청 조회 실패 (status=${res.status})`)
       }
+      assertCoupangListResponse(json.data, '반품요청')
       return json.data
     } catch (err: any) {
       lastErr = err
