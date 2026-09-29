@@ -74,6 +74,7 @@ const PersonalOrder: React.FC = () => {
     handleRowClick,
     handleSearchSubmit,
     handleBarcodeLink,
+    handleBarcodeRelink,
     barcodeLoading,
     stockMap,
     // 송장 통합 업로드 모달
@@ -180,6 +181,12 @@ const PersonalOrder: React.FC = () => {
               disabled={barcodeLoading}
             >
               {barcodeLoading ? '매칭 중...' : '바코드 연결'}
+            </DropdownItem>
+            <DropdownItem
+              onClick={handleBarcodeRelink}
+              disabled={barcodeLoading || selectedIds.size === 0}
+            >
+              {`바코드 재연결${selectedIds.size > 0 ? ` (${selectedIds.size})` : ' (선택)'}`}
             </DropdownItem>
             <DropdownItem
               onClick={handleInvoiceUpdate}

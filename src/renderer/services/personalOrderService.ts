@@ -10,7 +10,17 @@ import type { AuthUser } from '../types/auth'
 
 // ── 상수 ──────────────────────────────────────────────────────────
 const SUPABASE_BATCH_SIZE = 500
+const SUPABASE_PAGE_SIZE = 1000      // PostgREST 기본 반환 상한 — 조회 루프 단위
+const SUPABASE_IN_DELETE_SIZE = 300  // .in() 삭제 청크 (URL 길이 보호)
 const ORDERSHEET_MAX_PER_PAGE = 50  // 쿠팡 API 최대값 (1회 요청당 행 수)
+
+// ── prune 안전장치 ────────────────────────────────────────────────
+//   쿠팡이 에러 없이 일부 상태만 빈 배열로 돌려주면 "안 온 행" 이 대량으로
+//   잡혀 기존 주문이 한꺼번에 지워진다. 삭제 대상이 아래 기준을 넘으면
+//   호출 측(훅)이 사용자 확인을 받은 뒤 forcePrune 으로 다시 호출한다.
+//   기준: max(PRUNE_GUARD_MIN, 기존 행수 × PRUNE_GUARD_RATIO)
+const PRUNE_GUARD_MIN = 50
+const PRUNE_GUARD_RATIO = 0.3
 const FETCH_CONCURRENCY = 2          // rate limit 보호용 동시 요청 제한
 const MAX_RETRIES = 3                // 요청 실패 시 재시도 횟수
 const RETRY_BASE_DELAY_MS = 500      // 지수 백오프 기본 지연 (0.5s, 1s, 2s)
@@ -98,9 +108,12 @@ export interface PersonalOrderRow {
   canceled: boolean
   cancel_count: number
   external_vendor_sku_code: string
+  // 로켓그로스 바코드 — [바코드 연결] 이 채운다. API 변환 시엔 '' 이지만
+  // savePersonalOrders 가 기존 행의 값을 이월하므로 [업데이트] 로 지워지지 않는다.
   barcode: string
   note: string
   release_stop: boolean  // 출고중지요청(RU) 또는 반품접수(UC) 대상 여부
+  updated_at?: string
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -473,7 +486,7 @@ export function mapOrderToRows(
         canceled: item.canceled ?? false,
         cancel_count: item.cancelCount ?? 0,
         external_vendor_sku_code: item.externalVendorSkuCode ?? '',
-        barcode: '',
+        barcode: '',   // 기본값 — 저장 단계에서 기존 행의 바코드로 대체됨
         note: '',
         release_stop: releaseStop,
       })
@@ -562,29 +575,93 @@ export async function updateOrderStatusToInstruct(
 // Supabase CRUD
 // ══════════════════════════════════════════════════════════════════
 
+export interface SavePersonalOrdersResult {
+  success: boolean
+  /** upsert 한 행 수 */
+  count: number
+  /** prune 으로 삭제한 행 수 */
+  pruned: number
+  /** prune 삭제 배치 실패 건수 (행 수 기준) */
+  pruneErrors: number
+  /** 안전장치에 걸려 중단됨 — 호출 측이 확인 후 forcePrune 으로 재호출 */
+  needsPruneConfirm?: { toDelete: number; existing: number }
+  error?: string
+}
+
 /**
- * 개인주문 동기화 — Upsert + Prune (reconcile)
- * - 유니크 제약 (user_id, shipment_box_id, vendor_item_id) 기준 upsert:
- *   받아온 것 중 신규는 삽입, 기존은 갱신. payload 에 id·pending_invoice_number 가
- *   없으므로 id 는 유지/자동생성되고 pending(사용자 등록 운송장번호)은 보존된다.
- * - Prune: 이번에 안 온 기존 행만 삭제 → 누적 없음, 전체 교체보다 write 최소.
- * - ⚠️ payload 에 id 를 넣지 않는 것이 핵심(넣으면 batch upsert 에서 null-id 위험).
+ * 개인주문 동기화 — 이월(carry-forward) + Upsert + Prune (reconcile)
+ *
+ * 순서
+ *   0. 기존 행 조회 (id, 키, barcode) — 이월과 prune 판정에 함께 사용
+ *   1. prune 안전장치 — 삭제 대상이 과다하면 저장 전에 중단하고 확인 요청
+ *   2. Upsert (onConflict = 유니크 제약 user_id, shipment_box_id, vendor_item_id)
+ *      · payload 의 barcode 는 기존 행 값으로 대체 → [업데이트] 가 바코드를 지우지 않는다
+ *      · id·pending_invoice_number 는 payload 에 없으므로 유지된다
+ *   3. Prune — 이번에 안 온 기존 행만 삭제 (누적 없음)
+ *
+ * ⚠️ payload 에 id 를 넣지 않는 것이 핵심(넣으면 batch upsert 에서 null-id 위험).
+ * ⚠️ 안전장치에 걸려 중단되면 DB 는 아무것도 바뀌지 않는다 (upsert 전 판정).
  */
 export async function savePersonalOrders(
   rows: PersonalOrderRow[],
   userId: string,
-): Promise<{ success: boolean; count: number; error?: string }> {
-  const keyOf = (r: { shipment_box_id: string; vendor_item_id: string }) =>
-    `${r.shipment_box_id}|${r.vendor_item_id}`
+  opts: { forcePrune?: boolean } = {},
+): Promise<SavePersonalOrdersResult> {
+  // DB 의 vendor_item_id 는 nullable — null 을 '' 로 맞춰 API 행(String 변환)과 같은 키가 되게 한다
+  const keyOf = (r: { shipment_box_id: string; vendor_item_id: string | null }) =>
+    `${r.shipment_box_id}|${r.vendor_item_id ?? ''}`
+  const fail = (error: string): SavePersonalOrdersResult =>
+    ({ success: false, count: 0, pruned: 0, pruneErrors: 0, error })
 
   try {
-    // ── 1. Upsert (onConflict = 유니크 제약). rows 에 id/pending 없음 → 자동 처리 ──
+    // ── 0. 기존 행 조회 (1000건 루프) ────────────────────────────
+    const existingByKey = new Map<string, { id: string; barcode: string }>()
+    {
+      let from = 0
+      while (true) {
+        const { data, error } = await supabase
+          .from('coupang_personal_orders')
+          .select('id, shipment_box_id, vendor_item_id, barcode')
+          .eq('user_id', userId)
+          .range(from, from + SUPABASE_PAGE_SIZE - 1)
+        if (error) throw error
+        if (!data || data.length === 0) break
+        for (const r of data as any[]) {
+          existingByKey.set(keyOf(r), { id: r.id, barcode: r.barcode ?? '' })
+        }
+        if (data.length < SUPABASE_PAGE_SIZE) break
+        from += SUPABASE_PAGE_SIZE
+      }
+    }
+
+    // ── 1. prune 대상 산출 + 안전장치 ───────────────────────────
     const newKeys = new Set<string>()
     for (const r of rows) newKeys.add(keyOf(r))
 
+    const idsToDelete: string[] = []
+    for (const [key, ex] of existingByKey) {
+      if (!newKeys.has(key)) idsToDelete.push(ex.id)
+    }
+
+    const guard = Math.max(PRUNE_GUARD_MIN, Math.floor(existingByKey.size * PRUNE_GUARD_RATIO))
+    if (!opts.forcePrune && idsToDelete.length > guard) {
+      return {
+        ...fail('삭제 대상 과다 — 사용자 확인 필요'),
+        needsPruneConfirm: { toDelete: idsToDelete.length, existing: existingByKey.size },
+      }
+    }
+
+    // ── 2. Upsert — barcode 이월 (기존 값 || '') ─────────────────
+    const now = new Date().toISOString()
+    const payload: PersonalOrderRow[] = rows.map((r) => ({
+      ...r,
+      barcode: existingByKey.get(keyOf(r))?.barcode || '',
+      updated_at: now,
+    }))
+
     let count = 0
-    for (let i = 0; i < rows.length; i += SUPABASE_BATCH_SIZE) {
-      const batch = rows.slice(i, i + SUPABASE_BATCH_SIZE)
+    for (let i = 0; i < payload.length; i += SUPABASE_BATCH_SIZE) {
+      const batch = payload.slice(i, i + SUPABASE_BATCH_SIZE)
       const { error } = await supabase
         .from('coupang_personal_orders')
         .upsert(batch, { onConflict: 'user_id,shipment_box_id,vendor_item_id' })
@@ -592,38 +669,28 @@ export async function savePersonalOrders(
       count += batch.length
     }
 
-    // ── 2. Prune: 현재 DB 행 중 이번에 안 온 것만 삭제 (id 로 삭제) ──────
-    const idsToDelete: string[] = []
-    {
-      let from = 0
-      while (true) {
-        const { data, error } = await supabase
-          .from('coupang_personal_orders')
-          .select('id, shipment_box_id, vendor_item_id')
-          .eq('user_id', userId)
-          .range(from, from + 999)
-        if (error) throw error
-        if (!data || data.length === 0) break
-        for (const r of data as any[]) {
-          if (!newKeys.has(keyOf(r))) idsToDelete.push(r.id)
-        }
-        if (data.length < 1000) break
-        from += 1000
-      }
-    }
-    for (let i = 0; i < idsToDelete.length; i += SUPABASE_BATCH_SIZE) {
-      const batch = idsToDelete.slice(i, i + SUPABASE_BATCH_SIZE)
+    // ── 3. Prune (id 기준 삭제, 배치 실패는 건수로 보고) ─────────
+    let pruned = 0
+    let pruneErrors = 0
+    for (let i = 0; i < idsToDelete.length; i += SUPABASE_IN_DELETE_SIZE) {
+      const batch = idsToDelete.slice(i, i + SUPABASE_IN_DELETE_SIZE)
       const { error } = await supabase
         .from('coupang_personal_orders')
         .delete()
+        .eq('user_id', userId)
         .in('id', batch)
-      if (error) console.error('[personalOrderService] prune 삭제 오류:', error.message)
+      if (error) {
+        console.error('[personalOrderService] prune 삭제 오류:', error.message)
+        pruneErrors += batch.length
+      } else {
+        pruned += batch.length
+      }
     }
 
-    return { success: true, count }
+    return { success: true, count, pruned, pruneErrors }
   } catch (err: any) {
     console.error('[personalOrderService] 저장 실패:', err.message)
-    return { success: false, count: 0, error: err.message }
+    return fail(err.message)
   }
 }
 
@@ -659,6 +726,53 @@ export async function fetchPersonalOrders(
   }
 
   return allData
+}
+
+// ══════════════════════════════════════════════════════════════════
+// 사입관리 '개인' 열 — 바코드별 개인주문 출고 예정 수량
+//   결제완료(ACCEPT)·상품준비중(INSTRUCT) 행의 shipping_count 를 바코드로 합산.
+//   취소된 행(canceled)·출고중지 요청(release_stop) 행은 나갈 물량이 아니므로 제외.
+//   바코드가 비어 있는 행(바코드 미연결)은 합산 대상이 아니다.
+// ══════════════════════════════════════════════════════════════════
+
+const PERSONAL_PENDING_STATUSES = ['ACCEPT', 'INSTRUCT'] as const
+
+/** 바코드 → Σ shipping_count (결제완료·상품준비중, 취소·출고중지 제외) */
+export async function fetchPersonalOrderQtyByBarcode(
+  userId: string,
+): Promise<Map<string, number>> {
+  const map = new Map<string, number>()
+  if (!userId) return map
+
+  let from = 0
+  while (true) {
+    const { data, error } = await supabase
+      .from('coupang_personal_orders')
+      .select('barcode, shipping_count, canceled, release_stop')
+      .eq('user_id', userId)
+      .in('status', [...PERSONAL_PENDING_STATUSES])
+      .neq('barcode', '')
+      .not('barcode', 'is', null)
+      .range(from, from + SUPABASE_PAGE_SIZE - 1)
+    if (error) throw error
+    if (!data || data.length === 0) break
+
+    for (const r of data as {
+      barcode: string
+      shipping_count: number | null
+      canceled: boolean | null
+      release_stop: boolean | null
+    }[]) {
+      if (r.canceled || r.release_stop) continue
+      const qty = r.shipping_count ?? 0
+      if (qty <= 0) continue
+      map.set(r.barcode, (map.get(r.barcode) ?? 0) + qty)
+    }
+
+    if (data.length < SUPABASE_PAGE_SIZE) break
+    from += SUPABASE_PAGE_SIZE
+  }
+  return map
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -858,6 +972,60 @@ export async function fetchOrderNotes(userId: string): Promise<Map<string, strin
     console.warn('[fetchOrderNotes] 예외(테이블 미생성?):', e)
   }
   return map
+}
+
+/**
+ * 업데이트 후 정리: 주문(coupang_personal_orders)이 더 이상 없는 order_id 의 비고 삭제
+ * - 비고는 별도 표라 주문이 prune 돼도 남아 영구 누적된다 → 업데이트마다 정리
+ * - 테이블 미생성 등 조회 실패 시 0건 처리 (업데이트 흐름 비차단)
+ */
+export async function cleanupStaleNotes(
+  userId: string,
+  validOrderIds: Set<string>,
+): Promise<{ deleted: number; errors: number }> {
+  if (!userId) return { deleted: 0, errors: 0 }
+
+  // STEP 1: 비고 order_id 전체 조회 (1000건 루프, 중복 제거)
+  const staleSet = new Set<string>()
+  let from = 0
+  while (true) {
+    const { data, error } = await supabase
+      .from('coupang_personal_orders_details')
+      .select('order_id')
+      .eq('user_id', userId)
+      .range(from, from + SUPABASE_PAGE_SIZE - 1)
+    if (error) {
+      console.warn('[cleanupStaleNotes] 조회 실패(테이블 미생성?):', error.message)
+      return { deleted: 0, errors: 0 }
+    }
+    if (!data || data.length === 0) break
+    for (const r of data as { order_id: string | null }[]) {
+      if (r.order_id && !validOrderIds.has(r.order_id)) staleSet.add(r.order_id)
+    }
+    if (data.length < SUPABASE_PAGE_SIZE) break
+    from += SUPABASE_PAGE_SIZE
+  }
+  if (staleSet.size === 0) return { deleted: 0, errors: 0 }
+
+  // STEP 2: order_id 청크 삭제 (한 order_id 에 여러 옵션 행이 있을 수 있어 건수는 행 기준 아님)
+  const staleIds = Array.from(staleSet)
+  let deleted = 0
+  let errors = 0
+  for (let i = 0; i < staleIds.length; i += SUPABASE_IN_DELETE_SIZE) {
+    const batch = staleIds.slice(i, i + SUPABASE_IN_DELETE_SIZE)
+    const { error } = await supabase
+      .from('coupang_personal_orders_details')
+      .delete()
+      .eq('user_id', userId)
+      .in('order_id', batch)
+    if (error) {
+      console.error('[cleanupStaleNotes] 삭제 오류:', error.message)
+      errors += batch.length
+    } else {
+      deleted += batch.length
+    }
+  }
+  return { deleted, errors }
 }
 
 /** 비고 저장 (upsert) — note 빈 값이면 null 로 저장 */

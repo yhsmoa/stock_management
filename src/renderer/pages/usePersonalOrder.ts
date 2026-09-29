@@ -17,6 +17,7 @@ import {
   updatePendingInvoiceNumbers,
   fetchTrackingNumbers,
   cleanupStaleTracking,
+  cleanupStaleNotes,
   fetchOrderNotes,
   saveOrderNote,
   STATUS_MAP,
@@ -48,6 +49,7 @@ import {
   splitAndUploadPages,
   printMultipleInvoices,
   fetchInvoiceOrderIds,
+  findOrphanInvoiceOrderIds,
   deleteInvoicesByOrderIds,
   type ParsedInvoicePage,
   type InvoiceUploadSummary,
@@ -465,8 +467,9 @@ export function usePersonalOrder() {
       { label: '쿠팡 발주서 조회', state: 'pending' },
       { label: '출고중지/반품 조회', state: 'pending' },
       { label: '데이터 변환', state: 'pending' },
-      { label: 'DB 저장', state: 'pending' },
+      { label: 'DB 저장 (바코드 이월)', state: 'pending' },
       { label: '재조회', state: 'pending' },
+      { label: '부속 데이터 정리 (운송장·비고·송장 PDF)', state: 'pending' },
       { label: '진행상황(fulfillment) 조회', state: 'pending' },
     ])
     setProgressStatus('')
@@ -493,16 +496,37 @@ export function usePersonalOrder() {
       const rows = mapOrderToRows(apiData, vendorId, userId, releaseStopSet)
       updateStep(2, 'done', `${rows.length}건`)
 
-      // STEP 4: 저장
+      // STEP 4: 저장 — 기존 바코드 이월 + prune 안전장치
       updateStep(3, 'active', `${rows.length}건 저장 중`)
-      const result = await savePersonalOrders(rows, userId)
+      let result = await savePersonalOrders(rows, userId)
+      if (result.needsPruneConfirm) {
+        // 쿠팡이 일부 상태를 빈 응답으로 준 경우일 수 있다 — 저장 전 사용자 확인
+        const { toDelete, existing } = result.needsPruneConfirm
+        const ok = confirm(
+          `기존 주문 ${existing}건 중 ${toDelete}건이 이번 조회에 없어 삭제 대상입니다.\n` +
+          `쿠팡 조회가 일부만 성공했을 수 있습니다.\n\n` +
+          `그래도 삭제하고 저장하시겠습니까? (취소하면 DB 는 변경되지 않습니다)`,
+        )
+        if (!ok) {
+          updateStep(3, 'error', '사용자 취소')
+          setProgressStatus('저장을 취소했습니다. DB 는 변경되지 않았습니다.')
+          setTimeout(() => closeProgress(), 1500)
+          return
+        }
+        result = await savePersonalOrders(rows, userId, { forcePrune: true })
+      }
       if (!result.success) {
         updateStep(3, 'error')
         setProgressStatus(`저장 실패: ${result.error}`)
         alert(`저장 실패: ${result.error}`)
         return
       }
-      updateStep(3, 'done', `${result.count}건`)
+      updateStep(
+        3,
+        'done',
+        `${result.count}건 저장 · ${result.pruned}건 정리` +
+        (result.pruneErrors > 0 ? ` · 정리 실패 ${result.pruneErrors}건` : ''),
+      )
 
       // STEP 5: 재조회
       updateStep(4, 'active')
@@ -512,11 +536,15 @@ export function usePersonalOrder() {
       setSelectedIds(new Set())
       updateStep(4, 'done', `${freshData.length}건`)
 
-      // STEP 5.5: xlsx 운송장 번호 stale 정리 (진행 단계 표시 없이 백그라운드)
+      // STEP 6: 부속 데이터 정리 — 주문이 사라진 order_id 의 운송장·비고·송장 PDF
+      //   운송장·비고는 자동, PDF 는 되돌릴 수 없으므로 건수를 보여주고 확인받는다.
+      updateStep(5, 'active')
       const validOrderIds = new Set(freshData.map((r) => r.order_id).filter(Boolean))
+      const cleanupParts: string[] = []
+
       const { deleted: trackingDeleted } = await cleanupStaleTracking(userId, validOrderIds)
       if (trackingDeleted > 0) {
-        console.log(`[송장 tracking] stale ${trackingDeleted}건 정리`)
+        cleanupParts.push(`운송장 ${trackingDeleted}`)
         setTrackingMap((prev) => {
           const next = new Map(prev)
           for (const key of next.keys()) {
@@ -526,10 +554,45 @@ export function usePersonalOrder() {
         })
       }
 
-      // STEP 6: fulfillment
-      updateStep(5, 'active')
+      const notesResult = await cleanupStaleNotes(userId, validOrderIds)
+      if (notesResult.deleted > 0) cleanupParts.push(`비고 ${notesResult.deleted}`)
+      if (notesResult.errors > 0) cleanupParts.push(`비고 실패 ${notesResult.errors}`)
+      if (notesResult.deleted > 0) {
+        setNoteMap((prev) => {
+          const next = new Map(prev)
+          for (const key of next.keys()) {
+            const oid = key.split('|')[0]
+            if (!validOrderIds.has(oid)) next.delete(key)
+          }
+          return next
+        })
+      }
+
+      const orphanPdfIds = await findOrphanInvoiceOrderIds(userId, validOrderIds)
+      if (orphanPdfIds.length > 0) {
+        const ok = confirm(
+          `주문이 더 이상 없는 송장 PDF 가 ${orphanPdfIds.length}건 있습니다.\n` +
+          `삭제하면 되돌릴 수 없습니다. 삭제하시겠습니까?`,
+        )
+        if (ok) {
+          const { deleted, errors } = await deleteInvoicesByOrderIds(userId, orphanPdfIds)
+          cleanupParts.push(`PDF ${deleted}`)
+          if (errors.length > 0) cleanupParts.push(`PDF 실패 ${errors.length}`)
+          setInvoiceOrderIds((prev) => {
+            const next = new Set(prev)
+            for (const oid of orphanPdfIds) next.delete(oid)
+            return next
+          })
+        } else {
+          cleanupParts.push(`PDF ${orphanPdfIds.length}건 보류`)
+        }
+      }
+      updateStep(5, 'done', cleanupParts.length > 0 ? cleanupParts.join(' · ') : '정리 대상 없음')
+
+      // STEP 7: fulfillment
+      updateStep(6, 'active')
       await loadFulfillmentData(freshData)
-      updateStep(5, 'done')
+      updateStep(6, 'done')
 
       setProgressStatus(`${result.count}건 업데이트 완료`)
       // 완료 메시지를 잠깐 보여준 후 자동 닫기
@@ -1261,6 +1324,92 @@ export function usePersonalOrder() {
     }
   }, [items, getUserInfo, updateStep, closeProgress])
 
+  // ── [바코드 재연결 (선택)] 핸들러 ────────────────────────────────
+  //   [업데이트] 가 바코드를 보존하게 되면서 잘못 붙은 바코드도 남는다.
+  //   선택 행을 바코드 유무와 무관하게 다시 매칭해 덮어쓴다.
+  //   매칭에 실패한 행은 기존 값을 지우지 않고 건수만 보고한다.
+  const handleBarcodeRelink = useCallback(async () => {
+    const { userId } = getUserInfo()
+    if (!userId) {
+      alert('로그인 정보를 확인해 주세요.')
+      return
+    }
+    const targets = items.filter((r) => selectedIds.has(getRowKey(r)))
+    if (targets.length === 0) {
+      alert('재연결할 주문을 선택해 주세요.')
+      return
+    }
+
+    setProgressTitle('바코드 재연결 (선택)')
+    setProgressSteps([
+      { label: '로켓그로스 상품(si_rg_items) 조회', state: 'pending' },
+      { label: '6단계 규칙 재매칭', state: 'pending' },
+      { label: 'DB 저장', state: 'pending' },
+    ])
+    setProgressStatus(`대상 ${targets.length}건`)
+    setProgressOpen(true)
+    setBarcodeLoading(true)
+
+    try {
+      updateStep(0, 'active')
+      const rgItems = await fetchRgItemsWithBarcode(userId)
+      if (rgItems.length === 0) {
+        updateStep(0, 'error')
+        alert('로켓그로스 상품(si_rg_items)에 바코드 데이터가 없습니다.')
+        closeProgress()
+        return
+      }
+      updateStep(0, 'done', `${rgItems.length}건`)
+
+      updateStep(1, 'active')
+      const matches = matchBarcodes(targets, rgItems)
+      const unmatched = targets.length - matches.size
+      // 값이 실제로 바뀌는 행만 저장 (같은 바코드면 write 생략)
+      const changed = new Map<string, string>()
+      for (const r of targets) {
+        if (!r.id) continue
+        const next = matches.get(r.id)
+        if (next && next !== r.barcode) changed.set(r.id, next)
+      }
+      if (matches.size === 0) {
+        updateStep(1, 'error')
+        alert(`매칭 결과: 0건\n선택 ${targets.length}건 모두 매칭되지 않아 기존 바코드를 유지합니다.`)
+        closeProgress()
+        return
+      }
+      updateStep(1, 'done', `매칭 ${matches.size} / 미매칭 ${unmatched} / 변경 ${changed.size}`)
+
+      updateStep(2, 'active')
+      const saveResult = changed.size > 0
+        ? await saveBarcodes(changed, userId)
+        : { updated: 0, errors: [] as string[] }
+      updateStep(2, 'done', `${saveResult.updated}건`)
+
+      if (changed.size > 0) {
+        setItems((prev) =>
+          prev.map((row) =>
+            row.id && changed.has(row.id) ? { ...row, barcode: changed.get(row.id)! } : row,
+          ),
+        )
+      }
+
+      setProgressStatus(
+        `매칭 ${matches.size} / 미매칭 ${unmatched} (기존 유지) / 변경 저장 ${saveResult.updated}` +
+        (saveResult.errors.length > 0 ? ` / 저장 실패 ${saveResult.errors.length}` : ''),
+      )
+      setTimeout(() => closeProgress(), 1800)
+    } catch (err: any) {
+      console.error('[바코드 재연결] 실패:', err)
+      setProgressSteps((prev) =>
+        prev.map((s) => (s.state === 'active' ? { ...s, state: 'error' } : s)),
+      )
+      setProgressStatus(`실패: ${err.message}`)
+      alert(`바코드 재연결 실패: ${err.message}`)
+    } finally {
+      setBarcodeLoading(false)
+    }
+  }, [items, selectedIds, getUserInfo, updateStep, closeProgress])
+
   // ══════════════════════════════════════════════════════════════════
   // 송장 통합 업로드 (엑셀 운송장번호 + PDF 라벨) — 동시 등록
   // ══════════════════════════════════════════════════════════════════
@@ -1758,6 +1907,7 @@ export function usePersonalOrder() {
     cartsLoading,
     handleRowClick,
     handleBarcodeLink,
+    handleBarcodeRelink,
     barcodeLoading,
     trackingMap,
     stockMap,

@@ -201,6 +201,25 @@ export async function fetchInvoiceOrderIds(userId: string): Promise<Set<string>>
 }
 
 // ══════════════════════════════════════════════════════════════════
+// 고아 송장 탐지 — 주문(coupang_personal_orders)이 더 이상 없는 PDF
+// - [업데이트] 로 주문이 prune 되면 라벨 PDF 만 Storage 에 남아 누적된다.
+// - 삭제는 되돌릴 수 없으므로 여기서는 목록만 돌려주고, 호출 측이
+//   사용자 확인 후 deleteInvoicesByOrderIds 로 지운다.
+// ══════════════════════════════════════════════════════════════════
+
+export async function findOrphanInvoiceOrderIds(
+  userId: string,
+  validOrderIds: Set<string>,
+): Promise<string[]> {
+  const stored = await fetchInvoiceOrderIds(userId)
+  const orphans: string[] = []
+  for (const oid of stored) {
+    if (!validOrderIds.has(oid)) orphans.push(oid)
+  }
+  return orphans
+}
+
+// ══════════════════════════════════════════════════════════════════
 // 송장 일괄 삭제 — order_id 배열 기반
 // - Supabase Storage remove() 은 paths 배열 한 번에 최대 1000건 권장
 // - 존재하지 않는 파일은 Supabase 가 무시 (error 아님)
