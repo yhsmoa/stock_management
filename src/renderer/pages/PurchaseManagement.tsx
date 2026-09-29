@@ -42,7 +42,6 @@ const SORT_LABELS: Record<string, string> = {
   storage:    '보관료',
   stock:      '재고량',
   return_qty: '반품',
-  return_fee: '반품-보관료',
 }
 
 /** [필터] 수량 컬럼 필터 키 → 표시명 */
@@ -398,6 +397,7 @@ const PurchaseManagement: React.FC = () => {
     carts,
     cartsLoading,
     orderSendCount,
+    personalOrderQtyMap,
     periodSalesMap,
     periodSalesInputRef,
     handlePeriodSalesUpload,
@@ -572,9 +572,24 @@ const PurchaseManagement: React.FC = () => {
         return <span style={{ color: '#EF4444' }}>{fee.toLocaleString()}</span>
       }
 
+      /* ── 개인 열 (개인주문 출고 예정 수량, barcode 기준) ────
+         결제완료·상품준비중 행의 shipping_count 합. 취소·출고중지 제외.
+         바코드가 없는 상품은 개인주문과 이어질 수 없으므로 빈칸. */
+      case 'personal_order': {
+        const bc = item.barcode
+        if (!bc) return ''
+        const qty = personalOrderQtyMap.get(bc)
+        if (!qty) return ''
+        return (
+          <span title="개인주문 결제완료·상품준비중 출고 예정 수량" style={{ fontWeight: 600 }}>
+            {qty.toLocaleString()}
+          </span>
+        )
+      }
+
       /* ── 기간 열 (기간판매량 = 판매자배송 + 로켓그로스) ─────
          hover 시 판매방식별 내역을 툴팁으로 보여준다. */
-      case 'personal': {
+      case 'period': {
         const ps = item.vendor_item_id ? periodSalesMap.get(item.vendor_item_id) : undefined
         if (!ps) return ''
         const total = ps.seller + ps.rocket
@@ -586,18 +601,13 @@ const PurchaseManagement: React.FC = () => {
         )
       }
 
-      /* ── 반품 열 (반품 재고 수량 / 반품 보관료) ─────────────
+      /* ── 반품 열 (반품 재고 수량) ───────────────────────────
          반품 행은 Option ID 가 새로 발급돼 ID 매칭이 불가하므로
          상품명+옵션명으로 집계한 returnAggMap 에서 찾는다. */
       case 'return_qty': {
         const agg = returnAggMap.get(makeReturnKey(item.seller_product_name, item.option_name))
         if (!agg?.qty) return ''
         return <span style={{ color: '#7C3AED', fontWeight: 600 }}>{agg.qty.toLocaleString()}</span>
-      }
-      case 'return_fee': {
-        const agg = returnAggMap.get(makeReturnKey(item.seller_product_name, item.option_name))
-        if (!agg?.fee) return ''
-        return <span style={{ color: '#EF4444' }}>{agg.fee.toLocaleString()}</span>
       }
 
       /* ── 조회수 V1~V5 (최근 5개 날짜, V1=가장 오래된, V5=최근) ──
@@ -627,7 +637,7 @@ const PurchaseManagement: React.FC = () => {
       default:
         return ''
     }
-  }, [getItemData, isNotItemWinner, warehouseQtyMap, viewsDataMap, recentViewDates, returnAggMap, periodSalesMap])
+  }, [getItemData, isNotItemWinner, warehouseQtyMap, viewsDataMap, recentViewDates, returnAggMap, periodSalesMap, personalOrderQtyMap])
 
   // ══════════════════════════════════════════════════════════════
   // 렌더링
@@ -925,16 +935,6 @@ const PurchaseManagement: React.FC = () => {
               <DropdownItem className={sort?.key !== 'return_qty' ? 'active' : ''} onClick={() => setSortDir('return_qty', null)}>전체</DropdownItem>
               <DropdownItem className={sort?.key === 'return_qty' && sort.dir === 'asc' ? 'active' : ''} onClick={() => setSortDir('return_qty', 'asc')}>오름차순</DropdownItem>
               <DropdownItem className={sort?.key === 'return_qty' && sort.dir === 'desc' ? 'active' : ''} onClick={() => setSortDir('return_qty', 'desc')}>내림차순</DropdownItem>
-            </DropdownSubmenu>
-
-            {/* 반품-보관료 */}
-            <DropdownSubmenu
-              label="반품-보관료"
-              className={sort?.key === 'return_fee' ? 'active' : ''}
-            >
-              <DropdownItem className={sort?.key !== 'return_fee' ? 'active' : ''} onClick={() => setSortDir('return_fee', null)}>전체</DropdownItem>
-              <DropdownItem className={sort?.key === 'return_fee' && sort.dir === 'asc' ? 'active' : ''} onClick={() => setSortDir('return_fee', 'asc')}>오름차순</DropdownItem>
-              <DropdownItem className={sort?.key === 'return_fee' && sort.dir === 'desc' ? 'active' : ''} onClick={() => setSortDir('return_fee', 'desc')}>내림차순</DropdownItem>
             </DropdownSubmenu>
           </DropdownMenu>
 

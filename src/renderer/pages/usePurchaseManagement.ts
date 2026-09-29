@@ -56,6 +56,7 @@ import {
   fetchPeriodSalesAgg,
   type PeriodSalesAgg,
 } from '../services/periodSalesService'
+import { fetchPersonalOrderQtyByBarcode } from '../services/personalOrderService'
 import type { RgItem, RgItemData } from '../types/purchase'
 
 // ── 상수 ──────────────────────────────────────────────────────
@@ -92,7 +93,10 @@ export const COLUMNS: Column[] = [
   { key: 'c_in',     label: 'C.in',     width: '37px' },
   { key: 'c_stock',  label: 'C.재고',   width: '38px' },
   { key: 'warehouse',label: '창고',     width: '35px' },
-  { key: 'personal', label: '기간',     width: '35px', borderLeft: true },
+  // 개인 — 개인주문(결제완료·상품준비중) 바코드별 출고 예정 수량 (personalOrderQtyMap)
+  { key: 'personal_order', label: '개인', width: '35px', borderLeft: true },
+  // 기간 — 업로드한 기간판매량 (periodSalesMap, 옵션 ID 기준)
+  { key: 'period',   label: '기간',     width: '35px' },
   { key: 'd7',       label: '7d',       width: '32px' },
   { key: 'd30',      label: '30d',      width: '34px' },
   // 추천 / 조회수(V1~V5) — 조회수가 5자리(예: 12,345)까지 올라가므로
@@ -105,9 +109,8 @@ export const COLUMNS: Column[] = [
   { key: 'v5',       label: 'V5',       width: '46px' },
   { key: 'storage',  label: '보관료',   width: '48px', borderLeft: true },
   // 반품 재고 — 반품 행은 Option ID 가 새로 발급돼 ID 매칭이 불가하므로
-  // 상품명+옵션명으로 집계해 붙인다 (returnAggMap).
+  // 상품명+옵션명으로 집계해 붙인다 (returnAggMap). 반품 보관료 열은 제거됨(2026-09-29).
   { key: 'return_qty', label: '반품',    width: '46px' },
-  { key: 'return_fee', label: '반품-보', width: '52px' },
   { key: 'in_qty',   label: '입고',     width: '46px', editable: true, colClass: 'col-in-qty' },
   { key: 'out_qty',  label: '반출',     width: '46px', editable: true, colClass: 'col-out-qty' },
   { key: 'note',     label: 'note',     width: '70px', editableText: true },
@@ -207,6 +210,8 @@ export function usePurchaseManagement() {
   // 기간판매량 (vendor_item_id → { rocket, seller }) — 업로드 세션 동안만 유지
   const [periodSalesMap, setPeriodSalesMap] = useState<Map<string, PeriodSalesAgg>>(new Map())
   const periodSalesInputRef = useRef<HTMLInputElement>(null)
+  // 개인주문 출고 예정 수량 (barcode → Σ shipping_count, 결제완료·상품준비중) — '개인' 열
+  const [personalOrderQtyMap, setPersonalOrderQtyMap] = useState<Map<string, number>>(new Map())
 
   /* ── 리셋/업데이트 로딩 ──────────────────────────────────── */
   const [resetting, setResetting] = useState(false)
@@ -280,9 +285,9 @@ export function usePurchaseManagement() {
     setCurrentPage(1)
   }, [])
 
-  /* ── 정렬 (판매량 / 기간판매량 / 보관료 / 재고량 / 반품 / 반품-보관료
+  /* ── 정렬 (판매량 / 기간판매량 / 보관료 / 재고량 / 반품
          — 상품 단위 합산, 3단계 토글) ─ */
-  type SortKey = 'sales' | 'period_sales' | 'storage' | 'stock' | 'return_qty' | 'return_fee'
+  type SortKey = 'sales' | 'period_sales' | 'storage' | 'stock' | 'return_qty'
   const [sort, setSort] = useState<{ key: SortKey; dir: 'desc' | 'asc' } | null>(null)
   // 판매량 정렬 기준 기간 (7일 / 30일)
   const [salesPeriod, setSalesPeriodRaw] = useState<'7d' | '30d'>('7d')
@@ -414,10 +419,9 @@ export function usePurchaseManagement() {
       const metricOf = (item: RgItem): number => {
         // 반품 계열은 Option ID 매칭이 불가해 itemDataMap 이 아니라
         // 상품명+옵션명 집계(returnAggMap)를 사용한다.
-        if (sort.key === 'return_qty' || sort.key === 'return_fee') {
+        if (sort.key === 'return_qty') {
           const agg = returnAggMap.get(makeReturnKey(item.seller_product_name, item.option_name))
-          if (!agg) return 0
-          return sort.key === 'return_qty' ? agg.qty : agg.fee
+          return agg?.qty ?? 0
         }
         // 기간판매량은 업로드한 엑셀 집계(옵션 ID 기준) — 판매자배송 + 로켓그로스 합
         if (sort.key === 'period_sales') {
@@ -496,7 +500,7 @@ export function usePurchaseManagement() {
 
       setLoading(true)
       try {
-        const [rgItems, rgItemData, viewsData, warehouseMap, periodAgg] = await Promise.all([
+        const [rgItems, rgItemData, viewsData, warehouseMap, periodAgg, personalQty] = await Promise.all([
           fetchRgItems(userId),
           fetchRgItemData(userId),
           fetchViewsData(userId),
@@ -506,10 +510,16 @@ export function usePurchaseManagement() {
             console.error('[기간판매량] 조회 실패:', e)
             return new Map<string, PeriodSalesAgg>()
           }),
+          // 개인주문 출고 예정 수량 ('개인' 열) — 동일하게 개별 catch
+          fetchPersonalOrderQtyByBarcode(userId).catch((e) => {
+            console.error('[개인주문 수량] 조회 실패:', e)
+            return new Map<string, number>()
+          }),
         ])
 
         setItems(rgItems)
         setPeriodSalesMap(periodAgg)
+        setPersonalOrderQtyMap(personalQty)
 
         // ── itemDataMap (option_id → RgItemData) ──
         const dataMap = new Map<string, RgItemData>()
@@ -2126,6 +2136,8 @@ else{console.log('[조회수] 완료! 총 '+results.length+'건 CSV 저장됨');
     // 반품 집계 (상품명+옵션명 기준)
     returnAggMap,
 
+    // 개인주문 출고 예정 수량 ('개인' 열, barcode 기준)
+    personalOrderQtyMap,
     // 기간판매량 (업로드 세션 동안만 유지)
     periodSalesMap,
     periodSalesInputRef,
