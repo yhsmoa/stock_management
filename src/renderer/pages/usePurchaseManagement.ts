@@ -145,6 +145,53 @@ function buildReturnAggMap(rows: RgItemData[]): Map<string, ReturnAgg> {
   return map
 }
 
+// ── 조건 적용 단위 ([상품기준] 체크박스) ───────────────────────
+//   productScope = true  : 조건에 맞는 옵션이 하나라도 있으면 그 상품(seller_product_id)의
+//                          옵션을 모두 남긴다 (rows 안에서만 — 상태 필터 등 앞 단계 결과는 유지).
+//   productScope = false : 조건에 맞는 옵션만 남긴다.
+//   seller_product_id 가 비어 있는 행은 상품으로 묶을 수 없으므로 자기 자신만 판단한다.
+
+function applyMatchScope(
+  rows: RgItem[],
+  matches: (item: RgItem) => boolean,
+  productScope: boolean,
+): RgItem[] {
+  if (!productScope) return rows.filter(matches)
+  const hitProducts = new Set<string>()
+  for (const r of rows) {
+    if (r.seller_product_id && matches(r)) hitProducts.add(r.seller_product_id)
+  }
+  return rows.filter((r) => (r.seller_product_id ? hitProducts.has(r.seller_product_id) : matches(r)))
+}
+
+// ── 조회수 정렬 값 ([기준] View / View 속도) ───────────────────
+//   조회수는 상품(seller_product_id) 단위로만 저장된다 — 같은 상품의 옵션은 값이 같으므로
+//   합산하지 않고 상품 값 하나를 그대로 쓴다. recentDates = [V1(오래된) … V5(최근)].
+//   null = 계산할 기록이 없어 정렬 대상에서 제외.
+
+/** View — 가장 최근 날짜(V5) 조회수. 그 날짜 기록이 없으면 null (0 은 실제 기록이므로 포함) */
+function viewLatestOf(views: Map<string, number> | undefined, recentDates: string[]): number | null {
+  if (!views || recentDates.length === 0) return null
+  return views.get(recentDates[recentDates.length - 1]) ?? null
+}
+
+/**
+ * View 속도 — V1~V5 중 기록이 있는 첫 날과 마지막 날의 차이 (마지막 − 처음).
+ *   업로드 순서가 들쭉날쭉해 V3~V5 만 있거나 V1~V3 만 있는 상품도 있으므로
+ *   V1·V5 고정이 아니라 '있는 값 중 가장 오래된 값 → 가장 최근 값' 으로 계산한다.
+ *   기록이 2개 미만이면 변화량을 알 수 없어 null.
+ */
+function viewSpeedOf(views: Map<string, number> | undefined, recentDates: string[]): number | null {
+  if (!views) return null
+  const present: number[] = []
+  for (const date of recentDates) {
+    const v = views.get(date)
+    if (v != null) present.push(v)
+  }
+  if (present.length < 2) return null
+  return present[present.length - 1] - present[0]
+}
+
 // ── 일괄 작업 유틸 ────────────────────────────────────────────
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms))
 
@@ -273,9 +320,18 @@ export function usePurchaseManagement() {
   /* ── 창고 재고 (barcode → si_stocks.qty 합산) ──────────── */
   const [warehouseQtyMap, setWarehouseQtyMap] = useState<Map<string, number>>(new Map())
 
-  /* ── 필터 (입력(input) / 주문(order_qty) / 입고 / 반출 / C.재고 / NO 바코드 / 📌 노트) ─ */
-  type FilterKey = 'input' | 'order' | 'in_qty' | 'out_qty' | 'c_stock' | 'no_barcode' | 'note'
+  /* ── 필터 (입력(input) / 주문(order_qty) / 입고 / 반출 / C.재고 / 개인 / NO 바코드 / 📌 노트) ─ */
+  type FilterKey = 'input' | 'order' | 'in_qty' | 'out_qty' | 'c_stock' | 'personal' | 'no_barcode' | 'note'
   const [activeFilter, setActiveFilter] = useState<FilterKey | null>(null)
+
+  /* ── [상품기준] 체크박스 — 필터·정렬 조건의 적용 단위 (기본: 상품) ─
+     true : 조건에 맞는 옵션이 하나라도 있으면 해당 상품의 옵션 전체 표시
+     false: 조건에 맞는 옵션만 표시 (정렬도 옵션 자체 값 기준) */
+  const [productScope, setProductScopeRaw] = useState(true)
+  const setProductScope = useCallback((on: boolean) => {
+    setProductScopeRaw(on)
+    setCurrentPage(1)
+  }, [])
 
   /* ── 상태 필터 (활성/비활성/전체) — 기본 'all'(전체) ─ */
   type StatusFilter = 'active' | 'inactive' | 'all'
@@ -285,9 +341,9 @@ export function usePurchaseManagement() {
     setCurrentPage(1)
   }, [])
 
-  /* ── 정렬 (판매량 / 기간판매량 / 보관료 / 재고량 / 반품
-         — 상품 단위 합산, 3단계 토글) ─ */
-  type SortKey = 'sales' | 'period_sales' | 'storage' | 'stock' | 'return_qty'
+  /* ── 정렬 (판매량 / 기간판매량 / 보관료 / 재고량 / 반품 — 상품 단위 합산,
+         View / View 속도 — 상품 조회수 그대로, 3단계 토글) ─ */
+  type SortKey = 'sales' | 'period_sales' | 'storage' | 'stock' | 'return_qty' | 'views' | 'view_speed'
   const [sort, setSort] = useState<{ key: SortKey; dir: 'desc' | 'asc' } | null>(null)
   // 판매량 정렬 기준 기간 (7일 / 30일)
   const [salesPeriod, setSalesPeriodRaw] = useState<'7d' | '30d'>('7d')
@@ -338,34 +394,42 @@ export function usePurchaseManagement() {
       result = result.filter((item) => item.item_status === 'NOT_AVAILABLE')
     }
 
-    // ── STEP A: 필터 토글 (input/in_qty/out_qty/order/no_barcode) ──────
+    // ── STEP A: 필터 토글 (input/in_qty/out_qty/order/c_stock/personal/no_barcode/note) ──
+    //   각 필터는 '옵션 한 행이 조건에 맞는가' 만 정의하고,
+    //   상품 단위 확장 여부는 [상품기준] 체크박스(applyMatchScope)가 정한다.
+    let matchesFilter: ((item: RgItem) => boolean) | null = null
     if (activeFilter === 'input' || activeFilter === 'in_qty' || activeFilter === 'out_qty') {
       const col = activeFilter
-      result = result.filter((item) => {
+      matchesFilter = (item) => {
         const v = item[col]
         return v != null && v > 0
-      })
+      }
     }
     // 주문 필터: order_qty(주문 열) 가 1 이상인 행
     else if (activeFilter === 'order') {
-      result = result.filter((item) => item.order_qty != null && item.order_qty > 0)
+      matchesFilter = (item) => item.order_qty != null && item.order_qty > 0
     }
     // C.재고 필터: 쿠팡 판매가능 재고(orderable_qty) 가 1 이상인 행
     //   값은 si_rg_item_data(재고 SKU 엑셀)에서 옵션 ID 로 붙인다 — 표의 'C.재고' 열과 동일.
     else if (activeFilter === 'c_stock') {
-      result = result.filter((item) => {
+      matchesFilter = (item) => {
         const data = item.vendor_item_id ? itemDataMap.get(item.vendor_item_id) : undefined
         return (data?.orderable_qty ?? 0) > 0
-      })
+      }
+    }
+    // 개인 필터: 개인주문 출고 예정 수량이 1 이상인 행 — 표의 '개인' 열과 같은 barcode 조회
+    else if (activeFilter === 'personal') {
+      matchesFilter = (item) => !!item.barcode && (personalOrderQtyMap.get(item.barcode) ?? 0) > 0
     }
     // NO 바코드 필터: barcode 가 비어있는(null/'') 행만
     else if (activeFilter === 'no_barcode') {
-      result = result.filter((item) => !item.barcode || item.barcode.trim() === '')
+      matchesFilter = (item) => !item.barcode || item.barcode.trim() === ''
     }
     // 📌 노트 필터: note(메모) 데이터가 있는 행만
     else if (activeFilter === 'note') {
-      result = result.filter((item) => !!item.note && item.note.trim() !== '')
+      matchesFilter = (item) => !!item.note && item.note.trim() !== ''
     }
+    if (matchesFilter) result = applyMatchScope(result, matchesFilter, productScope)
 
     // ── STEP B: 검색어 (다중 검색 지원) ─────────────────────────
     //   콤마/개행/탭으로 구분된 여러 검색어를 OR 매칭한다.
@@ -407,14 +471,33 @@ export function usePurchaseManagement() {
 
     // ── STEP C: 정렬 ──────────────────────────────────────────
     // 기본(정렬 미선택): 상품명 → 옵션명 (한글 오름차순)
-    // 정렬 선택 시: 상품(seller_product_id) 단위 합산값 기준 내림/오름차순.
-    //   같은 상품의 옵션은 합산값이 같아 인접 유지 → 2차 정렬(상품명/옵션명).
+    // 정렬 선택 시 — [상품기준] 체크박스에 따라:
+    //   · 상품기준(기본): 상품(seller_product_id) 단위 합산값 기준 내림/오름차순.
+    //     같은 상품의 옵션은 합산값이 같아 인접 유지 → 2차 정렬(상품명/옵션명).
+    //   · 옵션기준: 옵션 자체 값 기준. 값이 0 인 옵션은 제외.
+    //   · View / View 속도: 조회수는 상품 단위 값이라 체크박스와 무관하게 상품 값 그대로
+    //     (합산 금지). 음수(하락)·0 도 의미 있는 값이므로 기록이 없는 상품만 제외.
     const nameCmp = (a: RgItem, b: RgItem): number => {
       const c = (a.seller_product_name ?? '').localeCompare(b.seller_product_name ?? '', 'ko')
       return c !== 0 ? c : (a.option_name ?? '').localeCompare(b.option_name ?? '', 'ko')
     }
 
-    if (sort) {
+    // ── 정렬 값 산출 (null = 정렬 대상 아님 → 제외) ──
+    let sortValueOf: ((item: RgItem) => number | null) | null = null
+
+    if (sort && (sort.key === 'views' || sort.key === 'view_speed')) {
+      const viewMetric = sort.key === 'views' ? viewLatestOf : viewSpeedOf
+      const prodValue = new Map<string, number | null>()
+      sortValueOf = (it) => {
+        if (!prodValue.has(it.seller_product_id)) {
+          prodValue.set(
+            it.seller_product_id,
+            viewMetric(viewsDataMap.get(it.seller_product_id), recentViewDates),
+          )
+        }
+        return prodValue.get(it.seller_product_id) ?? null
+      }
+    } else if (sort) {
       // 상품별 합산 (전체 items 기준 — 필터/검색과 무관하게 상품 총합 사용)
       const metricOf = (item: RgItem): number => {
         // 반품 계열은 Option ID 매칭이 불가해 itemDataMap 이 아니라
@@ -436,16 +519,31 @@ export function usePurchaseManagement() {
         if (sort.key === 'storage') return data.monthly_storage_fee ?? 0
         return data.orderable_qty ?? 0 // stock = C.재고
       }
-      const prodSum = new Map<string, number>()
-      for (const it of items) {
-        prodSum.set(it.seller_product_id, (prodSum.get(it.seller_product_id) ?? 0) + metricOf(it))
+
+      // 상품기준 = 상품 합산 / 옵션기준 = 옵션 자체 값.
+      // 0(또는 음수) 값은 정렬 대상에서 제외 — 0보다 큰 값만 노출
+      const positiveOrNull = (v: number): number | null => (v > 0 ? v : null)
+      if (productScope) {
+        const prodSum = new Map<string, number>()
+        for (const it of items) {
+          prodSum.set(it.seller_product_id, (prodSum.get(it.seller_product_id) ?? 0) + metricOf(it))
+        }
+        sortValueOf = (it) => positiveOrNull(prodSum.get(it.seller_product_id) ?? 0)
+      } else {
+        const optionValue = new Map<RgItem, number>()
+        for (const it of result) optionValue.set(it, metricOf(it))
+        sortValueOf = (it) => positiveOrNull(optionValue.get(it) ?? 0)
       }
-      // 0(또는 음수) 합산 상품은 정렬 대상에서 제외 — 0보다 큰 값만 노출
-      result = result.filter((it) => (prodSum.get(it.seller_product_id) ?? 0) > 0)
-      result = [...result].sort((a, b) => {
-        const sa = prodSum.get(a.seller_product_id) ?? 0
-        const sb = prodSum.get(b.seller_product_id) ?? 0
-        if (sa !== sb) return sort.dir === 'desc' ? sb - sa : sa - sb
+    }
+
+    if (sort && sortValueOf) {
+      const valueOf = sortValueOf
+      const dir = sort.dir
+      const withValue = result.filter((it) => valueOf(it) != null)
+      result = withValue.sort((a, b) => {
+        const sa = valueOf(a) ?? 0
+        const sb = valueOf(b) ?? 0
+        if (sa !== sb) return dir === 'desc' ? sb - sa : sa - sb
         return nameCmp(a, b)
       })
     } else {
@@ -453,7 +551,7 @@ export function usePurchaseManagement() {
     }
 
     return result
-  }, [activeFilter, statusFilter, items, itemDataMap, returnAggMap, periodSalesMap, searchQuery, searchMode, sort, salesPeriod])
+  }, [activeFilter, productScope, statusFilter, items, itemDataMap, returnAggMap, periodSalesMap, personalOrderQtyMap, viewsDataMap, recentViewDates, searchQuery, searchMode, sort, salesPeriod])
 
   const handleFilterToggle = (filter: FilterKey) => {
     setActiveFilter((prev) => (prev === filter ? null : filter))
@@ -2011,6 +2109,10 @@ else{console.log('[조회수] 완료! 총 '+results.length+'건 CSV 저장됨');
     // 필터
     activeFilter,
     handleFilterToggle,
+
+    // [상품기준] 체크박스 — 필터·정렬 조건의 적용 단위
+    productScope,
+    setProductScope,
 
     // 정렬 (판매량/보관료/재고량)
     sort,

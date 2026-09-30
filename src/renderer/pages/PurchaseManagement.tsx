@@ -24,6 +24,7 @@ import DropdownMenu, {
   DropdownSection,
 } from '../components/common/DropdownMenu'
 import BulkPriceModal from '../components/purchase/BulkPriceModal'
+import ProductScopeToggle from '../components/purchase/ProductScopeToggle'
 import UnsavedChangesGuard from '../components/common/UnsavedChangesGuard'
 
 // ── 상수: 조회수 변동 색상 ────────────────────────────────────
@@ -42,6 +43,8 @@ const SORT_LABELS: Record<string, string> = {
   storage:    '보관료',
   stock:      '재고량',
   return_qty: '반품',
+  views:      'View',
+  view_speed: 'View 속도',
 }
 
 /** [필터] 수량 컬럼 필터 키 → 표시명 */
@@ -51,6 +54,7 @@ const QTY_FILTER_LABELS: Record<string, string> = {
   in_qty: '입고',
   out_qty: '반출',
   c_stock: 'C.재고',
+  personal: '개인',
 }
 
 /** 조회수 열 — 헤더 hover 시 해당 날짜를 보여준다 */
@@ -314,6 +318,8 @@ const PurchaseManagement: React.FC = () => {
     pageItems,
     activeFilter,
     handleFilterToggle,
+    productScope,
+    setProductScope,
     sort,
     setSortDir,
     salesPeriod,
@@ -877,7 +883,7 @@ const PurchaseManagement: React.FC = () => {
           </div>
 
           {/* ── [기준] 정렬 드롭박스 ─────────────────────────
-               판매량 / 보관료 / 재고량 을 하위 플라이아웃으로 묶고,
+               판매량 / 기간판매량 / 보관료 / 재고량 / 반품 / View / View 속도 를 하위 플라이아웃으로 묶고,
                각 기준 안에서 전체·오름차순·내림차순을 선택한다. */}
           <DropdownMenu
             label={`기준${SORT_LABELS[sort?.key ?? ''] ? ` · ${SORT_LABELS[sort!.key]}${sort!.key === 'sales' ? `(${salesPeriod === '30d' ? '30일' : '7일'})` : ''} ${sort!.dir === 'desc' ? '▼' : '▲'}` : ''}`}
@@ -936,9 +942,41 @@ const PurchaseManagement: React.FC = () => {
               <DropdownItem className={sort?.key === 'return_qty' && sort.dir === 'asc' ? 'active' : ''} onClick={() => setSortDir('return_qty', 'asc')}>오름차순</DropdownItem>
               <DropdownItem className={sort?.key === 'return_qty' && sort.dir === 'desc' ? 'active' : ''} onClick={() => setSortDir('return_qty', 'desc')}>내림차순</DropdownItem>
             </DropdownSubmenu>
+
+            {/* View — 가장 최근 날짜(V5) 조회수 (상품 단위) */}
+            <DropdownSubmenu
+              label="View"
+              className={sort?.key === 'views' ? 'active' : ''}
+            >
+              <DropdownItem className={sort?.key !== 'views' ? 'active' : ''} onClick={() => setSortDir('views', null)}>전체</DropdownItem>
+              <DropdownItem className={sort?.key === 'views' && sort.dir === 'asc' ? 'active' : ''} onClick={() => setSortDir('views', 'asc')}>오름차순</DropdownItem>
+              <DropdownItem className={sort?.key === 'views' && sort.dir === 'desc' ? 'active' : ''} onClick={() => setSortDir('views', 'desc')}>내림차순</DropdownItem>
+            </DropdownSubmenu>
+
+            {/* View 속도 — V1~V5 중 기록 있는 처음→마지막 증감 (내림=상승 큰 순, 오름=하락 큰 순) */}
+            <DropdownSubmenu
+              label="View 속도"
+              className={sort?.key === 'view_speed' ? 'active' : ''}
+            >
+              <DropdownItem className={sort?.key !== 'view_speed' ? 'active' : ''} onClick={() => setSortDir('view_speed', null)}>전체</DropdownItem>
+              <DropdownItem
+                className={sort?.key === 'view_speed' && sort.dir === 'asc' ? 'active' : ''}
+                onClick={() => setSortDir('view_speed', 'asc')}
+                title="하락폭이 큰 상품부터"
+              >
+                오름차순
+              </DropdownItem>
+              <DropdownItem
+                className={sort?.key === 'view_speed' && sort.dir === 'desc' ? 'active' : ''}
+                onClick={() => setSortDir('view_speed', 'desc')}
+                title="상승폭이 큰 상품부터"
+              >
+                내림차순
+              </DropdownItem>
+            </DropdownSubmenu>
           </DropdownMenu>
 
-          {/* ── [필터] 수량 컬럼 기반 필터 (입력 / 주문 / 입고 / 반출) ─ */}
+          {/* ── [필터] 수량 컬럼 기반 필터 (입력 / 주문 / 입고 / 반출 / C.재고 / 개인) ─ */}
           <DropdownMenu
             label={`필터${QTY_FILTER_LABELS[activeFilter ?? ''] ? ` · ${QTY_FILTER_LABELS[activeFilter!]}` : ''}`}
             triggerClassName={`purchase-filter-trigger${QTY_FILTER_LABELS[activeFilter ?? ''] ? ' active' : ''}`}
@@ -977,6 +1015,13 @@ const PurchaseManagement: React.FC = () => {
               title="쿠팡 판매가능 재고(C.재고)가 1 이상인 행"
             >
               C.재고
+            </DropdownItem>
+            <DropdownItem
+              className={activeFilter === 'personal' ? 'active' : ''}
+              onClick={() => handleFilterToggle('personal')}
+              title="개인주문 출고 예정 수량('개인' 열)이 1 이상인 행"
+            >
+              개인
             </DropdownItem>
           </DropdownMenu>
 
@@ -1025,6 +1070,9 @@ const PurchaseManagement: React.FC = () => {
               전체
             </DropdownItem>
           </DropdownMenu>
+
+          {/* ── [상품기준] 필터·정렬 조건의 적용 단위 (기본 체크 = 상품 단위) ── */}
+          <ProductScopeToggle checked={productScope} onChange={setProductScope} />
 
           {activeFilter && (
             <span className="purchase-filter-count">
