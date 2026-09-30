@@ -1,16 +1,18 @@
 /* ================================================================
    로켓그로스 출고 (RocketShipment) — 렌더링 컴포넌트
-   - 상단(우측): [xlsx 등록] [그로스 입고 xlsx 생성]
+   - 상단(우측): [xlsx 등록] [조건 선택] [그로스 입고 xlsx 생성]
+   - [조건 선택]: 박스 번호 범위(A 몇 번 ~ 몇 번)로 한 번에 체크
    - 테이블 좌상단: Small/Medium/Large 사이즈 탭 (쿠팡사이즈 필터)
    - 체크박스로 선택 → 현재 탭 체크 행만 그로스 입고 xlsx 생성
    - 위치(박스번호)-쿠팡사이즈 불일치 행은 빨간 폰트
    - 로직은 useRocketShipment 훅에서 관리
    ================================================================ */
 
-import React from 'react'
+import React, { useState } from 'react'
 import './RocketShipment.css'
 import { useRocketShipment, COLUMNS } from './useRocketShipment'
-import { SIZES, isSizeMismatch } from '../services/rocketShipmentService'
+import { SIZES, isSizeMismatch, letterOfSize } from '../services/rocketShipmentService'
+import BoxRangeSelectModal from '../components/shipment/BoxRangeSelectModal'
 
 const RocketShipment: React.FC = () => {
   const {
@@ -31,15 +33,19 @@ const RocketShipment: React.FC = () => {
     isAllSelected,
     handleSelectAll,
     handleSelectRow,
+    selectByBoxRange,
     generating,
     handleGenerate,
   } = useRocketShipment()
+
+  // ── [조건 선택] 모달 열림 여부 ──
+  const [rangeModalOpen, setRangeModalOpen] = useState(false)
 
   const hasData = rows.length > 0
 
   return (
     <div className="rs-container">
-      {/* ── 상단(우측): 쉽먼트 사이즈 xlsx · xlsx 등록 · 그로스 입고 xlsx 생성 ── */}
+      {/* ── 상단(우측): 쉽먼트 사이즈 xlsx · xlsx 등록 · 조건 선택 · 그로스 입고 xlsx 생성 ── */}
       <div className="rs-top-actions">
         <label className={`rs-btn${shipmentSizeUploading ? ' rs-btn-disabled' : ''}`}>
           {shipmentSizeUploading ? '업로드 중...' : '쉽먼트 사이즈 xlsx'}
@@ -63,6 +69,14 @@ const RocketShipment: React.FC = () => {
             onChange={handleXlsxUpload}
           />
         </label>
+        <button
+          className="rs-btn"
+          onClick={() => setRangeModalOpen(true)}
+          disabled={!hasData || loading}
+          title="박스 번호 범위(A 몇 번 ~ 몇 번)로 한 번에 체크"
+        >
+          조건 선택
+        </button>
         <button
           className="rs-btn rs-btn-primary"
           onClick={handleGenerate}
@@ -181,6 +195,15 @@ const RocketShipment: React.FC = () => {
           </table>
         </div>
       </div>
+
+      {/* ── [조건 선택] 박스 번호 범위 선택 모달 ──────────────── */}
+      <BoxRangeSelectModal
+        isOpen={rangeModalOpen}
+        onClose={() => setRangeModalOpen(false)}
+        rows={rows}
+        defaultLetter={letterOfSize(tab)}
+        onConfirm={selectByBoxRange}
+      />
     </div>
   )
 }

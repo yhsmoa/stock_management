@@ -1,7 +1,7 @@
 /* ================================================================
    로켓그로스 출고 (RocketShipment) — 커스텀 훅
    - xlsx 등록(파싱+조인), 사이즈 탭 필터, 체크박스 선택,
-     그로스 입고 xlsx 생성
+     [조건 선택](박스 번호 범위 선택), 그로스 입고 xlsx 생성
    ================================================================ */
 
 import { useCallback, useMemo, useRef, useState } from 'react'
@@ -11,7 +11,9 @@ import {
   enrichOutboundRows,
   buildGrowthInboundWorkbook,
   expectedSize,
+  isInBoxRange,
   SIZES,
+  SIZE_BY_LETTER,
   type SizeTab,
   type RocketShipmentRow,
 } from '../services/rocketShipmentService'
@@ -189,6 +191,19 @@ export function useRocketShipment() {
 
   const changeTab = useCallback((t: SizeTab) => setTab(t), [])
 
+  // ── [조건 선택]: letter 박스 from~to 번 범위의 행만 선택 ──────────
+  //   기존 선택은 해제하고 범위에 드는 행으로 교체한다.
+  //   letter 가 가리키는 사이즈 탭으로 이동 — xlsx 생성은 현재 탭 체크 행만 처리하므로.
+  const selectByBoxRange = useCallback((letter: string, from: number, to: number) => {
+    const next = new Set<number>()
+    rows.forEach((row, idx) => {
+      if (isInBoxRange(row.location, letter, from, to)) next.add(idx)
+    })
+    setSelected(next)
+    const size = SIZE_BY_LETTER[letter]
+    if (size) setTab(size)
+  }, [rows])
+
   // ── [그로스 입고 xlsx 생성]: 현재 탭의 체크된 행만 → 파일 다운로드 ──
   const handleGenerate = useCallback(() => {
     const targets = filtered.filter(({ idx }) => selected.has(idx)).map(({ row }) => row)
@@ -230,6 +245,7 @@ export function useRocketShipment() {
     isAllSelected,
     handleSelectAll,
     handleSelectRow,
+    selectByBoxRange,
     // 생성
     generating,
     handleGenerate,

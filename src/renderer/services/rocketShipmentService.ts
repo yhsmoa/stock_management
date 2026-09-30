@@ -197,6 +197,28 @@ export function expectedSize(location: string): string {
   return SIZE_BY_LETTER[locationLetter(location)] ?? ''
 }
 
+/** 사이즈 → 위치 letter (Small → 'A') — [조건 선택] 모달 기본 letter 용 */
+export function letterOfSize(size: SizeTab): string {
+  return Object.keys(SIZE_BY_LETTER).find((l) => SIZE_BY_LETTER[l] === size) ?? ''
+}
+
+// ── 박스 번호 ([조건 선택] — A 몇 번 ~ 몇 번 박스) ─────────────────
+//   BO-A-01 → 3번째 세그먼트의 앞자리 숫자 → 1. 숫자가 없으면 null (범위 선택 대상 아님).
+
+/** 위치(박스번호)에서 박스 번호 추출 (BO-A-01 → 1) */
+export function locationBoxNumber(location: string): number | null {
+  const seg = ((location ?? '').split('-')[2] ?? '').trim()
+  const m = seg.match(/^\d+/)
+  return m ? Number(m[0]) : null
+}
+
+/** 위치가 letter 박스의 from~to 번(양끝 포함) 범위에 드는지 */
+export function isInBoxRange(location: string, letter: string, from: number, to: number): boolean {
+  if (locationLetter(location) !== letter) return false
+  const n = locationBoxNumber(location)
+  return n != null && n >= from && n <= to
+}
+
 /** 위치가 가리키는 사이즈와 실제 쿠팡사이즈 불일치 여부 (둘 다 있을 때만 판정) */
 export function isSizeMismatch(row: RocketShipmentRow): boolean {
   const exp = expectedSize(row.location)
