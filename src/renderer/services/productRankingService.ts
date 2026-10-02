@@ -254,6 +254,129 @@ export async function fetchProductImageUrls(userId: string, productIds: string[]
 }
 
 // ══════════════════════════════════════════════════════════════════
+// 쿠팡 별점 (순위에 든 상품만)
+//   이 앱에는 별점을 직접 받아 오는 경로가 없다 (쿠팡 Open API 에 별점 항목이 없다).
+//   같은 DB 의 rk_coupang_info 에 아이엠몽 로켓 앱이 Wing 광고센터에서 수집한 별점·리뷰 수가
+//   노출상품 ID(product_id) 별로 들어 있어, 노출상품 ID 가 같은 상품에 한해 그 값을 빌려 쓴다.
+//     si_rg_items.vendor_item_id → si_coupang_items.option_id → product_id → rk_coupang_info.product_id
+//   로켓 앱이 수집하지 않은 상품은 별점이 없다 (결과에 없음).
+// ══════════════════════════════════════════════════════════════════
+
+export interface ProductRating {
+  rating: number        // 별점 평균 (0 초과 ~ 5)
+  reviewCount: number   // 리뷰 수
+}
+
+/** `.in()` 한 번에 넣는 값 수 — 요청 주소가 너무 길어지지 않게 나눈다 */
+const IN_CHUNK_SIZE = 200
+
+const chunk = <T,>(values: T[], size: number): T[][] => {
+  const out: T[][] = []
+  for (let i = 0; i < values.length; i += size) out.push(values.slice(i, i + size))
+  return out
+}
+
+// ── 1) 상품 ID → 그 상품의 옵션 ID 들 ───────────────────────────────
+async function fetchVendorItemIdsByProduct(userId: string, productIds: string[]): Promise<Map<string, string[]>> {
+  const map = new Map<string, string[]>()
+  for (let from = 0; ; from += BATCH_SIZE) {
+    const { data, error } = await supabase
+      .from('si_rg_items')
+      .select('id, seller_product_id, vendor_item_id')
+      .eq('user_id', userId)
+      .in('seller_product_id', productIds)
+      .not('vendor_item_id', 'is', null)
+      .order('id')
+      .range(from, from + BATCH_SIZE - 1)
+    if (error) throw error
+    if (!data || data.length === 0) break
+    for (const row of data) {
+      if (!row.seller_product_id || !row.vendor_item_id) continue
+      const list = map.get(row.seller_product_id)
+      if (list) list.push(row.vendor_item_id)
+      else map.set(row.seller_product_id, [row.vendor_item_id])
+    }
+    if (data.length < BATCH_SIZE) break
+  }
+  return map
+}
+
+// ── 2) 옵션 ID → 노출상품 ID (si_coupang_items — option_id 가 기본 키라 묶음당 행 수가 묶음 크기를 넘지 않는다) ──
+async function fetchExposedProductIds(userId: string, vendorItemIds: string[]): Promise<Map<string, string>> {
+  const map = new Map<string, string>()
+  for (const ids of chunk(vendorItemIds, IN_CHUNK_SIZE)) {
+    const { data, error } = await supabase
+      .from('si_coupang_items')
+      .select('option_id, product_id')
+      .eq('user_id', userId)
+      .in('option_id', ids)
+    if (error) throw error
+    for (const row of data ?? []) {
+      if (row.option_id && row.product_id) map.set(String(row.option_id), String(row.product_id))
+    }
+  }
+  return map
+}
+
+// ── 3) 노출상품 ID → 별점 (rk_coupang_info — 한 상품에 옵션 행이 여러 개라 1000행을 넘을 수 있어 페이지를 돈다) ──
+async function fetchRatingsByExposedProduct(exposedProductIds: string[]): Promise<Map<string, ProductRating>> {
+  const map = new Map<string, ProductRating>()
+  for (const ids of chunk(exposedProductIds, IN_CHUNK_SIZE)) {
+    for (let from = 0; ; from += BATCH_SIZE) {
+      const { data, error } = await supabase
+        .from('rk_coupang_info')
+        .select('sku_id, product_id, rating_avg, review_count')
+        .in('product_id', ids)
+        .gt('rating_avg', 0)
+        .order('sku_id')
+        .range(from, from + BATCH_SIZE - 1)
+      if (error) throw error
+      if (!data || data.length === 0) break
+      for (const row of data) {
+        if (!row.product_id) continue
+        const next: ProductRating = { rating: Number(row.rating_avg), reviewCount: row.review_count ?? 0 }
+        // 같은 노출상품이면 값이 같지만, 수집 시점이 다른 행이 섞여 있으면 리뷰 수가 많은(더 최근) 쪽을 쓴다
+        const prev = map.get(String(row.product_id))
+        if (!prev || next.reviewCount > prev.reviewCount) map.set(String(row.product_id), next)
+      }
+      if (data.length < BATCH_SIZE) break
+    }
+  }
+  return map
+}
+
+/**
+ * 상품 ID → 쿠팡 별점. 별점을 못 찾은 상품은 결과에 없다.
+ * 한 상품의 옵션들이 서로 다른 노출상품에 걸려 있으면 리뷰 수가 가장 많은 것을 쓴다.
+ */
+export async function fetchProductRatings(userId: string, productIds: string[]): Promise<Map<string, ProductRating>> {
+  const ids = [...new Set(productIds.filter(Boolean))]
+  if (ids.length === 0) return new Map()
+
+  const optionsByProduct = await fetchVendorItemIdsByProduct(userId, ids)
+  const allOptionIds = [...new Set([...optionsByProduct.values()].flat())]
+  if (allOptionIds.length === 0) return new Map()
+
+  const exposedByOption = await fetchExposedProductIds(userId, allOptionIds)
+  const exposedIds = [...new Set(exposedByOption.values())]
+  if (exposedIds.length === 0) return new Map()
+
+  const ratingByExposed = await fetchRatingsByExposedProduct(exposedIds)
+
+  const result = new Map<string, ProductRating>()
+  for (const [productId, optionIds] of optionsByProduct) {
+    let best: ProductRating | undefined
+    for (const optionId of optionIds) {
+      const exposedId = exposedByOption.get(optionId)
+      const rating = exposedId ? ratingByExposed.get(exposedId) : undefined
+      if (rating && (!best || rating.reviewCount > best.reviewCount)) best = rating
+    }
+    if (best) result.set(productId, best)
+  }
+  return result
+}
+
+// ══════════════════════════════════════════════════════════════════
 // 집계 · 순위
 // ══════════════════════════════════════════════════════════════════
 

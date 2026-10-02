@@ -1,6 +1,6 @@
 /* ================================================================
    홈 화면 — 상품 랭킹 카드 (표시 전용)
-   - 상품 하나가 카드 한 장: 머리줄(순위 · 기준 값) · 이미지 · 상품명 · 나머지 수량
+   - 상품 하나가 카드 한 장: 머리줄(순위 · 쿠팡 별점 · 기준 값) · 이미지 · 상품명 · 나머지 수량
    - 순위 기준 값은 머리줄에 크게 따로 보여 주고, 아래 수량 칸에서도 색을 넣어
      어느 값으로 줄을 세웠는지 보이게 한다.
    - 한 줄에 다섯 장, 두 줄이 한 화면에 꼭 맞는 높이. 이미지는 남는 높이만큼만(원본 230px 이내) 그린다.
@@ -13,7 +13,12 @@ import React, { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { theme } from '../../styles/theme'
 import type { PurchaseManagementLocationState } from '../../types/purchase'
-import { RANKING_BASES, type ProductRankingRow, type RankingBasis } from '../../services/productRankingService'
+import {
+  RANKING_BASES,
+  type ProductRankingRow,
+  type ProductRating,
+  type RankingBasis,
+} from '../../services/productRankingService'
 
 // ── 수량 칸 정의 (윗줄 판매량 넷 · 아랫줄 수량 넷) ───────────────
 //   basis 가 있는 넷이 순위 기준이 될 수 있는 판매량이다.
@@ -138,14 +143,34 @@ const RankBadge: React.FC<{ rank: number }> = ({ rank }) => {
   )
 }
 
+// ── 쿠팡 별점 (순위 바로 옆 — ⭐ 4.5 (338)) ──────────────────────
+const RatingStar: React.FC<{ rating: ProductRating }> = ({ rating }) => (
+  <span
+    title={`쿠팡 별점 ${rating.rating.toFixed(1)}${rating.reviewCount > 0 ? ` · 리뷰 ${rating.reviewCount.toLocaleString()}개` : ''}`}
+    style={{ display: 'inline-flex', alignItems: 'baseline', gap: '3px', fontSize: theme.fontSize.xs, whiteSpace: 'nowrap' }}
+  >
+    ⭐
+    <b style={{ fontSize: theme.fontSize.sm, color: theme.colors.textPrimary, fontVariantNumeric: 'tabular-nums' }}>
+      {rating.rating.toFixed(1)}
+    </b>
+    {rating.reviewCount > 0 && (
+      <span style={{ color: theme.colors.textMuted, fontVariantNumeric: 'tabular-nums' }}>
+        ({rating.reviewCount.toLocaleString()})
+      </span>
+    )}
+  </span>
+)
+
 // ── 카드 한 장 ──────────────────────────────────────────────────
 interface CardProps {
   row: ProductRankingRow
   basis: RankingBasis
   imageUrl: string | null | undefined
+  /** 쿠팡 별점 — 없거나 아직 찾는 중이면 표시하지 않는다 */
+  rating: ProductRating | null | undefined
 }
 
-const RankingCard: React.FC<CardProps> = ({ row, basis, imageUrl }) => {
+const RankingCard: React.FC<CardProps> = ({ row, basis, imageUrl, rating }) => {
   const basisLabel = RANKING_BASES.find((b) => b.key === basis)?.label ?? ''
   const displayName = row.name || '(상품명 없음)'
   const supplyTotal = SUPPLY_KEYS.reduce((sum, key) => sum + row[key], 0)
@@ -179,7 +204,10 @@ const RankingCard: React.FC<CardProps> = ({ row, basis, imageUrl }) => {
           padding: '10px 14px 8px',
         }}
       >
-        <RankBadge rank={row.rank} />
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', minWidth: 0 }}>
+          <RankBadge rank={row.rank} />
+          {rating && <RatingStar rating={rating} />}
+        </span>
         <span style={{ display: 'inline-flex', alignItems: 'baseline', gap: '6px' }}>
           <span style={{ fontSize: theme.fontSize.sm, color: theme.colors.textSecondary }}>{basisLabel}</span>
           <span
@@ -317,9 +345,11 @@ interface Props {
   basis: RankingBasis
   /** 상품 ID → 이미지 주소. 키가 없으면 아직 찾는 중, null 이면 이미지 없음 */
   imageUrls: Record<string, string | null>
+  /** 상품 ID → 쿠팡 별점. 키가 없거나 null 이면 표시하지 않는다 */
+  ratings: Record<string, ProductRating | null>
 }
 
-const ProductRankingCards: React.FC<Props> = ({ rows, basis, imageUrls }) => (
+const ProductRankingCards: React.FC<Props> = ({ rows, basis, imageUrls, ratings }) => (
   <div
     style={{
       display: 'grid',
@@ -337,6 +367,7 @@ const ProductRankingCards: React.FC<Props> = ({ rows, basis, imageUrls }) => (
         basis={basis}
         // 상품 ID 가 없는 행은 이미지를 찾을 방법이 없다
         imageUrl={row.productId ? imageUrls[row.productId] : null}
+        rating={row.productId ? ratings[row.productId] : null}
       />
     ))}
   </div>

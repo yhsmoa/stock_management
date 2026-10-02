@@ -87,6 +87,7 @@ Electron is built separately via `scripts/build-electron.mjs` (called manually; 
 - **카드 클릭**: `/purchase-management` 로 가면서 `location.state.search`(`PurchaseManagementLocationState`)에 상품명을 넘기고, `usePurchaseManagement` 가 그 값을 검색어 초깃값으로 쓴다. 상품명에 콤마·탭이 있으면 사입관리 검색이 여러 검색어로 쪼개므로 그때는 상품 ID 를 넘긴다.
 - **카드의 값**: 개인 · 기간 · 7일 · 30일 │ 🛒 · 주문 · C.in · 창고 + 합계(뒤의 넷을 더한 값). 순위 기준은 앞의 넷 중 하나(기본 7일 · 이 브라우저에 기억 `home_ranking_basis`).
 - **이미지**: 순위에 든 상품만, 순위가 뜬 뒤에 받는다(`fetchProductImageUrls`). `si_rg_items.img_url`(상품 동기화 때 쿠팡 상세 API 에서 저장한 값)을 먼저 쓰고, 저장된 값이 없는 상품만 쿠팡 상품 상세 API(`/api/coupang/rg-product/:id`)를 부른다. 주소 형식은 `purchaseService.getRepresentativeImageUrl` 한 곳에서 만든다.
+- **쿠팡 별점**: 순위 숫자 옆 `⭐ 4.5 (338)`. 이 앱에는 별점을 받아 오는 경로가 없어서(쿠팡 Open API 에 없음), 아이엠몽 로켓 앱(immongRK_scan)이 Wing 광고센터에서 수집해 둔 `rk_coupang_info`(같은 DB)를 **노출상품 ID** 로 빌려 쓴다 — `si_rg_items.vendor_item_id → si_coupang_items.option_id → product_id → rk_coupang_info.product_id` (`fetchProductRatings`). 로켓 앱이 수집한 상품과 노출상품 ID 가 겹치는 상품에만 나온다(계정에 따라 0건일 수 있음). 이미지처럼 순위가 뜬 뒤에 받고 하루 보관본에 같이 둔다.
 - **사입관리와 같은 규칙이어야 한다** — 비활성(`NOT_AVAILABLE`) 옵션 제외, 기준 값 0 인 상품 제외, 동점은 상품명. 사입관리의 열 계산(`renderCell`)이나 [상품기준] 합산을 바꾸면 여기도 같이 본다.
 - **합칠 때 한 번씩만 더한다**: 개인·창고는 바코드 기준, 기간·7일·30일·C.in 은 옵션 ID 기준 값이라 한 상품 안에서 같은 키가 두 번 나오면 중복으로 더하지 않는다. 🛒·주문은 행에 저장된 값이라 행마다 더한다.
 - **필요한 열만 받는다** (`select *` 아님) — 계정당 si_rg_items 1.6만 · si_rg_item_data 2.3만 행이라 홈 진입마다 전부 받으면 무겁다. 가장 큰 계정 기준 전체 로드 약 1.7초(실측).

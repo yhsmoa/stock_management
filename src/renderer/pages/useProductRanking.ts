@@ -4,17 +4,19 @@
      보관본이 유효하면(같은 계정 · 하루 이내) 조회 없이 바로 보여 준다.
    - 보관본이 없거나 하루가 지났으면, 또는 [새로고침] 을 누르면 원천을 새로 받아 다시 매긴다.
    - 기준(개인/기간/7일/30일)을 바꿀 때는 이미 매겨 둔 순위표를 고르기만 한다.
-   - 상품 이미지는 화면에 보이는 순위의 상품 것만 뒤이어 받는다.
+   - 상품 이미지와 쿠팡 별점은 화면에 보이는 순위의 상품 것만 뒤이어 받는다.
    ================================================================ */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   buildAllProductRankings,
   fetchProductImageUrls,
+  fetchProductRatings,
   loadProductRankingSource,
   RANKING_BASES,
   RANKING_SIZE,
   type ProductRankings,
+  type ProductRating,
   type RankingBasis,
 } from '../services/productRankingService'
 import { readRankingSnapshot, writeRankingSnapshot } from '../services/productRankingCache'
@@ -72,6 +74,10 @@ export function useProductRanking() {
   const [imageUrls, setImageUrls] = useState<Record<string, string | null>>(snapshot?.imageUrls ?? {})
   const requestedImageIds = useRef(new Set<string>(Object.keys(snapshot?.imageUrls ?? {})))
 
+  // ── 쿠팡 별점 상태 (이미지와 같은 규칙 — null 은 '찾아봤지만 없음') ──
+  const [ratings, setRatings] = useState<Record<string, ProductRating | null>>(snapshot?.ratings ?? {})
+  const requestedRatingIds = useRef(new Set<string>(Object.keys(snapshot?.ratings ?? {})))
+
   // ── 원천 로드 → 순위 계산 ───────────────────────────────────
   //   화면을 떠난 뒤 늦게 도착한 응답이 상태를 건드리지 않도록 취소 표시를 둔다.
   const load = useCallback(() => {
@@ -88,8 +94,9 @@ export function useProductRanking() {
     loadProductRankingSource(userId)
       .then((source) => {
         if (cancelled) return
-        // 새로 불러올 때는 이미지도 다시 찾는다 (그동안은 예전 이미지를 그대로 보여 준다)
+        // 새로 불러올 때는 이미지·별점도 다시 찾는다 (그동안은 예전 값을 그대로 보여 준다)
         requestedImageIds.current.clear()
+        requestedRatingIds.current.clear()
         setRankings(buildAllProductRankings(source))
         setSavedAt(Date.now())
       })
@@ -138,13 +145,35 @@ export function useProductRanking() {
     })
   }, [rows])
 
+  // ── 쿠팡 별점 조회 ──────────────────────────────────────────
+  //   곁들이는 값이라 실패해도 카드는 그대로 둔다 — 실패한 상품은 다음 새로고침 때 다시 찾도록 요청 기록에서 뺀다.
+  useEffect(() => {
+    const userId = getUserId()
+    const pending = rows.map((r) => r.productId).filter((id) => id && !requestedRatingIds.current.has(id))
+    if (!userId || pending.length === 0) return
+
+    pending.forEach((id) => requestedRatingIds.current.add(id))
+    fetchProductRatings(userId, pending)
+      .then((found) => {
+        setRatings((prev) => {
+          const next = { ...prev }
+          for (const id of pending) next[id] = found.get(id) ?? null
+          return next
+        })
+      })
+      .catch((e) => {
+        console.error('[상품 랭킹] 별점 조회 실패:', e)
+        pending.forEach((id) => requestedRatingIds.current.delete(id))
+      })
+  }, [rows])
+
   // ── 보관 ────────────────────────────────────────────────────
-  //   순위가 새로 계산되거나 이미지 주소가 더 모일 때마다 덮어쓴다.
+  //   순위가 새로 계산되거나 이미지 주소·별점이 더 모일 때마다 덮어쓴다.
   useEffect(() => {
     const userId = getUserId()
     if (!userId || !rankings || savedAt == null) return
-    writeRankingSnapshot({ userId, savedAt, rankings, imageUrls })
-  }, [rankings, savedAt, imageUrls])
+    writeRankingSnapshot({ userId, savedAt, rankings, imageUrls, ratings })
+  }, [rankings, savedAt, imageUrls, ratings])
 
-  return { rows, imageUrls, basis, setBasis, loading, error, reload: load, hasMore, showMore, savedAt }
+  return { rows, imageUrls, ratings, basis, setBasis, loading, error, reload: load, hasMore, showMore, savedAt }
 }

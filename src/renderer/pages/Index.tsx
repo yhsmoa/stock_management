@@ -18,7 +18,7 @@ const formatSavedAt = (savedAt: number): string =>
   new Date(savedAt).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })
 
 const Index: React.FC = () => {
-  const { rows, imageUrls, basis, setBasis, loading, error, reload, hasMore, showMore, savedAt } = useProductRanking()
+  const { rows, imageUrls, ratings, basis, setBasis, loading, error, reload, hasMore, showMore, savedAt } = useProductRanking()
   const basisInfo = RANKING_BASES.find((b) => b.key === basis)
 
   // ── 안내 문구 (카드 대신 보여 줄 것: 첫 로딩 / 오류 / 결과 없음) ──
@@ -129,7 +129,7 @@ const Index: React.FC = () => {
           </p>
         </div>
       ) : (
-        <ProductRankingCards rows={rows} basis={basis} imageUrls={imageUrls} />
+        <ProductRankingCards rows={rows} basis={basis} imageUrls={imageUrls} ratings={ratings} />
       )}
 
       {/* ── [더보기]: 11위부터 이어서 보여 준다 ───────────────── */}
