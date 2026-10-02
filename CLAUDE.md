@@ -76,6 +76,20 @@ Electron is built separately via `scripts/build-electron.mjs` (called manually; 
 - **명령 언어**: 템플릿의 `printer_lang`(TSPL2/ZPL)이 프린터 기종과 맞아야 한다. BIXOLON(BPL-Z)에 TSPL 을 보내면 라벨 대신 프린터 정보 문구가 찍힌다.
 - **진단**: 상품관리 URL 에 `?labelDebug=1` 을 붙이면 모달에 "인쇄 명령 저장" 버튼이 생긴다 (인쇄하지 않고 바이트를 파일로).
 
+### 홈 — 상품 랭킹 (2026-10-02)
+`/`(예전 '공지사항')는 로켓그로스 사입 화면의 값을 **상품(seller_product_id) 단위로 합쳐** 1~10위를 보여 준다.
+- **구조**: `services/productRankingService.ts`(조회 + `buildProductRanking`) · `pages/useProductRanking.ts` · `components/home/ProductRankingCards.tsx`(한 줄 5장) · `pages/Index.tsx`.
+- **보관(하루)**: 계산이 끝난 순위표(기준 넷 × 20위)와 이미지 주소를 localStorage `home_ranking_cache_v1` 에 둔다(`services/productRankingCache.ts`). 같은 계정 · 24시간 이내면 조회 없이 그대로 보여 주고, 지났거나 [새로고침] 을 누르면 새로 받는다. 원천 수만 행은 용량 때문에 보관하지 않는다. 보관 모양을 바꾸면 키의 버전을 올린다.
+- **레이아웃**: `Layout` 의 `<main>` 이 `overflow: hidden` 이라 `Index` 가 직접 스크롤 영역(100vh)이다. 본문 래퍼가 `container-type: size` 이고 카드 줄 높이를 `100cqh` 로 잡아 두 줄이 한 화면에 꼭 맞는다(최소 330px). 이미지는 남는 높이만큼만, 원본(230px) 이내로 그린다.
+- **[더보기]**: 처음 1~10위(`RANKING_SIZE`), 누르면 20위(`RANKING_MAX_SIZE`)까지. 이미지는 펼쳐진 순위 것만 받는다.
+- **카드 클릭**: `/purchase-management` 로 가면서 `location.state.search`(`PurchaseManagementLocationState`)에 상품명을 넘기고, `usePurchaseManagement` 가 그 값을 검색어 초깃값으로 쓴다. 상품명에 콤마·탭이 있으면 사입관리 검색이 여러 검색어로 쪼개므로 그때는 상품 ID 를 넘긴다.
+- **카드의 값**: 개인 · 기간 · 7일 · 30일 │ 🛒 · 주문 · C.in · 창고 + 합계(뒤의 넷을 더한 값). 순위 기준은 앞의 넷 중 하나(기본 7일 · 이 브라우저에 기억 `home_ranking_basis`).
+- **이미지**: 순위에 든 상품만, 순위가 뜬 뒤에 받는다(`fetchProductImageUrls`). `si_rg_items.img_url`(상품 동기화 때 쿠팡 상세 API 에서 저장한 값)을 먼저 쓰고, 저장된 값이 없는 상품만 쿠팡 상품 상세 API(`/api/coupang/rg-product/:id`)를 부른다. 주소 형식은 `purchaseService.getRepresentativeImageUrl` 한 곳에서 만든다.
+- **사입관리와 같은 규칙이어야 한다** — 비활성(`NOT_AVAILABLE`) 옵션 제외, 기준 값 0 인 상품 제외, 동점은 상품명. 사입관리의 열 계산(`renderCell`)이나 [상품기준] 합산을 바꾸면 여기도 같이 본다.
+- **합칠 때 한 번씩만 더한다**: 개인·창고는 바코드 기준, 기간·7일·30일·C.in 은 옵션 ID 기준 값이라 한 상품 안에서 같은 키가 두 번 나오면 중복으로 더하지 않는다. 🛒·주문은 행에 저장된 값이라 행마다 더한다.
+- **필요한 열만 받는다** (`select *` 아님) — 계정당 si_rg_items 1.6만 · si_rg_item_data 2.3만 행이라 홈 진입마다 전부 받으면 무겁다. 가장 큰 계정 기준 전체 로드 약 1.7초(실측).
+- 창고 재고 조회(`fetchWarehouseQtyByBarcode`)는 `usePurchaseManagement` 안의 인라인 함수와 같은 일을 한다 — 그쪽은 아직 훅 안에 있다(중복). 합칠 때는 이 서비스 것을 쓰게 하면 된다.
+
 ## Reference
 
 Coupang Open API docs extracted from the official site are in `coupang_api_md/` (guide, product, CS, rocket_growth, etc.). Consult these before inventing new endpoint paths or parameters.

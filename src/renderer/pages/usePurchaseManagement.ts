@@ -57,7 +57,8 @@ import {
   type PeriodSalesAgg,
 } from '../services/periodSalesService'
 import { fetchPersonalOrderQtyByBarcode } from '../services/personalOrderService'
-import type { RgItem, RgItemData } from '../types/purchase'
+import { useLocation } from 'react-router-dom'
+import type { RgItem, RgItemData, PurchaseManagementLocationState } from '../types/purchase'
 
 // ── 상수 ──────────────────────────────────────────────────────
 const DEFAULT_PAGE_SIZE = 100
@@ -231,10 +232,18 @@ const getUserId = (): string | null => {
 // 메인 훅
 // ══════════════════════════════════════════════════════════════
 
+/** 다른 화면(홈 상품 랭킹 등)이 넘겨 준 검색어 — 없거나 모양이 다르면 빈 문자열 */
+const readInitialSearch = (state: unknown): string => {
+  const search = (state as PurchaseManagementLocationState | null)?.search
+  return typeof search === 'string' ? search.trim() : ''
+}
+
 export function usePurchaseManagement() {
   /* ── 검색 상태 ───────────────────────────────────────────── */
-  const [searchValue, setSearchValue] = useState('')
-  const [searchQuery, setSearchQuery] = useState('')
+  //   넘겨받은 검색어가 있으면 입력칸과 적용된 검색어를 처음부터 그 값으로 둔다.
+  const initialSearch = readInitialSearch(useLocation().state)
+  const [searchValue, setSearchValue] = useState(initialSearch)
+  const [searchQuery, setSearchQuery] = useState(initialSearch)
   // 검색 모드: 'product'(상품검색, 기존) | 'note'(노트검색 — si_rg_items.note)
   const [searchMode, setSearchMode] = useState<'product' | 'note'>('product')
 

@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react'
 import { theme } from '../../styles/theme'
 import {
   fetchRgProductDetail,
+  getRepresentativeImageUrl,
   fetchVendorItemInventory,
   updateVendorItemPrice,
   setVendorItemSale,
@@ -573,12 +574,7 @@ const ProductDetailPanel: React.FC<ProductDetailPanelProps> = ({
   ) ?? detail?.items?.[0]
 
   // 이미지 URL: 상세 API cdnPath → DB 폴백
-  const repImage = detailItem?.images?.find(
-    (img) => img.imageType === 'REPRESENTATION' || img.imageOrder === 0,
-  )
-  const imageUrl = repImage?.cdnPath
-    ? `https://thumbnail6.coupangcdn.com/thumbnails/remote/230x230ex/image/${repImage.cdnPath}`
-    : item.img_url
+  const imageUrl = getRepresentativeImageUrl(detailItem?.images) ?? item.img_url
 
   // 각 필드: 직접 → rocketGrowthItemData → DB 폴백
   const productName = detail?.sellerProductName ?? item.seller_product_name

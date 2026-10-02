@@ -339,6 +339,24 @@ export async function fetchDetailsAndMap(
 // 데이터 매핑
 // ══════════════════════════════════════════════════════════════════
 
+// ── 대표 이미지 URL ─────────────────────────────────────────────────
+
+/** 쿠팡 썸네일 CDN — 상세 API 의 cdnPath 를 뒤에 붙여 쓴다 (230x230 정사각) */
+const COUPANG_THUMBNAIL_BASE = 'https://thumbnail6.coupangcdn.com/thumbnails/remote/230x230ex/image/'
+
+type CoupangItemImages = CoupangProductDetail['items'][number]['images']
+
+/**
+ * 옵션의 이미지 목록에서 대표 이미지(REPRESENTATION, 없으면 첫 번째) URL 을 만든다.
+ * si_rg_items.img_url 에 저장되는 값과 같은 형식이다.
+ */
+export function getRepresentativeImageUrl(images: CoupangItemImages): string | null {
+  const repImage = images?.find(
+    (img) => img.imageType === 'REPRESENTATION' || img.imageOrder === 0,
+  )
+  return repImage?.cdnPath ? `${COUPANG_THUMBNAIL_BASE}${repImage.cdnPath}` : null
+}
+
 // ── 상세 API 응답 → si_rg_items 행 ──────────────────────────────────
 
 /**
@@ -352,12 +370,7 @@ export function mapToRgItems(
 ): Omit<RgItem, 'id' | 'created_at'>[] {
   return detail.items.map((item) => {
     // 대표 이미지 URL 추출
-    const repImage = item.images?.find(
-      (img) => img.imageType === 'REPRESENTATION' || img.imageOrder === 0,
-    )
-    const imgUrl = repImage?.cdnPath
-      ? `https://thumbnail6.coupangcdn.com/thumbnails/remote/230x230ex/image/${repImage.cdnPath}`
-      : null
+    const imgUrl = getRepresentativeImageUrl(item.images)
 
     return {
       seller_product_id: String(detail.sellerProductId),

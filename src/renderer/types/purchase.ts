@@ -71,6 +71,13 @@ export interface RgItemData {
   product_listing_date: string | null
 }
 
+// ── 사입관리로 넘어올 때 함께 받는 값 (react-router location.state) ──
+//   홈 상품 랭킹 카드처럼 다른 화면에서 "이 검색어로 열기"를 할 때 쓴다.
+export interface PurchaseManagementLocationState {
+  /** 화면이 열리자마자 적용할 상품검색어 */
+  search?: string
+}
+
 // ── si_coupang_shipment_size 테이블 행 인터페이스 ───────────────────
 export interface ShipmentSize {
   id?: string
