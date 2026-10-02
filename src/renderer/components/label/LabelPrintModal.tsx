@@ -1,14 +1,16 @@
 /* ================================================================
-   라벨출력 모달 — 상품관리에서 고른 항목을 QZ Tray 로 바로 인쇄
+   라벨출력 모달 — 고른 항목을 QZ Tray 로 바로 인쇄 (상품관리 [라벨출력] · 사입관리 [라벨])
    - 항목마다 성인/키즈를 나누고 종류(라벨 스티커 · 케어 라벨)×대상별 템플릿을 자동 선택
      (useLabelTemplatePlan — 기본 템플릿 우선, 드롭다운으로 바꿀 수 있음)
    - 템플릿마다 "이 PC 의 어떤 프린터" 로 뽑을지 여기서 바로 지정 (PrinterAssignPanel —
      [라벨 설정] 프린터 탭과 같은 저장소)
    - 인쇄는 services/labelPrintService.ts (바인딩 → TSPL/ZPL → QZ Tray → 인쇄 기록)
+   - editableQty: 위쪽에 행별 장수 입력(LabelQtyList)을 띄운다. 0장 행은 인쇄에서 빠진다.
+     끄면(기본) 받은 항목의 qty 그대로 — 상품관리 [라벨출력] 은 이 경로
    - 진단: 페이지 URL 에 ?labelDebug=1 이면 인쇄 대신 명령 바이트를 파일로 내려받는 버튼이 생긴다
    ================================================================ */
 
-import React, { useCallback, useEffect, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import { theme } from '../../styles/theme'
 import { useTranslation } from '../../utils/label/i18n'
 import { labelJobExt } from '../../utils/label/labelJob'
@@ -25,6 +27,7 @@ import { useLabelTemplatePlan } from './useLabelTemplatePlan'
 import { usePrinterAssignments } from './usePrinterAssignments'
 import LabelTemplatePicker from './LabelTemplatePicker'
 import PrinterAssignPanel from './PrinterAssignPanel'
+import LabelQtyList from './LabelQtyList'
 import './LabelPrintModal.css'
 
 // ── 상수 ──────────────────────────────────────────────────────────
@@ -44,10 +47,39 @@ interface Props {
   /** 인쇄할 항목 (바코드 있는 행만 — services/labelService.ts toLabelPrintItems) */
   items: LabelPrintItem[]
   onClose: () => void
+  /** 행별 장수를 모달에서 직접 입력 (기본 false — 받은 qty 그대로) */
+  editableQty?: boolean
+  /** 본문 위쪽 안내 (예: 출고코드 없는 항목 수). 없으면 표시 안 함 */
+  notice?: string | null
 }
 
-const LabelPrintModal: React.FC<Props> = ({ open, items, onClose }) => {
+const LabelPrintModal: React.FC<Props> = ({ open, items: sourceItems, onClose, editableQty = false, notice }) => {
   const { t } = useTranslation()
+
+  // ── 장수 — 어떤 항목 목록에 대한 값인지 같이 둔다 ──
+  //   새 목록으로 열리면 받은 qty(기본 1장)로 다시 시작한다. 목록이 바뀐 직후 한 번의
+  //   렌더에서 이전 목록의 장수가 새 항목에 섞이지 않게 source 가 같을 때만 쓴다.
+  const [qtyState, setQtyState] = useState<{ source: LabelPrintItem[]; qtys: number[] } | null>(null)
+  useEffect(() => {
+    if (open) setQtyState({ source: sourceItems, qtys: sourceItems.map((it) => it.qty) })
+  }, [open, sourceItems])
+  const qtys = qtyState?.source === sourceItems ? qtyState.qtys : sourceItems.map((it) => it.qty)
+  const setQtyAt = useCallback((index: number, qty: number) => {
+    setQtyState((prev) => (prev ? { ...prev, qtys: prev.qtys.map((q, i) => (i === index ? qty : q)) } : prev))
+  }, [])
+  const setQtyAll = useCallback((qty: number) => {
+    setQtyState((prev) => (prev ? { ...prev, qtys: prev.qtys.map(() => qty) } : prev))
+  }, [])
+
+  /** 실제로 인쇄할 항목 — 장수 입력을 쓰면 반영하고 0장은 뺀다 (아래 계획·인쇄·진단이 모두 이 목록을 쓴다) */
+  const items = useMemo(
+    () =>
+      editableQty
+        ? sourceItems.map((it, i) => ({ ...it, qty: qtys[i] ?? it.qty })).filter((it) => it.qty > 0)
+        : sourceItems,
+    [editableQty, sourceItems, qtys]
+  )
+
   const [busy, setBusy] = useState<LabelType | 'all' | null>(null)
   const [flash, setFlash] = useState<Partial<Record<LabelType, string>>>({})
   const [labelUser, setLabelUser] = useState<LabelUser | null>(null)
@@ -223,6 +255,18 @@ const LabelPrintModal: React.FC<Props> = ({ open, items, onClose }) => {
 
         {/* ── 본문 ── */}
         <div className="pe-root">
+          {notice && <div className="lql-notice">{notice}</div>}
+
+          {editableQty && (
+            <LabelQtyList
+              items={sourceItems}
+              qtys={qtys}
+              onChange={setQtyAt}
+              onApplyAll={setQtyAll}
+              disabled={busy !== null}
+            />
+          )}
+
           <div className="pe-head">
             <span className="pe-aud">
               {LABEL_AUDIENCES.filter((a) => plan.counts[a.key] > 0)

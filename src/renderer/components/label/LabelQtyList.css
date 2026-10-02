@@ -1,0 +1,100 @@
+/* ============================================================ */
+/* 라벨 장수 입력 — 라벨출력 모달 위쪽 (LabelQtyList.tsx)          */
+/* ============================================================ */
+.lql-root {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #fff;
+}
+
+/* ── 위쪽: 제목 · 전체 적용 · 합계 ── */
+.lql-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.lql-title { font-size: 12px; font-weight: 700; color: #374151; }
+
+.lql-apply {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: #4b5563;
+}
+
+.lql-apply button {
+  padding: 3px 10px;
+  border: 1px solid #d1d5db;
+  border-radius: 4px;
+  background: #fff;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.lql-apply button:disabled { color: #9ca3af; cursor: default; }
+
+.lql-total { margin-left: auto; font-size: 12px; color: #4b5563; }
+.lql-total b { font-size: 14px; color: #111827; }
+
+/* ── 행별 장수 (많으면 이 안에서 스크롤) ── */
+.lql-list {
+  display: flex;
+  flex-direction: column;
+  max-height: 220px;
+  overflow-y: auto;
+  border-top: 1px solid #f3f4f6;
+}
+
+.lql-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 64px auto;
+  gap: 6px;
+  align-items: center;
+  padding: 5px 2px;
+  border-bottom: 1px solid #f3f4f6;
+}
+
+.lql-row.is-zero .lql-info { opacity: 0.45; }
+
+.lql-info { display: flex; flex-direction: column; min-width: 0; }
+
+.lql-name {
+  font-size: 12px;
+  color: #111827;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lql-name em { font-style: normal; color: #6b7280; }
+.lql-barcode { font-size: 11px; color: #9ca3af; font-family: Consolas, monospace; }
+.lql-unit { font-size: 12px; color: #6b7280; }
+
+.lql-root input[type='number'] {
+  width: 64px;
+  padding: 4px 6px;
+  border: 1px solid #d1d5db;
+  border-radius: 4px;
+  font-size: 12px;
+  text-align: right;
+  font-family: inherit;
+}
+
+.lql-apply input[type='number'] { width: 56px; }
+
+/* 안내 (출고코드 없음 등) */
+.lql-notice {
+  font-size: 11px;
+  color: #b45309;
+  background: #fffbeb;
+  border-radius: 4px;
+  padding: 4px 8px;
+  white-space: pre-line;
+}

@@ -73,6 +73,8 @@ Electron is built separately via `scripts/build-electron.mjs` (called manually; 
 - **QZ 서명**: `/api/qz/cert`·`/api/qz/sign` 이 개발(`src/server/qzSignProxy.ts`)과 운영(`prodServer.js`) 두 곳에 있다 — 쿠팡 프록시처럼 **양쪽을 같이 고친다**. 인증서·키는 label-service 와 같은 값이라 인쇄 PC 의 `override.crt` 를 바꿀 필요가 없다.
 - **프린터 지정**: 템플릿별로 이 PC 의 localStorage(`ls_local_printer_map_v1`). 라벨 설정 프린터 탭과 모달이 같은 값을 공유한다.
 - **필드 규약**: `labelService.ts` 의 `toLabelPrintItems()` 가 만드는 data 키는 `SOURCE_PRODUCT_FIELDS.stock` 과 같아야 한다 — 바꾸면 양쪽을 같이 고친다.
+- **사입관리 [라벨]**: 체크한 `si_rg_items` 행 → `services/purchaseLabelService.ts` 가 `vendor_item_id = si_coupang_items.option_id`(숫자 ID 만)로 상품관리 행을 찾아 같은 `toLabelPrintItems()` 로 변환 → `LabelPrintModal editableQty`(행별 장수 입력, 0장은 제외). 상품관리에 없는 행은 사입관리 값으로 채우고 출고코드는 비운다(모달 안내). 화면 상태는 `components/purchase/usePurchaseLabel.ts` — `usePurchaseManagement` 는 건드리지 않는다.
+- **혼용률·권장연령**: `si_item_info` 테이블이 DB 에 아직 없어서 두 화면 모두 채우지 않는다 → 전부 성인 템플릿, 케어라벨 소재란 빈칸.
 - **명령 언어**: 템플릿의 `printer_lang`(TSPL2/ZPL)이 프린터 기종과 맞아야 한다. BIXOLON(BPL-Z)에 TSPL 을 보내면 라벨 대신 프린터 정보 문구가 찍힌다.
 - **진단**: 상품관리 URL 에 `?labelDebug=1` 을 붙이면 모달에 "인쇄 명령 저장" 버튼이 생긴다 (인쇄하지 않고 바이트를 파일로).
 

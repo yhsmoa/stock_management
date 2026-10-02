@@ -18,6 +18,8 @@ import OrderModal from '../components/purchase/OrderModal'
 import UploadProgressModal from '../components/UploadProgressModal'
 import PasswordConfirmModal from '../components/common/PasswordConfirmModal'
 import CartSelectModal from '../components/common/CartSelectModal'
+import LabelPrintModal from '../components/label/LabelPrintModal'
+import { usePurchaseLabel } from '../components/purchase/usePurchaseLabel'
 import DropdownMenu, {
   DropdownItem,
   DropdownSubmenu,
@@ -352,6 +354,7 @@ const PurchaseManagement: React.FC = () => {
     viewsDateValue,
     setViewsDateValue,
     handleViewsDateConfirm,
+    filteredItems,
     selectedIds,
     handleSelectAll,
     handleSelectRow,
@@ -408,6 +411,9 @@ const PurchaseManagement: React.FC = () => {
     periodSalesInputRef,
     handlePeriodSalesUpload,
   } = usePurchaseManagement()
+
+  // ── [라벨] 체크한 행 → 라벨출력 모달 (장수 입력 · 라벨 설정 템플릿으로 인쇄) ──
+  const purchaseLabel = usePurchaseLabel(filteredItems, selectedIds)
 
   // ── 주문 모달 open 상태 ─────────────────────────────────────
   const [orderModalOpen, setOrderModalOpen] = useState(false)
@@ -739,6 +745,19 @@ const PurchaseManagement: React.FC = () => {
               />
             </DropdownSubmenu>
           </DropdownMenu>
+
+          {/* ── [라벨] 체크한 행의 라벨 출력 (장수는 모달에서 입력) ───── */}
+          <button
+            type="button"
+            className="dropdown-trigger"
+            onClick={() => void purchaseLabel.openLabelPrint()}
+            disabled={selectedIds.size === 0 || purchaseLabel.preparing}
+            title="체크한 행의 라벨을 [라벨 설정] 템플릿으로 출력"
+          >
+            {purchaseLabel.preparing
+              ? '라벨 준비 중...'
+              : `라벨${selectedIds.size > 0 ? ` (${selectedIds.size})` : ''}`}
+          </button>
 
           {/* ── [xlsx] 엑셀 업로드 모음 ──────────────────────────── */}
           <DropdownMenu label="xlsx" align="right">
@@ -1469,6 +1488,15 @@ const PurchaseManagement: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* ── [라벨] 라벨출력 모달 (장수 입력) ── */}
+      <LabelPrintModal
+        open={purchaseLabel.open}
+        items={purchaseLabel.items}
+        onClose={purchaseLabel.closeLabelPrint}
+        editableQty
+        notice={purchaseLabel.notice}
+      />
     </div>
   )
 }
