@@ -1,16 +1,17 @@
 /* ================================================================
    고객문의 (CustomerInquiry) — 상품별 고객문의 (onlineInquiries)
-   - 탭: 미답변(NOANSWER) / 답변완료(ANSWERED)
-   - 각 탭 최근 30일 조회 (csService가 7일×5회 분할 병합)
-   - 페이지네이션 20개 기준 (클라이언트 측)
-   - 각 행: 주문번호(orderIds[0])로 주문 상세를 조회해
-     주문자명/등록상품명/수량/금액/출고예정일/운송장번호/배송상태 표시.
-   - 추가로 개인주문 '상태' 열과 동일한 fulfillment 색 점 + 상태명 표시
-     (orderFulfillmentService.deriveFulfillmentStatus 공유).
+   - 탭: 미답변(NOANSWER) / 답변완료(ANSWERED), 각 탭 최근 30일 (csService 가 7일×5회 분할)
+   - 페이지네이션 20개 (클라이언트)
+   - 행마다 주문번호(orderIds[0])로 주문 상세를 조회해 상품·수취인·수량·금액·출고예정·배송상태 표시
+     + 개인주문 '상태' 열과 같은 fulfillment 상태점 (orderFulfillmentService 공유)
+   - [AI 답변 생성]: 미답변 행에 예상 답변 초안 → 담당자가 고쳐서 [확정] → 쿠팡 전송
+     (초안 상태 components/cs/useInquiryAiDrafts.ts · 규칙 src/server/ai/customerInquiryGuide.md)
+   - 디자인 v2 (2026-10-07): 문의 1건 = 카드 1장 — components/cs/CustomerInquiryList.tsx, 스타일 CustomerInquiry.css (.ci-*)
+     전역 액션(새로고침 · 초안 모두 지우기 · AI 답변 생성)은 헤더, 행 작업은 카드 왼쪽 레일
    ================================================================ */
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { theme } from '../styles/theme'
+import './CustomerInquiry.css'
 import {
   fetchOnlineInquiries30d,
   fetchCsOrderDetailsMap,
@@ -27,16 +28,25 @@ import {
   makeFulfillmentKey,
   type FulfillmentStatus,
 } from '../services/orderFulfillmentService'
-import OrderInfoLine, { pickLine } from '../components/cs/OrderInfoLine'
+import { pickLine } from '../components/cs/OrderInfoLine'
+import CustomerInquiryList from '../components/cs/CustomerInquiryList'
 import CustomerInquiryDrawer, { type Answer } from '../components/cs/CustomerInquiryDrawer'
 import CancelOrderDrawer from '../components/cs/CancelOrderDrawer'
+import { useInquiryAiDrafts } from '../components/cs/useInquiryAiDrafts'
 import FulfillmentDrawer from './FulfillmentDrawer'
 
 // ── 상수 ──────────────────────────────────────────────────────────
 const PAGE_SIZE = 20 // 페이지당 표시 행 수
+/** AI 초안의 판단 근거 문장 표시 여부 (이 브라우저에 기억) */
+const SHOW_REASONING_KEY = 'cs_ai_show_reasoning'
 
 type TabKey = 'NOANSWER' | 'ANSWERED'
 type DrawerMode = 'reply' | 'history'
+
+const TABS: { key: TabKey; label: string }[] = [
+  { key: 'NOANSWER', label: '미답변' },
+  { key: 'ANSWERED', label: '답변완료' },
+]
 
 /** 문의행 → fulfillment 이력 드로어 열기용 정보 (ft_order_items 매칭 결과) */
 interface FfItemInfo {
@@ -48,36 +58,9 @@ interface FfItemInfo {
   orderNo: string
 }
 
-const TABS: { key: TabKey; label: string }[] = [
-  { key: 'NOANSWER', label: '미답변' },
-  { key: 'ANSWERED', label: '답변완료' },
-]
-
 // ══════════════════════════════════════════════════════════════════
-// 표시 유틸
+// 유틸
 // ══════════════════════════════════════════════════════════════════
-
-/** ISO-8601 → { date: 'yyyy.MM.dd', time: 'HH:mm:ss' } 2줄 표기용 */
-function formatInquiryAt(iso: string): { date: string; time: string } {
-  if (!iso) return { date: '-', time: '' }
-  const [datePart, timePartRaw] = iso.split('T')
-  const date = (datePart ?? '').replace(/-/g, '.')
-  const time = (timePartRaw ?? '').slice(0, 8)
-  return { date, time }
-}
-
-/** yyyy-MM-dd(THH:mm) → yyyy.MM.dd */
-function formatDate(s: string | null): string {
-  if (!s) return '-'
-  return s.slice(0, 10).replace(/-/g, '.')
-}
-
-/** 주문번호 표기: 첫 건 + "외 N건" */
-function formatOrderIds(orderIds: number[]): string {
-  if (!orderIds || orderIds.length === 0) return '-'
-  const first = String(orderIds[0])
-  return orderIds.length > 1 ? `${first} 외 ${orderIds.length - 1}건` : first
-}
 
 /** inquiryAt 으로부터 경과 시간(시간 단위) */
 function hoursSince(iso: string): number {
@@ -95,28 +78,22 @@ function getUserId(): string {
   } catch { return '' }
 }
 
-// ══════════════════════════════════════════════════════════════════
-// 미답변 현황 카드 (미답변 탭 전용)
-// ══════════════════════════════════════════════════════════════════
+/** HH:mm (마지막 갱신 표시) */
+function hhmm(d: Date): string {
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+}
 
-const StatusCard: React.FC<{ label: string; count: number }> = ({ label, count }) => (
-  <div
-    style={{
-      ...theme.card,
-      padding: '14px 18px',
-      display: 'flex',
-      flexDirection: 'column',
-      gap: '8px',
-      minWidth: '180px',
-      flex: 1,
-    }}
-  >
-    <span style={{ fontSize: theme.fontSize.sm, color: theme.colors.textSecondary }}>{label}</span>
-    <span style={{ fontSize: theme.fontSize['2xl'], fontWeight: 700, color: theme.colors.textPrimary }}>
-      {count}건
-    </span>
-  </div>
-)
+/** 응답자(WING) ID — 저장값 → 로그인 username (드로어·취소 드로어와 같은 저장소) */
+function currentReplyBy(): string {
+  try {
+    const saved = localStorage.getItem('cs_reply_by')
+    if (saved) return saved
+    const raw = localStorage.getItem('user')
+    return raw ? (JSON.parse(raw)?.username ?? '') : ''
+  } catch {
+    return ''
+  }
+}
 
 // ══════════════════════════════════════════════════════════════════
 // 컴포넌트
@@ -129,6 +106,17 @@ const CustomerInquiry: React.FC = () => {
   const [progress, setProgress] = useState('')
   const [error, setError] = useState('')
   const [page, setPage] = useState(1)
+  const [lastLoadedAt, setLastLoadedAt] = useState<Date | null>(null)
+  // AI 초안의 판단 근거 문장 표시 (기본 켬)
+  const [showReasoning, setShowReasoning] = useState<boolean>(() => {
+    try { return localStorage.getItem(SHOW_REASONING_KEY) !== '0' } catch { return true }
+  })
+  const toggleReasoning = useCallback(() => {
+    setShowReasoning((v) => {
+      try { localStorage.setItem(SHOW_REASONING_KEY, v ? '0' : '1') } catch { /* 무시 */ }
+      return !v
+    })
+  }, [])
 
   // ── 주문정보 보강 상태 ──────────────────────────────────────────
   // orderId → OrderDetail | null 캐시 (탭/페이지 전환 간 재사용)
@@ -140,7 +128,7 @@ const CustomerInquiry: React.FC = () => {
   const [drawer, setDrawer] = useState<{ mode: DrawerMode; inquiry: OnlineInquiry } | null>(null)
   // inquiryId → 이번 세션에 제출된 답변 (옵티미스틱)
   const [repliesMap, setRepliesMap] = useState<Map<number, Answer[]>>(new Map())
-  // 이전문의: 30일 전체(ALL) 캐시 + 필터 결과
+  // 이전문의: 30일 전체(ALL) 캐시 + 필터 결과 (AI 초안도 같은 캐시를 쓴다)
   const allInquiriesRef = useRef<OnlineInquiry[] | null>(null)
   const [historyLoading, setHistoryLoading] = useState(false)
   const [historyItems, setHistoryItems] = useState<OnlineInquiry[]>([])
@@ -151,17 +139,7 @@ const CustomerInquiry: React.FC = () => {
   // 취소 드로어 (orderId)
   const [cancelOrderId, setCancelOrderId] = useState<string | null>(null)
 
-  // 응답자(WING) ID 기본값 — 저장값 → 로그인 username
-  const replyByDefault = useMemo(() => {
-    try {
-      const saved = localStorage.getItem('cs_reply_by')
-      if (saved) return saved
-      const raw = localStorage.getItem('user')
-      return raw ? (JSON.parse(raw)?.username ?? '') : ''
-    } catch {
-      return ''
-    }
-  }, [])
+  const replyByDefault = useMemo(currentReplyBy, [])
 
   // ── 데이터 로드 ─────────────────────────────────────────────────
   const load = useCallback(async (answeredType: TabKey) => {
@@ -176,6 +154,7 @@ const CustomerInquiry: React.FC = () => {
         setProgress(`조회 중... ${done}/${total} 구간`)
       })
       setRows(result)
+      setLastLoadedAt(new Date())
     } catch (err: any) {
       console.error('[고객문의] 조회 실패:', err)
       setError(`조회 실패: ${err?.message ?? err}`)
@@ -191,16 +170,16 @@ const CustomerInquiry: React.FC = () => {
     load(tab)
   }, [tab, load])
 
-  // ── 미답변 현황 집계 (미답변 탭 전용) ──────────────────────────
-  const statusBuckets = useMemo(() => {
-    const buckets = { within24: 0, within72: 0, within30d: 0 }
+  // ── 미답변 경과 집계 (미답변 탭 전용) ──────────────────────────
+  const aging = useMemo(() => {
+    const b = { within24: 0, within72: 0, over72: 0 }
     for (const r of rows) {
       const h = hoursSince(r.inquiryAt)
-      if (h <= 24) buckets.within24++
-      else if (h <= 72) buckets.within72++
-      else buckets.within30d++
+      if (h <= 24) b.within24++
+      else if (h <= 72) b.within72++
+      else b.over72++
     }
-    return buckets
+    return b
   }, [rows])
 
   // ── 페이지네이션 ────────────────────────────────────────────────
@@ -209,6 +188,9 @@ const CustomerInquiry: React.FC = () => {
     () => rows.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE),
     [rows, page],
   )
+  const changePage = useCallback((p: number) => {
+    setPage(Math.min(totalPages, Math.max(1, p)))
+  }, [totalPages])
 
   // ── 문의별 답변 목록 (기존 commentDtoList + 이번 세션 제출분) ────
   const answersFor = useCallback(
@@ -223,12 +205,48 @@ const CustomerInquiry: React.FC = () => {
     [repliesMap],
   )
 
-  // ── '답변하기' 버튼 → 드로어 열기 ───────────────────────────────
+  // ── 30일 전체 문의 (이전문의 · AI 초안 공용 캐시, 최초 1회 조회) ──
+  const loadAllInquiries = useCallback(async (): Promise<OnlineInquiry[]> => {
+    if (!allInquiriesRef.current) {
+      allInquiriesRef.current = await fetchOnlineInquiries30d('ALL')
+    }
+    return allInquiriesRef.current
+  }, [])
+
+  // ── 답변 전송 (드로어 · AI 확정 공용) ──────────────────────────
+  const sendReply = useCallback(async (inq: OnlineInquiry, content: string, replyBy: string) => {
+    await submitOnlineInquiryReply(inq.inquiryId, content, replyBy) // 실패 시 throw → 호출 쪽에서 표시
+    // 옵티미스틱: 문의 내용 하단 + 드로어 타임라인에 즉시 반영
+    const at = new Date().toISOString()
+    setRepliesMap((prev) => {
+      const next = new Map(prev)
+      const arr = next.get(inq.inquiryId) ?? []
+      next.set(inq.inquiryId, [...arr, { content: content.replace(/\r\n/g, '\n').trim(), at }])
+      return next
+    })
+  }, [])
+
+  // ── AI 예상 답변 초안 ───────────────────────────────────────────
+  const aiDeps = useMemo(() => ({
+    getDetail: (orderId: string) => orderCacheRef.current.get(orderId),
+    getAnswers: (inq: OnlineInquiry) => answersFor(inq).map((a) => a.content),
+    loadAllInquiries,
+    submitReply: async (inq: OnlineInquiry, content: string) => {
+      const replyBy = currentReplyBy()
+      if (!replyBy.trim()) {
+        throw new Error('응답자(WING) ID 가 없습니다. [답변] 창에서 한 번 입력해 저장한 뒤 확정하세요.')
+      }
+      await sendReply(inq, content, replyBy)
+    },
+  }), [answersFor, loadAllInquiries, sendReply])
+  const ai = useInquiryAiDrafts(aiDeps)
+
+  // ── '답변' → 드로어 열기 ────────────────────────────────────────
   const openReply = useCallback((inq: OnlineInquiry) => {
     setDrawer({ mode: 'reply', inquiry: inq })
   }, [])
 
-  // ── '이전문의' 버튼 → 같은 주문의 문의내역 조회 후 드로어 열기 ──
+  // ── '이전문의' → 같은 주문의 문의내역 조회 후 드로어 열기 ────────
   const openHistory = useCallback(async (inq: OnlineInquiry) => {
     setDrawer({ mode: 'history', inquiry: inq })
     const targetOrderId = Number(inq.orderIds?.[0])
@@ -238,38 +256,24 @@ const CustomerInquiry: React.FC = () => {
     }
     setHistoryLoading(true)
     try {
-      // ALL 30일 결과 캐시 (최초 1회만 조회)
-      if (!allInquiriesRef.current) {
-        allInquiriesRef.current = await fetchOnlineInquiries30d('ALL')
-      }
-      const filtered = allInquiriesRef.current.filter((i) =>
-        (i.orderIds ?? []).some((oid) => Number(oid) === targetOrderId),
-      )
-      setHistoryItems(filtered)
+      const all = await loadAllInquiries()
+      setHistoryItems(all.filter((i) => (i.orderIds ?? []).some((oid) => Number(oid) === targetOrderId)))
     } catch (e) {
       console.error('[고객문의] 이전문의 조회 실패:', e)
       setHistoryItems([])
     } finally {
       setHistoryLoading(false)
     }
-  }, [])
+  }, [loadAllInquiries])
 
-  // ── 답변 전송 (드로어에서 호출) ─────────────────────────────────
-  const handleSubmitReply = useCallback(
+  // ── 드로어에서 답변 전송 ────────────────────────────────────────
+  const handleDrawerSubmit = useCallback(
     async (content: string, replyBy: string) => {
       const inq = drawer?.inquiry
       if (!inq) return
-      await submitOnlineInquiryReply(inq.inquiryId, content, replyBy) // 실패 시 throw → 드로어에서 표시
-      // 옵티미스틱: 문의 내용 하단 + 드로어 타임라인에 즉시 반영
-      const at = new Date().toISOString()
-      setRepliesMap((prev) => {
-        const next = new Map(prev)
-        const arr = next.get(inq.inquiryId) ?? []
-        next.set(inq.inquiryId, [...arr, { content: content.replace(/\r\n/g, '\n').trim(), at }])
-        return next
-      })
+      await sendReply(inq, content, replyBy)
     },
-    [drawer],
+    [drawer, sendReply],
   )
 
   const closeDrawer = useCallback(() => setDrawer(null), [])
@@ -279,8 +283,10 @@ const CustomerInquiry: React.FC = () => {
     const info = itemInfoMap.get(inquiryId)
     if (info && info.itemIds.length > 0) setFfDrawer(info)
   }, [itemInfoMap])
-
+  const canOpenFulfillment = useCallback((inquiryId: number) => itemInfoMap.has(inquiryId), [itemInfoMap])
   const closeFulfillment = useCallback(() => setFfDrawer(null), [])
+
+  const getDetail = useCallback((orderId: string) => orderCacheRef.current.get(orderId), [])
 
   // ── 현재 페이지 행의 주문정보 + fulfillment 상태 보강 ───────────
   useEffect(() => {
@@ -320,9 +326,7 @@ const CustomerInquiry: React.FC = () => {
           const oid = String(inq.orderIds?.[0] ?? '')
           const vId = String(inq.vendorItemId ?? '')
           const detail = orderCacheRef.current.get(oid)
-          const line = detail
-            ? detail.lines.find((l) => l.vendorItemId === vId) ?? detail.lines[0]
-            : null
+          const line = detail ? pickLine(detail, vId) : null
           const qty = line?.shippingCount ?? 0
           sMap.set(
             inq.inquiryId,
@@ -362,256 +366,109 @@ const CustomerInquiry: React.FC = () => {
     }
   }, [pageRows])
 
+  // ── [AI 답변 생성] 대상: 이 페이지에서 답변도 초안도 없는 미답변 행 ──
+  const aiEnabled = tab === 'NOANSWER'
+  const aiBusy = ai.generating.size > 0
+  const aiTargets = useMemo(
+    () => (aiEnabled ? pageRows.filter((r) => !ai.drafts.has(r.inquiryId) && answersFor(r).length === 0) : []),
+    [aiEnabled, pageRows, ai.drafts, answersFor],
+  )
+
   // ══════════════════════════════════════════════════════════════
   return (
-    <div style={{ padding: '24px 28px' }}>
-      {/* ── 헤더 ──────────────────────────────────────────────── */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
-        <h1 style={{ fontSize: theme.fontSize['3xl'], fontWeight: 700, color: theme.colors.textPrimary, margin: 0 }}>
-          고객문의
-        </h1>
-        <button
-          onClick={() => load(tab)}
-          disabled={loading}
-          style={{
-            padding: '8px 16px',
-            border: `1px solid ${theme.colors.border}`,
-            borderRadius: theme.radius.sm,
-            background: theme.colors.bgCard,
-            color: theme.colors.textPrimary,
-            fontSize: theme.fontSize.sm,
-            cursor: loading ? 'default' : 'pointer',
-          }}
-        >
-          {loading ? '조회 중...' : '새로고침'}
-        </button>
-      </div>
-
-      {/* ── 탭 ────────────────────────────────────────────────── */}
-      <div style={{ display: 'flex', gap: '4px', borderBottom: `1px solid ${theme.colors.border}`, marginBottom: '20px' }}>
-        {TABS.map((t) => {
-          const active = tab === t.key
-          return (
-            <button
-              key={t.key}
-              onClick={() => setTab(t.key)}
-              disabled={loading}
-              style={{
-                padding: '10px 20px',
-                border: 'none',
-                borderBottom: active ? `2px solid ${theme.colors.primary}` : '2px solid transparent',
-                background: 'transparent',
-                color: active ? theme.colors.primary : theme.colors.textSecondary,
-                fontSize: theme.fontSize.base,
-                fontWeight: active ? 700 : 500,
-                cursor: loading ? 'default' : 'pointer',
-                marginBottom: '-1px',
-              }}
-            >
-              {t.label}
+    <div className="ci-page">
+      <div className="ci-inner">
+        {/* ── 머리: 제목 · 범위 | 전역 액션 ───────────────────────── */}
+        <div className="ci-header">
+          <div>
+            <h1 className="ci-title">고객문의</h1>
+            <div className="ci-subtitle">
+              상품문의 · 최근 30일{lastLoadedAt && ` · 마지막 갱신 ${hhmm(lastLoadedAt)}`}
+            </div>
+          </div>
+          <div className="ci-header-actions">
+            <button type="button" className="ci-btn" onClick={() => load(tab)} disabled={loading}>
+              {loading ? '조회 중…' : '새로고침'}
             </button>
-          )
-        })}
-      </div>
-
-      {/* ── 미답변 현황 (미답변 탭 전용) ────────────────────────── */}
-      {tab === 'NOANSWER' && (
-        <div style={{ marginBottom: '20px' }}>
-          <div style={{ fontSize: theme.fontSize.base, fontWeight: 600, color: theme.colors.textPrimary, marginBottom: '10px' }}>
-            미답변 현황
-          </div>
-          <div style={{ display: 'flex', gap: '14px' }}>
-            <StatusCard label="24시간 이내" count={statusBuckets.within24} />
-            <StatusCard label="24~72시간" count={statusBuckets.within72} />
-            <StatusCard label="72시간~30일 이내" count={statusBuckets.within30d} />
-          </div>
-        </div>
-      )}
-
-      {/* ── 조회 조건 요약 바 ──────────────────────────────────── */}
-      <div
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: '10px',
-          marginBottom: '12px',
-          fontSize: theme.fontSize.sm,
-          color: theme.colors.textSecondary,
-        }}
-      >
-        <span
-          style={{
-            padding: '4px 12px',
-            borderRadius: theme.radius.full,
-            border: `1px solid ${theme.colors.border}`,
-            background: theme.colors.bgTableHeader,
-          }}
-        >
-          등록일: 지난 30일
-        </span>
-        <span>
-          총 <strong style={{ color: theme.colors.textPrimary }}>{rows.length}</strong>개
-        </span>
-      </div>
-
-      {/* ── 상태 표시 ─────────────────────────────────────────── */}
-      {error && (
-        <div
-          style={{
-            ...theme.card,
-            padding: '16px 20px',
-            marginBottom: '16px',
-            borderLeft: `3px solid ${theme.colors.danger}`,
-            color: theme.colors.danger,
-            fontSize: theme.fontSize.sm,
-          }}
-        >
-          {error}
-        </div>
-      )}
-
-      {/* ── 테이블 ────────────────────────────────────────────── */}
-      <div style={{ ...theme.table.container }}>
-        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-          <thead style={theme.table.thead}>
-            <tr>
-              <th style={{ ...theme.table.th, width: '130px' }}>등록일시</th>
-              <th style={theme.table.th}>문의내용</th>
-              <th style={{ ...theme.table.th, width: '160px' }}>문의유형(접수번호)</th>
-              <th style={{ ...theme.table.th, width: '160px' }}>주문번호</th>
-              <th style={{ ...theme.table.th, width: '110px', textAlign: 'center' }}>답변여부</th>
-            </tr>
-          </thead>
-          <tbody>
-            {loading ? (
-              <tr>
-                <td colSpan={5} style={{ ...theme.table.td, textAlign: 'center', padding: '40px', color: theme.colors.textSecondary }}>
-                  {progress || '데이터를 조회하는 중...'}
-                </td>
-              </tr>
-            ) : pageRows.length === 0 ? (
-              <tr>
-                <td colSpan={5} style={{ ...theme.table.td, textAlign: 'center', padding: '40px', color: theme.colors.textMuted }}>
-                  조회된 문의가 없습니다.
-                </td>
-              </tr>
-            ) : (
-              pageRows.map((r) => {
-                const { date, time } = formatInquiryAt(r.inquiryAt)
-                const orderId = String(r.orderIds?.[0] ?? '')
-                // 캐시 상태: 미보유 → undefined(로딩), 보유 → OrderDetail|null
-                const detail = orderId ? orderCacheRef.current.get(orderId) : null
-                // 주문일/출고예정일 표시용 라인 (해당 옵션)
-                const orderLine = detail ? pickLine(detail, String(r.vendorItemId ?? '')) : null
-                return (
-                  <tr key={r.inquiryId} style={theme.table.tr}>
-                    {/* 등록일시 */}
-                    <td style={theme.table.td}>
-                      <div>{date}</div>
-                      <div style={{ fontSize: theme.fontSize.xs, color: theme.colors.textMuted }}>{time}</div>
-                    </td>
-                    {/* 문의내용 (주문정보 + 질문 + 답변) */}
-                    <td style={theme.table.td}>
-                      <OrderInfoLine
-                        orderId={orderId}
-                        vendorItemId={String(r.vendorItemId ?? '')}
-                        detail={detail}
-                        fallbackName={`상품 ${r.productId}`}
-                        status={statusMap.get(r.inquiryId)}
-                        onStatusClick={
-                          itemInfoMap.has(r.inquiryId) ? () => openFulfillment(r.inquiryId) : undefined
-                        }
-                      />
-                      <div style={{ color: theme.colors.textPrimary }}>{r.content}</div>
-                      {answersFor(r).map((a, i) => (
-                        <div
-                          key={i}
-                          style={{
-                            marginTop: 5,
-                            paddingLeft: 8,
-                            borderLeft: `2px solid ${theme.colors.primary}`,
-                            color: theme.colors.textSecondary,
-                            fontSize: theme.fontSize.xs,
-                            whiteSpace: 'pre-wrap',
-                            lineHeight: 1.5,
-                          }}
-                        >
-                          ↳ {a.content}
-                        </div>
-                      ))}
-                    </td>
-                    {/* 문의유형(접수번호) */}
-                    <td style={theme.table.td}>
-                      <div>상품문의</div>
-                      <div style={{ fontSize: theme.fontSize.xs, color: theme.colors.textMuted }}>({r.inquiryId})</div>
-                    </td>
-                    {/* 주문번호 + 주문일/출고예정일 */}
-                    <td style={theme.table.td}>
-                      <div style={{ color: theme.colors.primary }}>{formatOrderIds(r.orderIds)}</div>
-                      {orderLine && (
-                        <div style={{ fontSize: theme.fontSize.xs, color: theme.colors.textMuted, marginTop: 3, lineHeight: 1.6 }}>
-                          <div>주문 {formatDate(orderLine.orderedAt)}</div>
-                          <div>예정 {formatDate(orderLine.estimatedShippingDate)}</div>
-                        </div>
-                      )}
-                    </td>
-                    {/* 답변여부 — 취소하기 / 이전문의 / 답변하기 */}
-                    <td style={{ ...theme.table.td, textAlign: 'center' }}>
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                        <button
-                          type="button"
-                          onClick={() => orderId && setCancelOrderId(orderId)}
-                          disabled={!orderId}
-                          style={outlineBtnStyle(theme.colors.danger)}
-                        >
-                          취소하기
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => openHistory(r)}
-                          style={outlineBtnStyle(theme.colors.secondary)}
-                        >
-                          이전문의
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => openReply(r)}
-                          style={outlineBtnStyle(theme.colors.primary)}
-                        >
-                          답변하기
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                )
-              })
+            {ai.drafts.size > 0 && (
+              <button type="button" className="ci-btn" onClick={ai.clearAll} disabled={aiBusy}>
+                초안 모두 지우기
+              </button>
             )}
-          </tbody>
-        </table>
-      </div>
-
-      {/* ── 페이지네이션 ──────────────────────────────────────── */}
-      {!loading && rows.length > 0 && (
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '12px', marginTop: '16px' }}>
-          <button
-            onClick={() => setPage((p) => Math.max(1, p - 1))}
-            disabled={page <= 1}
-            style={pagerBtnStyle(page <= 1)}
-          >
-            이전
-          </button>
-          <span style={{ fontSize: theme.fontSize.sm, color: theme.colors.textSecondary }}>
-            {page} / {totalPages}
-          </span>
-          <button
-            onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-            disabled={page >= totalPages}
-            style={pagerBtnStyle(page >= totalPages)}
-          >
-            다음
-          </button>
+            <button
+              type="button"
+              className="ci-btn ci-btn-primary"
+              onClick={() => ai.generateFor(aiTargets)}
+              disabled={!aiEnabled || loading || aiBusy || aiTargets.length === 0}
+              title={aiEnabled ? '이 페이지의 미답변 문의에 예상 답변을 만듭니다' : '미답변 탭에서만 쓸 수 있습니다'}
+            >
+              {aiBusy ? `AI 답변 생성 중… (${ai.generating.size})` : 'AI 답변 생성'}
+            </button>
+          </div>
         </div>
-      )}
+
+        {/* ── 탭 | 미답변 경과 요약 · 근거 표시 ───────────────────── */}
+        <div className="ci-tabbar">
+          <div className="ci-seg" role="tablist">
+            {TABS.map((t) => {
+              const active = tab === t.key
+              return (
+                <button
+                  key={t.key}
+                  type="button"
+                  role="tab"
+                  aria-selected={active}
+                  className={`ci-seg-btn${active ? ' active' : ''}`}
+                  onClick={() => setTab(t.key)}
+                  disabled={loading}
+                >
+                  {t.label}
+                  {active && !loading && <span className="ci-seg-count">{rows.length}</span>}
+                </button>
+              )
+            })}
+          </div>
+          <div className="ci-aging">
+            {aiEnabled && !loading && rows.length > 0 && (
+              <>
+                <span>24시간 이내<b>{aging.within24}</b></span>
+                <span>24~72시간<b>{aging.within72}</b></span>
+                <span className={aging.over72 > 0 ? 'warn' : undefined}>72시간 초과<b>{aging.over72}</b></span>
+              </>
+            )}
+            {aiEnabled && ai.drafts.size > 0 && (
+              <button type="button" className="ci-btn ci-btn-text ci-btn-sm" onClick={toggleReasoning}>
+                {showReasoning ? '근거 숨기기' : '근거 표시'}
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* ── 상태 메시지 ──────────────────────────────────────────── */}
+        {error && <div className="ci-error">{error}</div>}
+        {ai.generateError && <div className="ci-error">{ai.generateError}</div>}
+
+        {/* ── 카드 목록 ────────────────────────────────────────────── */}
+        <CustomerInquiryList
+          rows={pageRows}
+          loading={loading}
+          progress={progress}
+          page={page}
+          totalPages={totalPages}
+          onPageChange={changePage}
+          getDetail={getDetail}
+          statusMap={statusMap}
+          canOpenFulfillment={canOpenFulfillment}
+          answersFor={answersFor}
+          ai={ai}
+          aiEnabled={aiEnabled}
+          showReasoning={showReasoning}
+          onReply={openReply}
+          onHistory={openHistory}
+          onCancel={setCancelOrderId}
+          onFulfillment={openFulfillment}
+        />
+      </div>
 
       {/* ── 우측 드로어 (답변 / 이전문의) ─────────────────────────── */}
       <CustomerInquiryDrawer
@@ -621,7 +478,7 @@ const CustomerInquiry: React.FC = () => {
         detail={drawer ? orderCacheRef.current.get(String(drawer.inquiry.orderIds?.[0] ?? '')) : null}
         answers={drawer?.inquiry ? answersFor(drawer.inquiry) : []}
         replyByDefault={replyByDefault}
-        onSubmitReply={handleSubmitReply}
+        onSubmitReply={handleDrawerSubmit}
         historyLoading={historyLoading}
         historyItems={historyItems}
         onClose={closeDrawer}
@@ -651,34 +508,6 @@ const CustomerInquiry: React.FC = () => {
       />
     </div>
   )
-}
-
-// ── 답변여부 열 아웃라인 버튼 스타일 ───────────────────────────────
-function outlineBtnStyle(color: string): React.CSSProperties {
-  return {
-    padding: '5px 10px',
-    border: `1px solid ${color}`,
-    borderRadius: theme.radius.sm,
-    background: theme.colors.bgCard,
-    color,
-    fontSize: theme.fontSize.xs,
-    fontWeight: 600,
-    cursor: 'pointer',
-    whiteSpace: 'nowrap',
-  }
-}
-
-// ── 페이지네이션 버튼 스타일 ───────────────────────────────────────
-function pagerBtnStyle(disabled: boolean): React.CSSProperties {
-  return {
-    padding: '6px 16px',
-    border: `1px solid ${theme.colors.border}`,
-    borderRadius: theme.radius.sm,
-    background: theme.colors.bgCard,
-    color: disabled ? theme.colors.textMuted : theme.colors.textPrimary,
-    fontSize: theme.fontSize.sm,
-    cursor: disabled ? 'default' : 'pointer',
-  }
 }
 
 export default CustomerInquiry

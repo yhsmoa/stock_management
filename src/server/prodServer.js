@@ -1,22 +1,24 @@
 /* ================================================================
    프로덕션 서버 (Railway 배포용)
-   - Express: 쿠팡 API 프록시 + QZ Tray 서명(라벨 인쇄) + dist/ 정적 파일 서빙 + SPA fallback
+   - Express: 쿠팡 API 프록시 + QZ Tray 서명(라벨 인쇄) + 고객문의 AI 답변(OpenAI) + dist/ 정적 파일 서빙 + SPA fallback
    - coupangProxy.ts · qzSignProxy.ts (Vite 전용)의 로직을 CommonJS로 재구현
+   - AI 답변은 ai/inquiryReplyAi.js 를 aiProxy.ts 와 공용으로 쓴다 (라우트 껍데기만 여기)
    ================================================================ */
 
 const express = require('express')
 const crypto = require('node:crypto')
 const path = require('node:path')
+const { generateInquiryReplies, AiRequestError } = require('./ai/inquiryReplyAi')
 
 const app = express()
 const PORT = process.env.PORT || 3000
 const DIST_DIR = path.resolve(__dirname, '../../dist')
 
 // ══════════════════════════════════════════════════════════════════
-// JSON body 파싱
+// JSON body 파싱 — AI 답변 요청(문의 20건 + 이전문의)이 기본 100kb 를 넘을 수 있어 1mb
 // ══════════════════════════════════════════════════════════════════
 
-app.use(express.json())
+app.use(express.json({ limit: '1mb' }))
 
 // ══════════════════════════════════════════════════════════════════
 // 쿠팡 인증 헬퍼
@@ -535,6 +537,27 @@ app.post('/api/qz/sign', (req, res) => {
   } catch (error) {
     console.error('[prod-server] QZ 서명 오류:', error.message)
     res.status(500).json({ success: false, error: '서명 중 오류가 발생했습니다.' })
+  }
+})
+
+// ══════════════════════════════════════════════════════════════════
+// 고객문의 AI 답변 (OpenAI) — aiProxy.ts 와 같은 라우트
+//   env OPENAI_API_KEY / OPENAI_MODEL. 프롬프트·검증·호출은 ai/inquiryReplyAi.js
+// ══════════════════════════════════════════════════════════════════
+
+const OPENAI_API_KEY = (process.env.OPENAI_API_KEY || '').trim()
+const OPENAI_MODEL = (process.env.OPENAI_MODEL || '').trim()
+if (!OPENAI_API_KEY) console.warn('[prod-server] OPENAI_API_KEY 가 없어 [AI 답변] 이 동작하지 않습니다.')
+
+// ── POST /api/ai/inquiry-replies — body { items } → { success, data: drafts[] } ──
+app.post('/api/ai/inquiry-replies', async (req, res) => {
+  try {
+    const data = await generateInquiryReplies({ apiKey: OPENAI_API_KEY, model: OPENAI_MODEL, items: req.body && req.body.items })
+    res.json({ success: true, data })
+  } catch (error) {
+    const status = error instanceof AiRequestError ? error.status : 500
+    console.error('[prod-server] AI 답변 생성 오류:', error.message)
+    res.status(status).json({ success: false, error: error.message || 'AI 답변 생성 중 오류가 발생했습니다.' })
   }
 })
 

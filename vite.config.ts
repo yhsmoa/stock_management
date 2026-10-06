@@ -3,6 +3,7 @@ import react from '@vitejs/plugin-react'
 import path from 'path'
 import { coupangProxyPlugin } from './src/server/coupangProxy'
 import { qzSignProxyPlugin } from './src/server/qzSignProxy'
+import { aiProxyPlugin } from './src/server/aiProxy'
 
 // React 애플리케이션용 설정
 export default defineConfig({
@@ -10,6 +11,7 @@ export default defineConfig({
     react(),
     coupangProxyPlugin(),
     qzSignProxyPlugin(),
+    aiProxyPlugin(),
   ],
   resolve: {
     alias: {

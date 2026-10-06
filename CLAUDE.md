@@ -64,7 +64,16 @@ Electron is built separately via `scripts/build-electron.mjs` (called manually; 
 - **Commit style**: Conventional Commits in Korean (`feat:`, `fix:`, `refactor:`, `style:` + Korean summary). See `git log` for examples.
 - **Path alias**: `@/*` → `src/*` (configured in `tsconfig.json` and `vite.config.ts`).
 - **TypeScript**: `strict: true`, `noUnusedLocals`, `noUnusedParameters`, `noFallthroughCasesInSwitch` are all on. Don't silence them with `// @ts-ignore`; fix the underlying issue.
-- **Env vars**: The renderer reads `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`. The prod server uses `PORT`, plus `QZ_CERTIFICATE` / `QZ_PRIVATE_KEY` (라벨 인쇄 서명 — 아래 절). The Vite dev server reads the same two QZ vars from `.env` (no `VITE_` prefix, so they never reach the browser). No other env vars — if you think you need one, check if a header-based per-user key (Coupang pattern) fits better.
+- **Env vars**: The renderer reads `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`. The prod server uses `PORT`, plus `QZ_CERTIFICATE` / `QZ_PRIVATE_KEY` (라벨 인쇄 서명 — 아래 절) and `OPENAI_API_KEY` / `OPENAI_MODEL`(선택, 기본값은 `ai/inquiryReplyAi.js` 의 `DEFAULT_MODEL`) (고객문의 AI 답변 — 아래 절). The Vite dev server reads the same vars from `.env` (no `VITE_` prefix, so they never reach the browser). No other env vars — if you think you need one, check if a header-based per-user key (Coupang pattern) fits better.
+
+### 고객문의 AI 답변 (2026-10-06)
+`/cs/customer-inquiry` 표 우측 위 [AI 답변] → 미답변 행에 예상 답변 초안 → 담당자가 고쳐서 [확정] → 기존 답변 전송 경로로 쿠팡에 보낸다.
+- **규칙서가 단일 기준**: `src/server/ai/customerInquiryGuide.md` — "이런 문의에는 이렇게" 템플릿 20묶음 + 톤 규칙 + 주문상태 분기 + 출력 JSON. 그대로 system prompt 에 들어간다. 답변 방식을 바꾸려면 이 파일만 고친다(서버 재시작 시 다시 읽음). 그룹 키는 `services/inquiryAiService.ts` 의 `INQUIRY_CATEGORY_LABELS` · 서버 `CATEGORY_KEYS` 와 셋이 같아야 한다.
+- **서버**: 코어 `src/server/ai/inquiryReplyAi.js`(CJS, 검증·프롬프트·OpenAI 호출)를 개발 `src/server/aiProxy.ts` 와 운영 `prodServer.js` 가 공용으로 쓴다. 라우트 `POST /api/ai/inquiry-replies` 는 쿠팡 프록시처럼 **양쪽에** 있다. 10건씩 나눠 병렬 호출, 한 요청 최대 50건.
+- **OpenAI 호출 규약 (2026-10 기준)**: Responses API `POST /v1/responses` (`instructions` + `input` + `text.format` json_schema strict + `reasoning.effort` + `store:false`). Chat Completions 는 구형이라 쓰지 않는다. 기본 모델 `gpt-6.1-sol`(현역: gpt-6-astra › gpt-6.1-sol › gpt-6-luna). 모델명은 자주 바뀌니 바꿀 때 https://developers.openai.com/api/docs/models 에서 현역 ID 를 확인한다.
+- **화면 (디자인 v2, 2026-10-07)**: 문의 1건 = 카드 1장 — 왼쪽 168px 레일(날짜·주문·고객·보조 작업) | 본문(상품줄·질문 17px 볼드·답변·AI 초안). 색은 파랑 1개 + 앰버(담당자 확인) 1개, 칩은 테두리형. 전역 액션(새로고침·초안 모두 지우기·AI 답변 생성)은 헤더. 파일: 목록 `components/cs/CustomerInquiryList.tsx`, 초안 상태 `useInquiryAiDrafts.ts`, 박스 `InquiryAiDraftBox.tsx`(textarea 높이는 내용 줄 수에 맞춤), 스타일 `pages/CustomerInquiry.css`(.ci-, 토큰은 `.ci-page` 의 CSS 변수). 페이지 전체가 스크롤(Layout main 이 overflow hidden). 근거 문장 표시는 localStorage `cs_ai_show_reasoning`.
+- 초안의 "처리 도와드렸습니다"는 담당자가 [확정] 전에 실제 취소/반품 접수를 해야 한다 → `requiredAction` 칩. `[담당자: …]` 자리표시가 남아 있으면 확정 버튼이 막힌다.
+- 엔드포인트에 사용자 인증이 없다(앱 전체가 그렇다). 키 비용 보호가 필요하면 그때 헤더 검증을 넣는다.
 
 ### 라벨 출력 (내장 — QZ Tray)
 라벨 양식 편집기(`/label-settings`, 사이드 메뉴 물류 › 라벨 설정)와 상품관리 [라벨출력] 모달이 이 앱 안에 있다. 원래 별도 서비스 label-service(Next.js, iframe)였는데 iframe 제약(저장소 분리·localhost 권한) 때문에 2026-09 에 옮겨 왔다 — label-service 는 아이엠몽 로켓용으로 남아 있고 **코드를 공유하지 않는 복사본**이다.

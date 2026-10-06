@@ -29,7 +29,8 @@ export function pickLine(detail: OrderDetail, vendorItemId: string): OrderLineIn
 }
 
 // ── fulfillment 상태 점 + 상태명 (개인주문 '상태' 열과 동일) ──
-const StatusDot: React.FC<{ status: FulfillmentStatus }> = ({ status }) => {
+//    고객문의 표(CustomerInquiryTable)도 같은 점을 쓴다 → export
+export const StatusDot: React.FC<{ status: FulfillmentStatus }> = ({ status }) => {
   if (status === 'none') return null
   const label = STATUS_DOT_LABELS[status]
   if (status === 'cart') {
