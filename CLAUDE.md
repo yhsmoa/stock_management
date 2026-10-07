@@ -51,6 +51,8 @@ All tables share the `si_` prefix and are queried via `@supabase/supabase-js` wi
 
 Most tables are keyed by `user_id` (= `si_users.id` UUID) so data is partitioned per logged-in user. Large reads page through in 1000-row batches (`.range(from, from+999)` in a loop) — see `fetchCoupangItems` for the canonical pattern.
 
+`si_users.coupang_user_name` is the account's Coupang WING login ID, sent as `replyBy` when answering 고객문의 (`/cs/customer-inquiry`). Read it with `fetchCoupangUserName()` (always from DB — older login sessions in localStorage don't have the column).
+
 `si_users` has a separate `order_user_id` column that maps to an external `purchase_agent.ft_users.id`. `getOrderUserId()` in `supabase.ts` handles localStorage caching of this lookup — reuse it rather than re-querying.
 
 ### Electron main/preload

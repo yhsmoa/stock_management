@@ -4,6 +4,7 @@
    - 페이지네이션 20개 (클라이언트)
    - 행마다 주문번호(orderIds[0])로 주문 상세를 조회해 상품·수취인·수량·금액·출고예정·배송상태 표시
      + 개인주문 '상태' 열과 같은 fulfillment 상태점 (orderFulfillmentService 공유)
+   - 답변 응답자(replyBy)는 계정의 si_users.coupang_user_name 고정 (입력란 없음, 비어 있으면 전송 차단)
    - [AI 답변 생성]: 미답변 행에 예상 답변 초안 → 담당자가 고쳐서 [확정] → 쿠팡 전송
      (초안 상태 components/cs/useInquiryAiDrafts.ts · 규칙 src/server/ai/customerInquiryGuide.md)
    - 디자인 v2 (2026-10-07): 문의 1건 = 카드 1장 — components/cs/CustomerInquiryList.tsx, 스타일 CustomerInquiry.css (.ci-*)
@@ -19,7 +20,7 @@ import {
   type OnlineInquiry,
   type OrderDetail,
 } from '../services/csService'
-import { getOrderUserId } from '../services/supabase'
+import { getOrderUserId, fetchCoupangUserName } from '../services/supabase'
 import { isOrderSupabaseConfigured } from '../services/orderSupabase'
 import {
   fetchFulfillmentData,
@@ -83,17 +84,9 @@ function hhmm(d: Date): string {
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
 }
 
-/** 응답자(WING) ID — 저장값 → 로그인 username (드로어·취소 드로어와 같은 저장소) */
-function currentReplyBy(): string {
-  try {
-    const saved = localStorage.getItem('cs_reply_by')
-    if (saved) return saved
-    const raw = localStorage.getItem('user')
-    return raw ? (JSON.parse(raw)?.username ?? '') : ''
-  } catch {
-    return ''
-  }
-}
+/** 응답자 ID 미등록 안내 (드로어 · AI 확정 공용) */
+const REPLY_BY_MISSING_MSG =
+  '쿠팡 로그인 ID(si_users.coupang_user_name)가 계정에 등록되어 있지 않아 답변을 보낼 수 없습니다. 관리자에게 등록을 요청하세요.'
 
 // ══════════════════════════════════════════════════════════════════
 // 컴포넌트
@@ -139,7 +132,37 @@ const CustomerInquiry: React.FC = () => {
   // 취소 드로어 (orderId)
   const [cancelOrderId, setCancelOrderId] = useState<string | null>(null)
 
-  const replyByDefault = useMemo(currentReplyBy, [])
+  // ── 응답자 ID (si_users.coupang_user_name) ──────────────────────
+  // 화면 표시용 state + 전송 시점에 쓰는 ref. 비어 있으면 전송 직전에 한 번 더 조회한다
+  // (페이지를 연 뒤 관리자가 채운 경우).
+  const [replyBy, setReplyBy] = useState('')
+  const [replyByStatus, setReplyByStatus] = useState<'loading' | 'ready' | 'error'>('loading')
+  const replyByRef = useRef('')
+
+  const refreshReplyBy = useCallback(async (): Promise<string> => {
+    try {
+      const name = await fetchCoupangUserName()
+      replyByRef.current = name
+      setReplyBy(name)
+      setReplyByStatus('ready')
+      return name
+    } catch (e) {
+      console.error('[고객문의] 쿠팡 로그인 ID 조회 실패:', e)
+      setReplyByStatus('error')
+      throw e
+    }
+  }, [])
+
+  useEffect(() => {
+    refreshReplyBy().catch(() => { /* 상태는 refreshReplyBy 가 기록, 전송 시 재시도 */ })
+  }, [refreshReplyBy])
+
+  /** 전송에 쓸 응답자 ID — 없으면 재조회, 그래도 없으면 throw */
+  const resolveReplyBy = useCallback(async (): Promise<string> => {
+    const name = replyByRef.current || (await refreshReplyBy())
+    if (!name) throw new Error(REPLY_BY_MISSING_MSG)
+    return name
+  }, [refreshReplyBy])
 
   // ── 데이터 로드 ─────────────────────────────────────────────────
   const load = useCallback(async (answeredType: TabKey) => {
@@ -213,9 +236,10 @@ const CustomerInquiry: React.FC = () => {
     return allInquiriesRef.current
   }, [])
 
-  // ── 답변 전송 (드로어 · AI 확정 공용) ──────────────────────────
-  const sendReply = useCallback(async (inq: OnlineInquiry, content: string, replyBy: string) => {
-    await submitOnlineInquiryReply(inq.inquiryId, content, replyBy) // 실패 시 throw → 호출 쪽에서 표시
+  // ── 답변 전송 (드로어 · AI 확정 공용) — 응답자는 항상 coupang_user_name ──
+  const sendReply = useCallback(async (inq: OnlineInquiry, content: string) => {
+    const by = await resolveReplyBy()
+    await submitOnlineInquiryReply(inq.inquiryId, content, by) // 실패 시 throw → 호출 쪽에서 표시
     // 옵티미스틱: 문의 내용 하단 + 드로어 타임라인에 즉시 반영
     const at = new Date().toISOString()
     setRepliesMap((prev) => {
@@ -224,20 +248,14 @@ const CustomerInquiry: React.FC = () => {
       next.set(inq.inquiryId, [...arr, { content: content.replace(/\r\n/g, '\n').trim(), at }])
       return next
     })
-  }, [])
+  }, [resolveReplyBy])
 
   // ── AI 예상 답변 초안 ───────────────────────────────────────────
   const aiDeps = useMemo(() => ({
     getDetail: (orderId: string) => orderCacheRef.current.get(orderId),
     getAnswers: (inq: OnlineInquiry) => answersFor(inq).map((a) => a.content),
     loadAllInquiries,
-    submitReply: async (inq: OnlineInquiry, content: string) => {
-      const replyBy = currentReplyBy()
-      if (!replyBy.trim()) {
-        throw new Error('응답자(WING) ID 가 없습니다. [답변] 창에서 한 번 입력해 저장한 뒤 확정하세요.')
-      }
-      await sendReply(inq, content, replyBy)
-    },
+    submitReply: sendReply,
   }), [answersFor, loadAllInquiries, sendReply])
   const ai = useInquiryAiDrafts(aiDeps)
 
@@ -268,10 +286,10 @@ const CustomerInquiry: React.FC = () => {
 
   // ── 드로어에서 답변 전송 ────────────────────────────────────────
   const handleDrawerSubmit = useCallback(
-    async (content: string, replyBy: string) => {
+    async (content: string) => {
       const inq = drawer?.inquiry
       if (!inq) return
-      await sendReply(inq, content, replyBy)
+      await sendReply(inq, content)
     },
     [drawer, sendReply],
   )
@@ -477,7 +495,12 @@ const CustomerInquiry: React.FC = () => {
         inquiry={drawer?.inquiry ?? null}
         detail={drawer ? orderCacheRef.current.get(String(drawer.inquiry.orderIds?.[0] ?? '')) : null}
         answers={drawer?.inquiry ? answersFor(drawer.inquiry) : []}
-        replyByDefault={replyByDefault}
+        replyBy={replyBy}
+        replyByNotice={
+          replyByStatus === 'loading' ? '조회 중…'
+            : replyByStatus === 'error' ? '조회 실패 — [답변하기] 를 누르면 다시 조회합니다.'
+            : replyBy ? '' : REPLY_BY_MISSING_MSG
+        }
         onSubmitReply={handleDrawerSubmit}
         historyLoading={historyLoading}
         historyItems={historyItems}

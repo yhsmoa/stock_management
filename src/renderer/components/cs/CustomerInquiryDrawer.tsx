@@ -55,8 +55,11 @@ interface Props {
   inquiry: OnlineInquiry | null
   detail: OrderDetail | null | undefined
   answers: Answer[]                 // reply 모드: 기존 + 제출된 답변
-  replyByDefault: string
-  onSubmitReply: (content: string, replyBy: string) => Promise<void>
+  /** 응답자 ID (si_users.coupang_user_name) — 표시 전용, 전송은 페이지가 직접 조달 */
+  replyBy: string
+  /** 응답자 ID 상태 안내 (조회 중 · 실패 · 미등록). 빈 문자열이면 정상 */
+  replyByNotice: string
+  onSubmitReply: (content: string) => Promise<void>
   historyLoading: boolean
   historyItems: OnlineInquiry[]     // history 모드: 같은 주문의 이전 문의
   onClose: () => void
@@ -67,11 +70,10 @@ interface Props {
 // ══════════════════════════════════════════════════════════════════
 
 const CustomerInquiryDrawer: React.FC<Props> = ({
-  open, mode, inquiry, detail, answers, replyByDefault,
+  open, mode, inquiry, detail, answers, replyBy, replyByNotice,
   onSubmitReply, historyLoading, historyItems, onClose,
 }) => {
   const [answerText, setAnswerText] = useState('')
-  const [replyBy, setReplyBy] = useState(replyByDefault)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
   const [doneMsg, setDoneMsg] = useState('')
@@ -81,8 +83,7 @@ const CustomerInquiryDrawer: React.FC<Props> = ({
     setAnswerText('')
     setError('')
     setDoneMsg('')
-    setReplyBy(replyByDefault)
-  }, [inquiry?.inquiryId, mode, replyByDefault])
+  }, [inquiry?.inquiryId, mode])
 
   // ESC 로 닫기
   useEffect(() => {
@@ -107,8 +108,7 @@ const CustomerInquiryDrawer: React.FC<Props> = ({
     setError('')
     setDoneMsg('')
     try {
-      await onSubmitReply(answerText, replyBy)
-      try { localStorage.setItem('cs_reply_by', replyBy.trim()) } catch { /* 무시 */ }
+      await onSubmitReply(answerText)
       setDoneMsg('답변이 전송되었습니다.')
       setAnswerText('')
     } catch (e: any) {
@@ -118,7 +118,8 @@ const CustomerInquiryDrawer: React.FC<Props> = ({
     }
   }
 
-  const canSubmit = !submitting && answerText.trim().length > 0 && replyBy.trim().length > 0
+  // 응답자 ID 가 비어 있어도 누를 수 있다 — 전송 직전에 페이지가 재조회하고, 그래도 없으면 안내 오류
+  const canSubmit = !submitting && answerText.trim().length > 0
 
   return (
     <>
@@ -205,7 +206,7 @@ const CustomerInquiryDrawer: React.FC<Props> = ({
               answerText={answerText}
               setAnswerText={setAnswerText}
               replyBy={replyBy}
-              setReplyBy={setReplyBy}
+              replyByNotice={replyByNotice}
               error={error}
               doneMsg={doneMsg}
             />
@@ -251,10 +252,10 @@ const ReplyBody: React.FC<{
   answerText: string
   setAnswerText: (v: string) => void
   replyBy: string
-  setReplyBy: (v: string) => void
+  replyByNotice: string
   error: string
   doneMsg: string
-}> = ({ inquiry, answers, answerText, setAnswerText, replyBy, setReplyBy, error, doneMsg }) => (
+}> = ({ inquiry, answers, answerText, setAnswerText, replyBy, replyByNotice, error, doneMsg }) => (
   <>
     {/* 문의 내용 */}
     <div style={{ marginBottom: 18 }}>
@@ -341,23 +342,25 @@ const ReplyBody: React.FC<{
       </div>
     </div>
 
-    {/* 응답자(WING) ID */}
+    {/* 응답자 ID — 계정의 쿠팡 로그인 ID(si_users.coupang_user_name), 표시 전용 */}
     <div style={{ marginBottom: 12 }}>
-      <div style={sectionLabel}>응답자 ID (WING)</div>
-      <input
-        value={replyBy}
-        onChange={(e) => setReplyBy(e.target.value)}
-        placeholder="셀러포탈(WING) 로그인 ID"
+      <div style={sectionLabel}>응답자 ID (쿠팡 로그인 ID)</div>
+      <div
         style={{
-          width: '100%',
+          ...boxStyle,
           padding: '8px 12px',
-          border: `1px solid ${theme.colors.border}`,
-          borderRadius: theme.radius.sm,
-          fontSize: theme.fontSize.sm,
-          boxSizing: 'border-box',
-          outline: 'none',
+          background: theme.colors.bgTableHeader,
+          fontFamily: replyBy ? 'monospace' : 'inherit',
+          color: replyBy ? theme.colors.textPrimary : theme.colors.textMuted,
         }}
-      />
+      >
+        {replyBy || '-'}
+      </div>
+      {replyByNotice && (
+        <div style={{ fontSize: theme.fontSize.xs, color: theme.colors.warning, marginTop: 4, lineHeight: 1.5 }}>
+          {replyByNotice}
+        </div>
+      )}
     </div>
 
     {/* 상태 메시지 */}

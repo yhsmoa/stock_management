@@ -11,6 +11,8 @@ export interface AuthUser {
   coupang_secret_key: string | null
   // ── 주문 프로젝트 연동 (ft_users.id 매핑) ──
   order_user_id: string | null
+  // ── 쿠팡 WING 로그인 ID (고객문의 답변 replyBy) — 로그인 후 채워질 수 있어 fetchCoupangUserName 으로 읽는다 ──
+  coupang_user_name?: string | null
 }
 
 export interface LoginFormData {

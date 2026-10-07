@@ -137,6 +137,39 @@ export const getOrderUserId = async (): Promise<string> => {
   return fetched
 }
 
+/* ================================================================
+   쿠팡 WING 로그인 ID 조달 헬퍼 (si_users.coupang_user_name)
+   - 고객문의 답변(replyBy)에 쿠팡이 요구하는 셀러포탈 로그인 ID
+   - 로그인 이후에 관리자가 채우는 값이라 localStorage.user 를 믿지 않고 매번 DB 에서 읽는다
+     (예전 로그인 세션에는 이 컬럼이 아예 없다)
+   - 반환값 '' 는 "미등록 계정", 조회 실패는 throw
+   ================================================================ */
+export const fetchCoupangUserName = async (): Promise<string> => {
+  // ── 1) 로그인 사용자 id ──
+  let siUserId = ''
+  try {
+    const raw = localStorage.getItem('user')
+    siUserId = raw ? ((JSON.parse(raw) as { id?: string })?.id ?? '') : ''
+  } catch {
+    siUserId = ''
+  }
+  if (!siUserId) throw new Error('로그인 정보가 없습니다. 다시 로그인하세요.')
+
+  // ── 2) si_users 단건 조회 ──
+  const { data, error } = await supabase
+    .from('si_users')
+    .select('coupang_user_name')
+    .eq('id', siUserId)
+    .maybeSingle()
+
+  if (error) {
+    console.error('[fetchCoupangUserName] si_users 조회 실패:', error)
+    throw new Error(`쿠팡 로그인 ID 조회 실패: ${error.message}`)
+  }
+
+  return ((data as { coupang_user_name?: string | null } | null)?.coupang_user_name ?? '').trim()
+}
+
 // 쿠팡 아이템 인터페이스
 export interface CoupangItem {
   barcode: string
