@@ -60,28 +60,41 @@ export async function fetchItemInfos(userId: string): Promise<ItemInfoRow[]> {
 }
 
 // ══════════════════════════════════════════════════════════════════
-// upsert — (user_id, barcode) 충돌 시 update, 없으면 insert
+// 저장 — 기존 행은 id 기준, 신규 행은 (user_id, barcode) 기준 upsert
 // ══════════════════════════════════════════════════════════════════
 
+/** 한 묶음을 청크(1000건)로 나눠 upsert */
+async function upsertChunks(rows: ItemInfoUpsert[], onConflict: string): Promise<void> {
+  for (let i = 0; i < rows.length; i += UPSERT_CHUNK) {
+    const chunk = rows.slice(i, i + UPSERT_CHUNK)
+    const { error } = await supabase
+      .from('si_item_info')
+      // defaultToNull:false — 행에 없는 열은 null 이 아니라 DB 기본값(id 등)을 쓴다
+      .upsert(chunk, { onConflict, defaultToNull: false })
+    if (error) {
+      console.error('[upsertItemInfos]', onConflict, error)
+      throw error
+    }
+  }
+}
+
 /**
- * 변경/신규 행을 일괄 upsert
- * - 1000건 청크 분할 (CLAUDE.md 룰 5)
- * - barcode 가 비어있는 행은 호출 측에서 미리 제외해야 함 (conflict key 필수)
+ * 변경/신규 행 일괄 저장
+ * - 기존 행(id 있음): id 기준 — 바코드를 바꿔도 같은 행이 고쳐진다
+ *   (바꾼 바코드가 다른 행과 겹치면 unique 오류로 막힌다)
+ * - 신규 행(id 없음): (user_id, barcode) 기준 — 이미 있는 바코드면 그 행에 덮어쓴다
+ * - 둘을 한 요청에 섞으면 신규 행의 id 가 null 로 채워져 실패하므로 나눠 보낸다
+ * - barcode 가 비어있는 행은 호출 측에서 미리 제외해야 함
  */
 export async function upsertItemInfos(
   rows: ItemInfoUpsert[],
 ): Promise<{ count: number }> {
   if (rows.length === 0) return { count: 0 }
 
-  for (let i = 0; i < rows.length; i += UPSERT_CHUNK) {
-    const chunk = rows.slice(i, i + UPSERT_CHUNK)
-    const { error } = await supabase
-      .from('si_item_info')
-      .upsert(chunk, { onConflict: 'user_id,barcode' })
-    if (error) {
-      console.error('[upsertItemInfos]', error)
-      throw error
-    }
-  }
+  const existing = rows.filter((r) => !!r.id)
+  const added = rows.filter((r) => !r.id)
+
+  if (existing.length > 0) await upsertChunks(existing, 'id')
+  if (added.length > 0) await upsertChunks(added, 'user_id,barcode')
   return { count: rows.length }
 }
