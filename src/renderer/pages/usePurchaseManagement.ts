@@ -13,16 +13,17 @@ import {
   fetchRgItems,
   persistOrderQty,
   fetchRgItemData,
-  saveRgItems,
+  syncRgItemsFromList,
+  type RgSyncResult,
   validateItemDataExcel,
   parseItemDataExcel,
   saveRgItemData,
   parseShipmentSizeExcel,
   saveShipmentSize,
   fetchShipmentSizesByOptionIds,
-  upsertNewRgItems,
   updateBarcodesFromMap,
-  fetchBarcodesFromApi,
+  fetchDetailsFromApi,
+  needsDetailSync,
   parseViewsCsv,
   saveViewsData,
   fetchViewsData,
@@ -657,81 +658,62 @@ export function usePurchaseManagement() {
   }, [])
 
   // ══════════════════════════════════════════════════════════════
-  // [리셋] — 기존 업데이트: 전체 삭제 → API 목록 → 전체 insert
+  // 상품 동기화 공통 — 목록 API → 옵션 ID 기준 병합 (purchaseService.syncRgItemsFromList)
+  //   [리셋]    : 목록에 없는 옵션까지 정리 (직접 입력값은 남는다)
+  //   [업데이트] : 신규 추가 + 기존 행의 목록 칼럼(노출상품 ID·상태·이름 등) 갱신, 삭제 없음
   // ══════════════════════════════════════════════════════════════
 
-  const handleReset = async () => {
+  /** 동기화 결과 → 안내 문구 */
+  const describeSync = (title: string, r: RgSyncResult): string => {
+    const lines = [
+      title,
+      `신규 ${r.inserted.toLocaleString()}건 · 갱신 ${r.updated.toLocaleString()}건 · 그대로 ${r.unchanged.toLocaleString()}건`,
+    ]
+    if (r.deleted > 0) lines.push(`목록에 없어 정리: ${r.deleted.toLocaleString()}건`)
+    if (r.errors > 0) lines.push(`저장 실패: ${r.errors.toLocaleString()}건 (콘솔 확인)`)
+    if (r.deleteSkipped) lines.push('저장 실패가 있어 정리(삭제)는 건너뛰었습니다. 다시 실행해 주세요.')
+    return lines.join('\n')
+  }
+
+  const runListSync = async (removeMissing: boolean) => {
     const userId = getUserId()
     if (!userId) {
       alert('사용자 정보를 찾을 수 없습니다. 다시 로그인해주세요.')
       return
     }
 
-    // 진입 전 비밀번호 재확인 모달에서 이미 인증 완료 — 추가 confirm 생략
+    const setBusy = removeMissing ? setResetting : setUpdating
+    const label = removeMissing ? '리셋' : '업데이트'
 
-    setResetting(true)
+    setBusy(true)
     setUpdateProgress('목록 수집 중...')
     try {
       const products = await fetchAllRgProducts((count) => {
         setUpdateProgress(`목록 수집 중... (${count}개)`)
       })
-
       const allRgItems = products.flatMap((p) => mapListItemToRgItems(p, userId))
 
-      setUpdateProgress(`저장 중... (${allRgItems.length}건)`)
-      const { success, errors } = await saveRgItems(allRgItems, userId)
+      const result = await syncRgItemsFromList(allRgItems, userId, { removeMissing }, setUpdateProgress)
 
-      setItems(allRgItems as RgItem[])
-      setCurrentPage(1)
+      // 로컬 상태는 DB 에서 다시 읽는다 (직접 입력값이 남아 있으므로 목록 행으로 대체하면 안 된다)
+      setItems(await fetchRgItems(userId))
+      if (removeMissing) setCurrentPage(1)
 
-      alert(`리셋 완료! (저장: ${success}건, 실패: ${errors}건)`)
+      alert(describeSync(`${label} 완료!`, result))
     } catch (error) {
-      console.error('[리셋] 실패:', error)
-      alert('리셋 중 오류가 발생했습니다.')
+      console.error(`[${label}] 실패:`, error)
+      alert(`${label} 중 오류가 발생했습니다.`)
     } finally {
-      setResetting(false)
+      setBusy(false)
       setUpdateProgress('')
     }
   }
 
-  // ══════════════════════════════════════════════════════════════
-  // [업데이트] — 신규 아이템만 추가 (기존 데이터 유지)
-  // ══════════════════════════════════════════════════════════════
+  // ── [리셋] — 진입 전 비밀번호 재확인 모달에서 이미 인증 완료 ──
+  const handleReset = () => runListSync(true)
 
-  const handleUpdate = async () => {
-    const userId = getUserId()
-    if (!userId) {
-      alert('사용자 정보를 찾을 수 없습니다. 다시 로그인해주세요.')
-      return
-    }
-
-    setUpdating(true)
-    setUpdateProgress('목록 수집 중...')
-    try {
-      const products = await fetchAllRgProducts((count) => {
-        setUpdateProgress(`목록 수집 중... (${count}개)`)
-      })
-
-      const allRgItems = products.flatMap((p) => mapListItemToRgItems(p, userId))
-
-      setUpdateProgress(`신규 확인 중...`)
-      const { inserted, skipped } = await upsertNewRgItems(allRgItems, userId)
-
-      // 로컬 상태 갱신: 기존 + 신규 합산
-      if (inserted > 0) {
-        const refreshed = await fetchRgItems(userId)
-        setItems(refreshed)
-      }
-
-      alert(`업데이트 완료!\n신규 추가: ${inserted}건, 기존 유지: ${skipped}건`)
-    } catch (error) {
-      console.error('[업데이트] 실패:', error)
-      alert('업데이트 중 오류가 발생했습니다.')
-    } finally {
-      setUpdating(false)
-      setUpdateProgress('')
-    }
-  }
+  // ── [업데이트] ──
+  const handleUpdate = () => runListSync(false)
 
   // ══════════════════════════════════════════════════════════════
   // [RG 재고 xlsx] — 기존 엑셀 업로드 (이름만 변경)
@@ -1055,39 +1037,43 @@ export function usePurchaseManagement() {
       return
     }
 
-    // barcode 없는 아이템 필터
-    const targets = items.filter((item) => !item.barcode && item.seller_product_id)
+    // 바코드 또는 대표 이미지가 비어 있는 아이템 (상세 API 로 바코드·이미지·가격·사이즈를 함께 채운다)
+    const targets = items.filter(needsDetailSync)
 
     if (targets.length === 0) {
-      alert('바코드가 없는 아이템이 없습니다.')
+      alert('바코드·이미지가 비어 있는 아이템이 없습니다.')
       return
     }
 
-    // 중복 제거된 seller_product_id 기준 예상 시간
+    // 중복 제거된 seller_product_id 기준 예상 시간 (초당 5건)
     const uniqueSpIds = new Set(targets.map((t) => t.seller_product_id))
     const estimateSec = Math.ceil(uniqueSpIds.size / 5)
+    const estimateLabel = estimateSec >= 120 ? `약 ${Math.ceil(estimateSec / 60)}분` : `약 ${estimateSec}초`
+    const noBarcode = targets.filter((t) => !t.barcode).length
+    const noImage = targets.filter((t) => !t.img_url).length
 
     if (!confirm(
-      `바코드 없는 아이템: ${targets.length}건\n` +
-      `상세 조회 대상: ${uniqueSpIds.size}건 (seller_product_id 기준)\n` +
-      `예상 소요: 약 ${estimateSec}초\n\n진행하시겠습니까?`
+      `대상 아이템: ${targets.length.toLocaleString()}건 (바코드 없음 ${noBarcode.toLocaleString()} · 이미지 없음 ${noImage.toLocaleString()})\n` +
+      `상세 조회 대상: ${uniqueSpIds.size.toLocaleString()}건 (seller_product_id 기준)\n` +
+      `예상 소요: ${estimateLabel}\n\n` +
+      `바코드(비어 있을 때만) · 이미지 · 판매가 · 사이즈 · 노출상품명을 함께 채웁니다.\n진행하시겠습니까?`
     )) return
 
     setBarcodesyncing(true)
-    setBarcodeSyncProgress('바코드 조회 중...')
+    setBarcodeSyncProgress('상세 조회 중...')
 
     try {
-      const { found, notFound } = await fetchBarcodesFromApi(
+      const { found, notFound } = await fetchDetailsFromApi(
         targets,
         (done, total) => {
           setBarcodeSyncProgress(`조회 중... (${done}/${total})`)
         },
       )
 
-      // 로컬 상태 갱신 (fetchBarcodesFromApi가 target의 barcode를 직접 변경)
+      // 로컬 상태 갱신 (fetchDetailsFromApi가 target 행 객체를 직접 변경)
       setItems((prev) => [...prev])
 
-      alert(`바코드 연동 완료!\n매칭: ${found}건, 미발견: ${notFound}건`)
+      alert(`바코드 동기화 완료!\n저장한 옵션: ${found.toLocaleString()}건, 조회 실패 상품: ${notFound.toLocaleString()}건`)
     } catch (err: any) {
       console.error('[바코드 연동] 실패:', err)
       alert(`바코드 연동 중 오류가 발생했습니다.\n${err.message || ''}`)

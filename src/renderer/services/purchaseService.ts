@@ -198,9 +198,7 @@ export async function fetchVendorItemInventory(vendorItemId: string): Promise<Ve
   const result = assertCoupangOk(json, '판매상태 조회에 실패했습니다.')
 
   // 쿠팡 inventories 응답의 실제 data 본문
-  // (응답 필드명/판매상태 값 확인용 — 라이브 1회 확인 후 제거 가능)
   const d = (result?.data ?? {}) as Record<string, any>
-  console.log('[fetchVendorItemInventory] data:', d)
   // 상태 해석 — onSale(boolean) 우선, 없으면 saleStatus 문자열로 판정
   const saleStatus: string | null = d.saleStatus ?? d.status ?? null
   const onSale =
@@ -282,60 +280,6 @@ export async function setVendorItemSale(
 }
 
 // ══════════════════════════════════════════════════════════════════
-// 큐 기반 상세 조회 + 매핑
-// ══════════════════════════════════════════════════════════════════
-
-/**
- * 큐 기반 동시 처리로 전체 상품 상세 조회 후 DB 행 변환
- * - 쿠팡 초당 5회 제한 준수: 동시 5슬롯 + 요청 간 200ms 간격
- * - 실패 시 retry with exponential backoff (fetchRgProductDetail 내부)
- * - 3회 재시도 후에도 실패하면 목록 데이터로 폴백
- * @param products - 상품 목록 (sellerProductId 포함)
- * @param userId   - 사용자 ID (si_rg_items.user_id)
- * @param onProgress - 진행 콜백 (완료 수, 전체 수)
- */
-export async function fetchDetailsAndMap(
-  products: CoupangProductListItem[],
-  userId: string,
-  onProgress?: (done: number, total: number) => void,
-): Promise<Omit<RgItem, 'id' | 'created_at'>[]> {
-  const allRows: Omit<RgItem, 'id' | 'created_at'>[] = []
-  const inFlight = new Set<Promise<void>>()
-  let done = 0
-
-  for (const product of products) {
-    // 슬롯이 가득 차면 가장 빠른 1건 완료 대기
-    if (inFlight.size >= DETAIL_CONCURRENCY) {
-      await Promise.race(inFlight)
-    }
-
-    // 초당 5회 제한 준수: 요청 간 최소 200ms 간격
-    await delay(REQUEST_INTERVAL_MS)
-
-    // 새 요청 시작
-    const task = (async () => {
-      try {
-        const detail = await fetchRgProductDetail(product.sellerProductId)
-        allRows.push(...mapToRgItems(detail, userId))
-      } catch {
-        // 3회 재시도 후에도 실패 → 목록 데이터로 폴백
-        allRows.push(...mapListItemToRgItems(product, userId))
-      } finally {
-        done++
-        onProgress?.(done, products.length)
-      }
-    })()
-
-    inFlight.add(task)
-    task.finally(() => inFlight.delete(task))
-  }
-
-  // 남은 요청 모두 완료 대기
-  await Promise.all(inFlight)
-  return allRows
-}
-
-// ══════════════════════════════════════════════════════════════════
 // 데이터 매핑
 // ══════════════════════════════════════════════════════════════════
 
@@ -357,65 +301,67 @@ export function getRepresentativeImageUrl(images: CoupangItemImages): string | n
   return repImage?.cdnPath ? `${COUPANG_THUMBNAIL_BASE}${repImage.cdnPath}` : null
 }
 
-// ── 상세 API 응답 → si_rg_items 행 ──────────────────────────────────
+// ── 상세 API 응답 → 옵션별 채울 값 ──────────────────────────────────
+
+/** 상세 API 에서만 얻는 si_rg_items 칼럼 (목록 API 에는 없다) */
+export type RgDetailFields = Pick<
+  RgItem,
+  | 'barcode' | 'img_url' | 'sale_price' | 'external_vendor_sku'
+  | 'display_product_name' | 'general_product_name'
+  | 'weight' | 'width' | 'length' | 'height'
+>
+
+/** 상세 API 1건 → 옵션(vendor_item_id)별 채울 값. 옵션 ID 가 없는 항목은 뺀다 */
+export interface RgDetailPatch {
+  vendorItemId: string
+  fields: RgDetailFields
+}
 
 /**
- * 상품 상세 데이터를 si_rg_items 행(들)으로 변환
- * - 하나의 상품에 여러 아이템(옵션)이 있으므로 배열 반환
- * - 대표 이미지(REPRESENTATION)를 img_url로 사용
+ * 상품 상세 → 옵션별 패치
+ * - 대표 이미지(REPRESENTATION, 없으면 첫 번째)를 img_url 로
+ * - 값이 비어 있는 칸은 null — 저장할 때 기존 값을 지우지 않도록 호출 쪽에서 null 을 뺀다
  */
-export function mapToRgItems(
-  detail: CoupangProductDetail,
-  userId: string,
-): Omit<RgItem, 'id' | 'created_at'>[] {
-  return detail.items.map((item) => {
-    // 대표 이미지 URL 추출
-    const imgUrl = getRepresentativeImageUrl(item.images)
-
-    return {
-      seller_product_id: String(detail.sellerProductId),
-      status_name: detail.statusName ?? null,
-      seller_product_name: detail.sellerProductName ?? null,
-      sale_started_at: detail.saleStartedAt ?? null,
-      display_product_name: detail.displayProductName ?? null,
-      general_product_name: detail.generalProductName ?? null,
-      option_name: item.itemName ?? null,
-      img_url: imgUrl,
-      seller_product_item_id: (item.sellerProductItemId ?? item.rocketGrowthItemData?.sellerProductItemId) != null
-        ? String(item.sellerProductItemId ?? item.rocketGrowthItemData!.sellerProductItemId) : null,
-      vendor_item_id: (item.vendorItemId ?? item.rocketGrowthItemData?.vendorItemId) != null
-        ? String(item.vendorItemId ?? item.rocketGrowthItemData!.vendorItemId) : null,
-      barcode: item.barcode ?? item.rocketGrowthItemData?.barcode ?? null,
-      external_vendor_sku: item.externalVendorSku ?? item.rocketGrowthItemData?.externalVendorSku ?? null,
-      sale_price: item.salePrice ?? item.rocketGrowthItemData?.priceData?.salePrice ?? null,
-      input: null,
-      in_qty: null,
-      out_qty: null,
-      order_qty: null,
-      cart_qty: null,
-      note: null,
-      item_status: null,
-      weight: item.rocketGrowthItemData?.skuInfo?.weight ?? null,
-      width: item.rocketGrowthItemData?.skuInfo?.width ?? null,
-      length: item.rocketGrowthItemData?.skuInfo?.length ?? null,
-      height: item.rocketGrowthItemData?.skuInfo?.height ?? null,
-      user_id: userId,
-    }
-  })
+export function extractDetailPatches(detail: CoupangProductDetail): RgDetailPatch[] {
+  const patches: RgDetailPatch[] = []
+  for (const item of detail.items) {
+    const rg = item.rocketGrowthItemData
+    const vid = item.vendorItemId ?? rg?.vendorItemId
+    if (vid == null) continue
+    patches.push({
+      vendorItemId: String(vid),
+      fields: {
+        barcode: (item.barcode ?? rg?.barcode ?? '').trim() || null,
+        img_url: getRepresentativeImageUrl(item.images),
+        sale_price: item.salePrice ?? rg?.priceData?.salePrice ?? null,
+        external_vendor_sku: item.externalVendorSku ?? rg?.externalVendorSku ?? null,
+        display_product_name: detail.displayProductName ?? null,
+        general_product_name: detail.generalProductName ?? null,
+        weight: rg?.skuInfo?.weight ?? null,
+        width: rg?.skuInfo?.width ?? null,
+        length: rg?.skuInfo?.length ?? null,
+        height: rg?.skuInfo?.height ?? null,
+      },
+    })
+  }
+  return patches
 }
 
 // ── 목록 API 응답 → si_rg_items 행 (폴백용) ─────────────────────────
 
 /**
- * 상세 조회 실패 시 목록 데이터만으로 기본 행 생성
- * - barcode, salePrice, imgUrl 등은 null
+ * 목록 데이터로 기본 행 생성 ([리셋]·[업데이트])
+ * - barcode, salePrice, imgUrl 등은 null — [바코드 동기화](상세 API)가 채운다
+ * - product_id(노출상품 ID)는 목록 API 에만 있다
  */
 export function mapListItemToRgItems(
   listItem: CoupangProductListItem,
   userId: string,
 ): Omit<RgItem, 'id' | 'created_at'>[] {
+  const productId = listItem.productId != null ? String(listItem.productId) : null
   return listItem.items.map((item) => ({
     seller_product_id: String(listItem.sellerProductId),
+    product_id: productId,
     status_name: listItem.statusName ?? null,
     seller_product_name: listItem.sellerProductName ?? null,
     sale_started_at: listItem.saleStartedAt ?? null,
@@ -661,62 +607,203 @@ export async function fetchNonNewRgItemData(userId: string): Promise<RgItemData[
   return allData
 }
 
-// ── 데이터 저장 (delete → 병렬 batch insert) ────────────────────────
+// ══════════════════════════════════════════════════════════════════
+// 상품 동기화 ([리셋] · [업데이트]) — 옵션 ID 기준 병합
+//   - 예전 [리셋]은 계정 행을 전부 지우고 다시 넣어 비고·주문수량·상태·입력값과
+//     [바코드 동기화]로 채운 값까지 사라졌다. 이제는 옵션(vendor_item_id)으로 맞춰
+//     목록 API 가 주는 칼럼만 고치고 나머지는 그대로 둔다.
+//   - [리셋](removeMissing)   : 쿠팡 목록에 더 이상 없는 옵션·옵션 ID 없는 행을 지운다
+//   - [업데이트]              : 지우지 않는다 (신규 추가 + 기존 행 목록 칼럼 갱신)
+// ══════════════════════════════════════════════════════════════════
+
+/** 목록 API 에서 오는 칼럼 — 동기화 때 이것만 고친다 */
+const LIST_SYNC_COLUMNS = [
+  'seller_product_id',
+  'product_id',
+  'status_name',
+  'seller_product_name',
+  'sale_started_at',
+  'option_name',
+  'seller_product_item_id',
+] as const
+type ListSyncColumn = typeof LIST_SYNC_COLUMNS[number]
+type ListSyncPatch = { id: string } & Pick<RgItem, ListSyncColumn>
+type NewRgItem = Omit<RgItem, 'id' | 'created_at'>
+
+const DELETE_ID_CHUNK = 100 // .in('id', …) 한 번에 보낼 id 수 (URL 길이 보호)
+
+export interface RgSyncResult {
+  inserted: number
+  updated: number
+  unchanged: number
+  deleted: number
+  /** 실패한 행 수 (배치 단위로 집계) */
+  errors: number
+  /** 저장 실패가 있어 지우기를 건너뛰었는지 ([리셋] 전용) */
+  deleteSkipped: boolean
+}
 
 /**
- * si_rg_items에 데이터 저장
- * - PK가 auto-generated uuid → delete 후 insert 방식
- * - 500건씩 배치를 병렬 삽입하여 속도 향상
+ * 시각 칼럼 비교값 — DB(timestamptz)는 '…+00:00', 목록 API 는 시간대 없는 '2026-03-28T09:00:00'.
+ * 시간대 없는 값은 DB 가 UTC 로 저장했으므로 UTC 로 읽어 같은 시각인지 본다.
  */
-export async function saveRgItems(
-  items: Omit<RgItem, 'id' | 'created_at'>[],
-  userId: string,
-): Promise<{ success: number; errors: number }> {
-  // STEP 1: 기존 데이터 삭제
-  const { error: deleteError } = await supabase
-    .from('si_rg_items')
-    .delete()
-    .eq('user_id', userId)
+function timestampKey(v: string | null): string | null {
+  if (!v) return null
+  const hasZone = /([zZ]|[+-]\d{2}(:?\d{2})?)$/.test(v.trim())
+  const ms = Date.parse(hasZone ? v : `${v.trim()}Z`)
+  return Number.isNaN(ms) ? v : String(ms)
+}
 
-  if (deleteError) {
-    console.error('si_rg_items 삭제 오류:', deleteError)
+/** 목록 칼럼 값이 같은지 (sale_started_at 은 시각으로 비교) */
+function sameListValue(col: ListSyncColumn, a: string | null, b: string | null): boolean {
+  if (col === 'sale_started_at') return timestampKey(a) === timestampKey(b)
+  return a === b
+}
+
+/**
+ * 기존 행과 목록 행의 목록 칼럼을 합친다.
+ * - 목록 값이 null 이면 기존 값을 유지 (승인 전 상품의 productId 등 — 있던 값을 지우지 않는다)
+ * - 바뀐 칼럼이 없으면 null
+ * - 반환값은 항상 LIST_SYNC_COLUMNS 전부를 담는다: 한 배치의 행들이 칼럼 구성이 다르면
+ *   PostgREST 가 빠진 칼럼을 null 로 덮어쓰기 때문이다.
+ */
+function mergeListColumns(old: RgItem, api: NewRgItem): ListSyncPatch | null {
+  const merged = { id: old.id! } as ListSyncPatch
+  let changed = false
+  for (const col of LIST_SYNC_COLUMNS) {
+    const prev = (old[col] ?? null) as string | null
+    const next = ((api[col] ?? null) as string | null) ?? prev
+    ;(merged as Record<string, unknown>)[col] = next
+    if (!sameListValue(col, prev, next)) changed = true
   }
+  return changed ? merged : null
+}
 
-  // STEP 2: 배치 분할
-  const batches: Omit<RgItem, 'id' | 'created_at'>[][] = []
-  for (let i = 0; i < items.length; i += SUPABASE_BATCH_SIZE) {
-    batches.push(items.slice(i, i + SUPABASE_BATCH_SIZE))
+/** 배치를 나눠 병렬 실행 → 실패한 행 수 */
+async function runRowBatches<T>(
+  rows: T[],
+  run: (batch: T[]) => PromiseLike<{ error: unknown }>,
+  label: string,
+): Promise<number> {
+  const batches: T[][] = []
+  for (let i = 0; i < rows.length; i += SUPABASE_BATCH_SIZE) {
+    batches.push(rows.slice(i, i + SUPABASE_BATCH_SIZE))
   }
-
-  // STEP 3: 모든 배치 병렬 삽입
   const results = await Promise.allSettled(
-    batches.map((batch, idx) =>
-      supabase
-        .from('si_rg_items')
-        .insert(batch)
-        .then(({ error }) => {
-          if (error) {
-            console.error(`si_rg_items insert 오류 (batch ${idx + 1}):`, error)
-            throw error
-          }
-          return batch.length
-        }),
-    ),
+    batches.map(async (batch, idx) => {
+      const { error } = await run(batch)
+      if (error) {
+        console.error(`[syncRgItemsFromList] ${label} 오류 (batch ${idx + 1}):`, error)
+        throw error
+      }
+    }),
   )
+  return results.reduce((n, r, idx) => (r.status === 'rejected' ? n + batches[idx].length : n), 0)
+}
 
-  // STEP 4: 결과 집계
-  let success = 0
-  let errors = 0
-  for (const result of results) {
-    if (result.status === 'fulfilled') {
-      success += result.value
+/**
+ * 목록 API 결과로 si_rg_items 동기화
+ * @param apiRows  mapListItemToRgItems 결과 (상품 목록 전체)
+ * @param options.removeMissing true = [리셋] (목록에 없는 행 삭제)
+ */
+export async function syncRgItemsFromList(
+  apiRows: NewRgItem[],
+  userId: string,
+  options: { removeMissing: boolean },
+  onProgress?: (message: string) => void,
+): Promise<RgSyncResult> {
+  // ── STEP 1: 기존 행 (1000건 페이지 루프) ──
+  onProgress?.('기존 데이터 확인 중...')
+  const existing = await fetchRgItems(userId)
+
+  const existingByVid = new Map<string, RgItem[]>()
+  const existingNoVid: RgItem[] = []
+  for (const row of existing) {
+    const vid = (row.vendor_item_id ?? '').trim()
+    if (!vid) { existingNoVid.push(row); continue }
+    const group = existingByVid.get(vid)
+    if (group) group.push(row)
+    else existingByVid.set(vid, [row])
+  }
+
+  // ── STEP 2: 목록 행 정리 (같은 옵션 ID 는 첫 행만) ──
+  const apiByVid = new Map<string, NewRgItem>()
+  const apiNoVid: NewRgItem[] = []
+  for (const row of apiRows) {
+    const vid = (row.vendor_item_id ?? '').trim()
+    if (!vid) { apiNoVid.push(row); continue }
+    if (!apiByVid.has(vid)) apiByVid.set(vid, row)
+  }
+
+  // ── STEP 3: 신규 / 갱신 / 그대로 분류 ──
+  const toInsert: NewRgItem[] = []
+  const toUpdate: ListSyncPatch[] = []
+  let unchanged = 0
+  for (const [vid, api] of apiByVid) {
+    const olds = existingByVid.get(vid)
+    if (!olds) { toInsert.push(api); continue }
+    // 같은 옵션 ID 행이 여럿이면(예전 중복) 모두 같은 값으로 맞춘다 — 각 행의 직접 입력값은 그대로
+    for (const old of olds) {
+      const patch = mergeListColumns(old, api)
+      if (patch) toUpdate.push(patch)
+      else unchanged++
+    }
+  }
+  // 옵션 ID 없는 목록 행(승인 전 등)은 병합할 키가 없어 [리셋] 때만 새로 넣는다 (기존 동작 유지)
+  if (options.removeMissing) toInsert.push(...apiNoVid)
+
+  // ── STEP 4: 저장 (갱신은 id 기준 upsert — 목록 칼럼만 바뀐다) ──
+  onProgress?.(`저장 중... (신규 ${toInsert.length}건 · 갱신 ${toUpdate.length}건)`)
+  const insertErrors = await runRowBatches(
+    toInsert,
+    (batch) => supabase.from('si_rg_items').insert(batch),
+    'insert',
+  )
+  const updateErrors = await runRowBatches(
+    toUpdate,
+    (batch) => supabase.from('si_rg_items').upsert(batch, { onConflict: 'id', defaultToNull: false }),
+    'update',
+  )
+  const errors = insertErrors + updateErrors
+
+  // ── STEP 5: [리셋] — 목록에 없는 행 삭제 (저장이 하나라도 실패하면 건너뛴다) ──
+  let deleted = 0
+  let deleteSkipped = false
+  if (options.removeMissing) {
+    const deleteIds: string[] = []
+    for (const [vid, olds] of existingByVid) {
+      if (!apiByVid.has(vid)) for (const o of olds) if (o.id) deleteIds.push(o.id)
+    }
+    for (const o of existingNoVid) if (o.id) deleteIds.push(o.id)
+
+    if (errors > 0 && deleteIds.length > 0) {
+      deleteSkipped = true
+      console.warn(`[syncRgItemsFromList] 저장 실패 ${errors}건 — 삭제 ${deleteIds.length}건을 건너뜀`)
     } else {
-      errors += SUPABASE_BATCH_SIZE // 최대치로 집계
+      onProgress?.(`정리 중... (목록에 없는 ${deleteIds.length}건)`)
+      for (let i = 0; i < deleteIds.length; i += DELETE_ID_CHUNK) {
+        const chunk = deleteIds.slice(i, i + DELETE_ID_CHUNK)
+        const { error } = await supabase
+          .from('si_rg_items')
+          .delete()
+          .eq('user_id', userId)
+          .in('id', chunk)
+        if (error) {
+          console.error('[syncRgItemsFromList] delete 오류:', error)
+          deleteSkipped = true
+          break
+        }
+        deleted += chunk.length
+      }
     }
   }
 
-  console.log(`[purchaseService] si_rg_items 저장 완료 — 성공: ${success}, 실패: ${errors}`)
-  return { success, errors }
+  const inserted = toInsert.length - insertErrors
+  const updated = toUpdate.length - updateErrors
+  console.log(
+    `[syncRgItemsFromList] 신규 ${inserted} · 갱신 ${updated} · 그대로 ${unchanged} · 삭제 ${deleted} · 실패 ${errors}`,
+  )
+  return { inserted, updated, unchanged, deleted, errors, deleteSkipped }
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -954,57 +1041,6 @@ export async function saveRgItemData(
 }
 
 // ══════════════════════════════════════════════════════════════════
-// 신규 아이템만 추가 (기존 데이터 유지)
-// ══════════════════════════════════════════════════════════════════
-
-/**
- * vendor_item_id 기준으로 기존에 없는 아이템만 insert
- * - 기존 데이터(barcode, input 등)는 유지
- * - 삭제하지 않고 신규 항목만 추가
- */
-export async function upsertNewRgItems(
-  newItems: Omit<RgItem, 'id' | 'created_at'>[],
-  userId: string,
-): Promise<{ inserted: number; skipped: number }> {
-  // STEP 1: 기존 vendor_item_id Set 구축
-  const existing = await fetchRgItems(userId)
-  const existingVendorIds = new Set(
-    existing
-      .filter((item) => item.vendor_item_id)
-      .map((item) => item.vendor_item_id!),
-  )
-
-  // STEP 2: 신규 아이템 필터
-  const toInsert = newItems.filter(
-    (item) => item.vendor_item_id && !existingVendorIds.has(item.vendor_item_id),
-  )
-  const skipped = newItems.length - toInsert.length
-
-  if (toInsert.length === 0) {
-    return { inserted: 0, skipped }
-  }
-
-  // STEP 3: 배치 insert (기존 saveRgItems와 동일한 배치 패턴)
-  const batches: Omit<RgItem, 'id' | 'created_at'>[][] = []
-  for (let i = 0; i < toInsert.length; i += SUPABASE_BATCH_SIZE) {
-    batches.push(toInsert.slice(i, i + SUPABASE_BATCH_SIZE))
-  }
-
-  let inserted = 0
-  for (const batch of batches) {
-    const { error } = await supabase.from('si_rg_items').insert(batch)
-    if (error) {
-      console.error('[upsertNewRgItems] insert 오류:', error)
-    } else {
-      inserted += batch.length
-    }
-  }
-
-  console.log(`[upsertNewRgItems] 신규 ${inserted}건 삽입, ${skipped}건 스킵`)
-  return { inserted, skipped }
-}
-
-// ══════════════════════════════════════════════════════════════════
 // 바코드 연결 xlsx: 엑셀에서 vendor_item_id ↔ barcode 매칭 → DB 저장
 // ══════════════════════════════════════════════════════════════════
 
@@ -1055,20 +1091,44 @@ export async function updateBarcodesFromMap(
 }
 
 // ══════════════════════════════════════════════════════════════════
-// 바코드 연동: 쿠팡 상세 API → barcode 추출 → DB 저장
+// [바코드 동기화]: 쿠팡 상세 API → 바코드 · 이미지 · 가격 · 사이즈 등 → DB 저장
+//   - 목록 API([리셋]/[업데이트])에는 이 값들이 없어서 상세 API 로 채운다
+//   - 한 번의 상세 호출로 옵션 전부의 값을 같이 저장 (호출 수는 예전 바코드 전용과 같다)
 // ══════════════════════════════════════════════════════════════════
 
+/** [바코드 동기화] 대상 판정 — 바코드나 대표 이미지가 비어 있는 행 */
+export function needsDetailSync(item: RgItem): boolean {
+  return !!item.seller_product_id && (!item.barcode || !item.img_url)
+}
+
+/** 상세 패치 → 이 행에 쓸 값 (null 은 빼서 기존 값을 지우지 않는다. 바코드는 비어 있을 때만 채운다) */
+function detailUpdateFor(row: RgItem, fields: RgDetailFields): Partial<RgDetailFields> {
+  const update: Partial<RgDetailFields> = {}
+  for (const [key, value] of Object.entries(fields) as [keyof RgDetailFields, RgDetailFields[keyof RgDetailFields]][]) {
+    if (value == null) continue
+    // 바코드는 [바코드 연결 xlsx]로 직접 넣은 값이 있을 수 있어 덮어쓰지 않는다
+    if (key === 'barcode' && row.barcode) continue
+    ;(update as Record<string, unknown>)[key] = value
+  }
+  return update
+}
+
 /**
- * barcode가 없는 아이템들의 상세 API를 조회하여 barcode를 채운다.
- * - 5/sec 속도 제한 준수 (기존 DETAIL_CONCURRENCY, REQUEST_INTERVAL_MS 재활용)
+ * 대상 행들의 상세 API 를 조회해 상세 칼럼을 채운다.
+ * - 5/sec 속도 제한 준수 (DETAIL_CONCURRENCY, REQUEST_INTERVAL_MS)
  * - 동일 seller_product_id는 한 번만 조회 (중복 제거)
- * @param items       - barcode가 없는 RgItem 배열
+ * - 대상 행 객체에도 같은 값을 반영한다 (호출 쪽 로컬 상태 갱신용)
+ * @param items       - needsDetailSync 를 만족하는 RgItem 배열
  * @param onProgress  - 진행 콜백 (완료 수, 전체 수)
+ * @returns found = 값을 저장한 옵션 행 수, notFound = 상세 조회에 실패한 상품 수
  */
-export async function fetchBarcodesFromApi(
+export async function fetchDetailsFromApi(
   items: RgItem[],
   onProgress?: (done: number, total: number) => void,
 ): Promise<{ found: number; notFound: number; errors: string[] }> {
+  const userId = items[0]?.user_id ?? ''
+  if (!userId) return { found: 0, notFound: 0, errors: [] }
+
   // seller_product_id 기준 중복 제거
   const uniqueSpIds = [...new Set(
     items
@@ -1102,27 +1162,28 @@ export async function fetchBarcodesFromApi(
     const task = (async () => {
       try {
         const detail = await fetchRgProductDetail(Number(spId))
-        const mapped = mapToRgItems(detail, items[0].user_id ?? '')
 
-        for (const row of mapped) {
-          if (row.barcode && row.vendor_item_id) {
-            const targets = vendorItemMap.get(row.vendor_item_id)
-            if (targets && targets.length > 0) {
-              // DB UPDATE
-              const { error } = await supabase
-                .from('si_rg_items')
-                .update({ barcode: row.barcode })
-                .eq('vendor_item_id', row.vendor_item_id)
-                .eq('user_id', items[0].user_id ?? '')
+        for (const { vendorItemId, fields } of extractDetailPatches(detail)) {
+          const targets = vendorItemMap.get(vendorItemId)
+          if (!targets || targets.length === 0) continue
 
-              if (error) {
-                errors.push(`${row.vendor_item_id}: ${error.message}`)
-              } else {
-                found++
-                // 로컬 아이템에도 barcode 반영
-                for (const t of targets) t.barcode = row.barcode
-              }
-            }
+          // 같은 옵션 ID 행은 같은 값을 받는다 — 바코드 판단은 첫 행 기준
+          const update = detailUpdateFor(targets[0], fields)
+          if (Object.keys(update).length === 0) continue
+
+          // DB UPDATE (옵션 단위)
+          const { error } = await supabase
+            .from('si_rg_items')
+            .update(update)
+            .eq('vendor_item_id', vendorItemId)
+            .eq('user_id', userId)
+
+          if (error) {
+            errors.push(`${vendorItemId}: ${error.message}`)
+          } else {
+            found++
+            // 로컬 아이템에도 반영
+            for (const t of targets) Object.assign(t, update)
           }
         }
       } catch (err: any) {

@@ -9,6 +9,8 @@ export interface RgItem {
   id?: string
   created_at?: string
   seller_product_id: string
+  /** 노출상품 ID (상품 목록 API productId) — 승인 전 상품·예전 행은 null. 쿠팡 상품 링크용 */
+  product_id?: string | null
   status_name: string | null
   seller_product_name: string | null
   sale_started_at: string | null
@@ -94,6 +96,8 @@ export interface ShipmentSize {
 // ── 쿠팡 상품 목록 API 응답 (단일 상품) ───────────────────────────
 export interface CoupangProductListItem {
   sellerProductId: number
+  /** 노출상품 ID — 승인된 상품에만 값이 있다 (승인 전·반려는 null) */
+  productId?: number | null
   sellerProductName: string
   statusName: string
   saleStartedAt: string
@@ -108,9 +112,9 @@ export interface CoupangProductListItem {
 
 // ── 쿠팡 상품 상세 API 응답 ───────────────────────────────────────
 // 로켓그로스 상품은 ID가 직접 또는 rocketGrowthItemData 안에 위치할 수 있음
+// 노출상품 ID(productId)는 이 응답에 없다 — 목록 API 에만 있어 si_rg_items.product_id 로 저장해 쓴다
 export interface CoupangProductDetail {
   sellerProductId: number
-  productId?: number          // 노출상품ID (storefront /vp/products/{productId} 링크용)
   sellerProductName: string
   displayProductName: string
   generalProductName: string
@@ -126,6 +130,7 @@ export interface CoupangProductDetail {
     rocketGrowthItemData?: {
       sellerProductItemId: number
       vendorItemId: number
+      itemId?: number | null          // 아이템 ID (쿠팡 상품 링크 ?itemId= 용)
       barcode?: string | null
       externalVendorSku?: string | null
       priceData?: {

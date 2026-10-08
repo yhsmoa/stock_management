@@ -26,10 +26,7 @@ interface ProductDetailPanelProps {
   onClose: () => void
   item: RgItem | null
   itemWinner?: string | null   // '아이템위너 아님' 등 아이템위너 상태
-  // 노출상품ID(displayedProductId) — 상세 API가 반환하지 않아 재고 SKU(item_id)에서 공급.
-  // 쿠팡 storefront 링크(coupang.com/vp/products/{노출상품ID})에 필요.
-  displayedProductId?: string | number | null
-  onSaveNote?: (note: string) => void   // 비고 저장 (포커스 아웃 시)
+  onSaveNote?:(note: string) => void   // 비고 저장 (포커스 아웃 시)
   // 가격 변경이 쿠팡에 반영된 뒤 호출 — 부모가 DB(sale_price·price_updated_at)에 기록한다
   onPriceChanged?: (price: number) => void
 }
@@ -384,7 +381,6 @@ const ProductDetailPanel: React.FC<ProductDetailPanelProps> = ({
   onClose,
   item,
   itemWinner,
-  displayedProductId,
   onSaveNote,
   onPriceChanged,
 }) => {
@@ -587,11 +583,12 @@ const ProductDetailPanel: React.FC<ProductDetailPanelProps> = ({
     ? String(detail.sellerProductId)
     : item.seller_product_id
 
-  // 노출상품ID = 상품 조회 API 응답의 productId (권위 소스).
-  //   API 실패로 detail 이 없을 때만 prop(displayedProductId) 폴백.
-  const exposedProductId = detail?.productId != null
-    ? String(detail.productId)
-    : (displayedProductId ? String(displayedProductId) : '')
+  // 노출상품ID = si_rg_items.product_id (상품 목록 API 의 productId 를 동기화 때 저장).
+  //   상세 API 응답에는 없다. 재고 SKU 엑셀의 'Inventory ID' 는 등록상품 ID 라 쓰면 안 된다.
+  //   값이 없으면(승인 전 상품·아직 [업데이트] 전) 링크를 숨긴다.
+  const exposedProductId = item.product_id ? String(item.product_id) : ''
+  // 아이템 ID — 링크에 같이 붙이면 해당 옵션이 선택된 상태로 열린다 (없으면 생략)
+  const coupangItemId = rgData?.itemId != null ? String(rgData.itemId) : ''
 
   const rawVendorItemId = detailItem
     ? (detailItem.vendorItemId ?? detailItem.rocketGrowthItemData?.vendorItemId)
@@ -678,7 +675,11 @@ const ProductDetailPanel: React.FC<ProductDetailPanelProps> = ({
                   {/* ── 쿠팡 상품 페이지 바로가기 (노출상품ID 기준) ────── */}
                   {exposedProductId && vendorItemId && (
                     <a
-                      href={`https://www.coupang.com/vp/products/${exposedProductId}?vendorItemId=${vendorItemId}`}
+                      href={
+                        `https://www.coupang.com/vp/products/${encodeURIComponent(exposedProductId)}`
+                        + `?${coupangItemId ? `itemId=${encodeURIComponent(coupangItemId)}&` : ''}`
+                        + `vendorItemId=${encodeURIComponent(vendorItemId)}`
+                      }
                       target="_blank"
                       rel="noopener noreferrer"
                       style={{

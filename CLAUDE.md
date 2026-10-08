@@ -85,9 +85,17 @@ Electron is built separately via `scripts/build-electron.mjs` (called manually; 
 - **프린터 지정**: 템플릿별로 이 PC 의 localStorage(`ls_local_printer_map_v1`). 라벨 설정 프린터 탭과 모달이 같은 값을 공유한다.
 - **필드 규약**: `labelService.ts` 의 `toLabelPrintItems()` 가 만드는 data 키는 `SOURCE_PRODUCT_FIELDS.stock` 과 같아야 한다 — 바꾸면 양쪽을 같이 고친다.
 - **사입관리 [라벨]**: 체크한 `si_rg_items` 행 → `services/purchaseLabelService.ts` 가 `vendor_item_id = si_coupang_items.option_id`(숫자 ID 만)로 상품관리 행을 찾아 같은 `toLabelPrintItems()` 로 변환 → `LabelPrintModal editableQty`(행별 장수 입력, 0장은 제외). 상품관리에 없는 행은 사입관리 값으로 채우고 출고코드는 비운다(모달 안내). 화면 상태는 `components/purchase/usePurchaseLabel.ts` — `usePurchaseManagement` 는 건드리지 않는다.
-- **혼용률·권장연령**: `si_item_info` 테이블이 DB 에 아직 없어서 두 화면 모두 채우지 않는다 → 전부 성인 템플릿, 케어라벨 소재란 빈칸.
+- **혼용률·권장연령**: 값은 `si_item_info`(계정+바코드 unique, `composition`·`recommended_age`, 2026-10-07 생성)에 아이템관리 › 상품정보(`/item-info`)에서 입력한다. `si_rg_items` 는 상품 동기화 때 전부 지우고 다시 넣으므로 여기에 칼럼을 두면 안 된다. 라벨 두 화면은 아직 이 표를 읽지 않는다 → 전부 성인 템플릿, 케어라벨 소재란 빈칸. 연결할 때 DB 칼럼은 `recommended_age`, 라벨 data 키는 `recommanded_age`(label-service 와 같은 철자)라 변환이 필요하다.
 - **명령 언어**: 템플릿의 `printer_lang`(TSPL2/ZPL)이 프린터 기종과 맞아야 한다. BIXOLON(BPL-Z)에 TSPL 을 보내면 라벨 대신 프린터 정보 문구가 찍힌다.
 - **진단**: 상품관리 URL 에 `?labelDebug=1` 을 붙이면 모달에 "인쇄 명령 저장" 버튼이 생긴다 (인쇄하지 않고 바이트를 파일로).
+
+### 사입관리 — 상품 동기화 (2026-10-08)
+`/purchase-management` 의 행은 `si_rg_items`(로켓그로스 옵션 1개 = 1행)다. 쿠팡 값과 직접 입력값(비고·주문수량·카트·상태·입력·가격수정시각)이 **같은 행**에 있다.
+- **[리셋]·[업데이트]** = 상품 목록 API → `syncRgItemsFromList`(`purchaseService.ts`). 옵션 ID(`vendor_item_id`)로 맞춰 **목록 칼럼만** 고친다(`LIST_SYNC_COLUMNS`: 등록상품 ID·노출상품 ID·상태·상품명·판매시작·옵션명·등록옵션 ID). 리셋은 여기에 더해 목록에 없는 옵션을 지운다(저장 실패가 있으면 지우기를 건너뜀). 예전처럼 계정 행을 통째로 지우고 다시 넣으면 직접 입력값이 사라지니 그렇게 되돌리지 않는다.
+- **갱신은 id 기준 upsert** — 한 배치의 행은 칼럼 구성이 같아야 한다(빠진 칼럼은 PostgREST 가 null 로 덮는다). 목록 값이 null 이면 기존 값을 유지.
+- **[바코드 동기화]** = 상세 API(초당 5건). 바코드나 이미지가 빈 행이 대상이고, 바코드(비어 있을 때만)·대표 이미지·판매가·사이즈·노출상품명·SKU 를 한 번에 채운다(`fetchDetailsFromApi`). 목록 API 에는 이 값들이 없다.
+- **노출상품 ID** = `si_rg_items.product_id` ← 목록 API `productId`(승인된 상품만). 상세 API 응답에는 없다. 재고 SKU 엑셀의 'Inventory ID'(`si_rg_item_data.item_id`)는 **등록상품 ID** 다. `si_coupang_items.product_id` 도 일부 행이 칸이 밀려 있어 믿을 수 없다. 상세 패널의 쿠팡 링크는 `product_id` 가 있을 때만 보인다.
+- **API 로 엑셀을 대체하지 않은 이유**: 로켓창고 재고 API·로켓그로스 주문 API 는 분당 50회 제한에 페이지 크기가 문서에 없다. 재고 API 는 주문가능수량·30일 판매수량만 주고(7일·아이템위너·입고예정·보관료·재고기간·반품 없음), 주문 API 는 판매자배송을 주지 않아 재고 SKU·기간판매량 엑셀이 계속 필요하다.
 
 ### 홈 — 상품 랭킹 (2026-10-02)
 `/`(예전 '공지사항')는 로켓그로스 사입 화면의 값을 **상품(seller_product_id) 단위로 합쳐** 1~10위를 보여 준다.
@@ -97,7 +105,7 @@ Electron is built separately via `scripts/build-electron.mjs` (called manually; 
 - **[더보기]**: 처음 1~10위(`RANKING_SIZE`), 누르면 20위(`RANKING_MAX_SIZE`)까지. 이미지는 펼쳐진 순위 것만 받는다.
 - **카드 클릭**: `/purchase-management` 로 가면서 `location.state.search`(`PurchaseManagementLocationState`)에 상품명을 넘기고, `usePurchaseManagement` 가 그 값을 검색어 초깃값으로 쓴다. 상품명에 콤마·탭이 있으면 사입관리 검색이 여러 검색어로 쪼개므로 그때는 상품 ID 를 넘긴다.
 - **카드의 값**: 개인 · 기간 · 7일 · 30일 │ 🛒 · 주문 · C.in · 창고 + 합계(뒤의 넷을 더한 값). 순위 기준은 앞의 넷 중 하나(기본 7일 · 이 브라우저에 기억 `home_ranking_basis`).
-- **이미지**: 순위에 든 상품만, 순위가 뜬 뒤에 받는다(`fetchProductImageUrls`). `si_rg_items.img_url`(상품 동기화 때 쿠팡 상세 API 에서 저장한 값)을 먼저 쓰고, 저장된 값이 없는 상품만 쿠팡 상품 상세 API(`/api/coupang/rg-product/:id`)를 부른다. 주소 형식은 `purchaseService.getRepresentativeImageUrl` 한 곳에서 만든다.
+- **이미지**: 순위에 든 상품만, 순위가 뜬 뒤에 받는다(`fetchProductImageUrls`). `si_rg_items.img_url`(사입관리 [바코드 동기화]가 쿠팡 상세 API 에서 저장한 값)을 먼저 쓰고, 저장된 값이 없는 상품만 쿠팡 상품 상세 API(`/api/coupang/rg-product/:id`)를 부른다. 주소 형식은 `purchaseService.getRepresentativeImageUrl` 한 곳에서 만든다.
 - **쿠팡 별점**: 순위 숫자 옆 `⭐ 4.5 (338)`. 이 앱에는 별점을 받아 오는 경로가 없어서(쿠팡 Open API 에 없음), 아이엠몽 로켓 앱(immongRK_scan)이 Wing 광고센터에서 수집해 둔 `rk_coupang_info`(같은 DB)를 **노출상품 ID** 로 빌려 쓴다 — `si_rg_items.vendor_item_id → si_coupang_items.option_id → product_id → rk_coupang_info.product_id` (`fetchProductRatings`). 로켓 앱이 수집한 상품과 노출상품 ID 가 겹치는 상품에만 나온다(계정에 따라 0건일 수 있음). 이미지처럼 순위가 뜬 뒤에 받고 하루 보관본에 같이 둔다.
 - **사입관리와 같은 규칙이어야 한다** — 비활성(`NOT_AVAILABLE`) 옵션 제외, 기준 값 0 인 상품 제외, 동점은 상품명. 사입관리의 열 계산(`renderCell`)이나 [상품기준] 합산을 바꾸면 여기도 같이 본다.
 - **합칠 때 한 번씩만 더한다**: 개인·창고는 바코드 기준, 기간·7일·30일·C.in 은 옵션 ID 기준 값이라 한 상품 안에서 같은 키가 두 번 나오면 중복으로 더하지 않는다. 🛒·주문은 행에 저장된 값이라 행마다 더한다.

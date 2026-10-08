@@ -1353,7 +1353,6 @@ const PurchaseManagement: React.FC = () => {
         onClose={() => setDetailPanelOpen(false)}
         item={detailItem}
         itemWinner={detailItem ? getItemData(detailItem)?.item_winner : undefined}
-        displayedProductId={detailItem ? (getItemData(detailItem)?.item_id ?? null) : null}
         onSaveNote={(note) => { if (detailItem?.id) saveDetailNote(detailItem.id, note) }}
         onPriceChanged={(price) => { if (detailItem?.id) saveDetailPrice(detailItem.id, price) }}
       />
