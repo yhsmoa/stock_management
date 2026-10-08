@@ -350,6 +350,16 @@ export function extractDetailPatches(detail: CoupangProductDetail): RgDetailPatc
 // ── 목록 API 응답 → si_rg_items 행 (폴백용) ─────────────────────────
 
 /**
+ * 쿠팡 ID 값 → 저장용 문자열. 없으면 null.
+ * (예전에는 String(null) 이 그대로 들어가 vendor_item_id 에 'null' 글자가 저장됐다 — 승인 전 옵션)
+ */
+function idString(v: number | string | null | undefined): string | null {
+  if (v == null) return null
+  const s = String(v).trim()
+  return s && s !== 'null' && s !== 'undefined' ? s : null
+}
+
+/**
  * 목록 데이터로 기본 행 생성 ([리셋]·[업데이트])
  * - barcode, salePrice, imgUrl 등은 null — [바코드 동기화](상세 API)가 채운다
  * - product_id(노출상품 ID)는 목록 API 에만 있다
@@ -358,7 +368,7 @@ export function mapListItemToRgItems(
   listItem: CoupangProductListItem,
   userId: string,
 ): Omit<RgItem, 'id' | 'created_at'>[] {
-  const productId = listItem.productId != null ? String(listItem.productId) : null
+  const productId = idString(listItem.productId)
   return listItem.items.map((item) => ({
     seller_product_id: String(listItem.sellerProductId),
     product_id: productId,
@@ -369,12 +379,8 @@ export function mapListItemToRgItems(
     general_product_name: null,
     option_name: item.itemName ?? null,
     img_url: null,
-    seller_product_item_id: item.rocketGrowthItemData
-      ? String(item.rocketGrowthItemData.sellerProductItemId)
-      : null,
-    vendor_item_id: item.rocketGrowthItemData
-      ? String(item.rocketGrowthItemData.vendorItemId)
-      : null,
+    seller_product_item_id: idString(item.rocketGrowthItemData?.sellerProductItemId),
+    vendor_item_id: idString(item.rocketGrowthItemData?.vendorItemId),
     barcode: null,
     external_vendor_sku: null,
     sale_price: null,
@@ -716,10 +722,14 @@ export async function syncRgItemsFromList(
   onProgress?.('기존 데이터 확인 중...')
   const existing = await fetchRgItems(userId)
 
+  // 옵션 ID 키 — 'null' 글자(예전 저장 버그)도 '없음'으로 본다.
+  //   그대로 키로 쓰면 승인 전 옵션들이 한 옵션으로 묶여 서로 다른 상품 값으로 덮인다.
+  const optionKey = (v: string | null | undefined): string => idString(v) ?? ''
+
   const existingByVid = new Map<string, RgItem[]>()
   const existingNoVid: RgItem[] = []
   for (const row of existing) {
-    const vid = (row.vendor_item_id ?? '').trim()
+    const vid = optionKey(row.vendor_item_id)
     if (!vid) { existingNoVid.push(row); continue }
     const group = existingByVid.get(vid)
     if (group) group.push(row)
@@ -730,7 +740,7 @@ export async function syncRgItemsFromList(
   const apiByVid = new Map<string, NewRgItem>()
   const apiNoVid: NewRgItem[] = []
   for (const row of apiRows) {
-    const vid = (row.vendor_item_id ?? '').trim()
+    const vid = optionKey(row.vendor_item_id)
     if (!vid) { apiNoVid.push(row); continue }
     if (!apiByVid.has(vid)) apiByVid.set(vid, row)
   }
