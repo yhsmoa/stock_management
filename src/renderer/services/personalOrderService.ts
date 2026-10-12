@@ -428,7 +428,47 @@ export async function fetchAllReturnRequests(
 // ══════════════════════════════════════════════════════════════════
 
 /**
+ * 발주서 상태 진행 순서 — 같은 묶음배송번호가 두 번 오면 더 진행된 상태를 남긴다.
+ * (상태별로 따로·동시에 조회하므로 조회 도중 상태가 바뀐 박스는 두 상태 응답에 다 들어 있다)
+ */
+const ORDER_STATUS_RANK: Record<string, number> = {
+  ACCEPT: 1,
+  INSTRUCT: 2,
+  DEPARTURE: 3,
+  DELIVERING: 4,
+  FINAL_DELIVERY: 5,
+  NONE_TRACKING: 5,
+}
+
+/**
+ * 발주서(박스) 중복 제거 — shipmentBoxId 당 1건.
+ * 중복이 생기는 경우:
+ *   · 60일 상태를 2구간(60~30일 전 · 30일 전~오늘)으로 나눠 조회하는데 두 구간이 경계일(30일 전)을 함께 포함한다
+ *   · 조회 도중 상태가 바뀐 박스가 이전·다음 상태 응답에 모두 들어 있다
+ * 그대로 저장하면 같은 키(user_id, shipment_box_id, vendor_item_id)가 한 upsert 배치에 두 번 들어가
+ * "ON CONFLICT DO UPDATE command cannot affect row a second time" 으로 저장 전체가 실패한다.
+ */
+function dedupeOrdersheets(apiData: any[]): any[] {
+  const byBox = new Map<string, any>()
+  for (const order of apiData) {
+    const boxId = String(order?.shipmentBoxId ?? '')
+    if (!boxId) continue
+    const prev = byBox.get(boxId)
+    if (!prev || (ORDER_STATUS_RANK[order.status] ?? 0) > (ORDER_STATUS_RANK[prev.status] ?? 0)) {
+      byBox.set(boxId, order)
+    }
+  }
+  if (byBox.size < apiData.length) {
+    console.log(`[mapOrderToRows] 중복 발주서 ${apiData.length - byBox.size}건 제거 (경계일·조회 중 상태 변경)`)
+  }
+  return Array.from(byBox.values())
+}
+
+/**
  * API 응답 data[] → PersonalOrderRow[] (orderItems 플랫화)
+ * - 박스 단위 중복 제거 후 변환 (dedupeOrdersheets)
+ * - 한 박스 안에 같은 옵션이 여러 줄이면 실제로 나뉜 주문 줄이므로 수량을 합쳐 1행으로 만든다
+ *   (DB 키가 박스+옵션이라 2행으로 둘 수 없다)
  * @param releaseStopSet - 출고중지/반품접수 shipment_box_id 집합 (선택). true면 release_stop = true 로 설정.
  */
 export function mapOrderToRows(
@@ -439,12 +479,21 @@ export function mapOrderToRows(
 ): PersonalOrderRow[] {
   const rows: PersonalOrderRow[] = []
 
-  for (const order of apiData) {
+  for (const order of dedupeOrdersheets(apiData)) {
     const orderItems = order.orderItems || []
     const shipmentBoxId = String(order.shipmentBoxId ?? '')
     const releaseStop = releaseStopSet?.has(shipmentBoxId) ?? false
+    // 박스 안 같은 옵션 → 먼저 만든 행에 수량 합산
+    const rowByOption = new Map<string, PersonalOrderRow>()
     for (const item of orderItems) {
-      rows.push({
+      const optionId = String(item.vendorItemId ?? '')
+      const same = rowByOption.get(optionId)
+      if (same) {
+        same.shipping_count += item.shippingCount ?? 0
+        same.cancel_count += item.cancelCount ?? 0
+        continue
+      }
+      const row: PersonalOrderRow = {
         user_id: userId,
         vendor_id: vendorId,
         shipment_box_id: shipmentBoxId,
@@ -452,7 +501,7 @@ export function mapOrderToRows(
         status: order.status ?? '',
         seller_product_id: String(item.sellerProductId ?? ''),
         product_id: String(item.productId ?? ''),
-        vendor_item_id: String(item.vendorItemId ?? ''),
+        vendor_item_id: optionId,
         item_name: item.sellerProductName ?? '',
         option_name: item.sellerProductItemName ?? '',
         product_name: item.vendorItemName ?? '',
@@ -489,7 +538,9 @@ export function mapOrderToRows(
         barcode: '',   // 기본값 — 저장 단계에서 기존 행의 바코드로 대체됨
         note: '',
         release_stop: releaseStop,
-      })
+      }
+      rowByOption.set(optionId, row)
+      rows.push(row)
     }
   }
 
@@ -652,8 +703,16 @@ export async function savePersonalOrders(
     }
 
     // ── 2. Upsert — barcode 이월 (기존 값 || '') ─────────────────
+    //   같은 키가 두 번 있으면 upsert 배치 전체가 실패한다
+    //   ("ON CONFLICT DO UPDATE command cannot affect row a second time").
+    //   mapOrderToRows 가 이미 중복을 없애지만, 마지막 방어로 키당 마지막 행만 남긴다.
     const now = new Date().toISOString()
-    const payload: PersonalOrderRow[] = rows.map((r) => ({
+    const uniqueByKey = new Map<string, PersonalOrderRow>()
+    for (const r of rows) uniqueByKey.set(keyOf(r), r)
+    if (uniqueByKey.size < rows.length) {
+      console.warn(`[personalOrderService] 같은 키 ${rows.length - uniqueByKey.size}건 제외 후 저장`)
+    }
+    const payload: PersonalOrderRow[] = Array.from(uniqueByKey.values()).map((r) => ({
       ...r,
       barcode: existingByKey.get(keyOf(r))?.barcode || '',
       updated_at: now,
