@@ -522,27 +522,48 @@ const CoupangManagement: React.FC = () => {
             edit_regular_price: row[16] ? parseInt(String(row[16]).replace(/,/g, '')) : null,
             edit_sales_status: row[17] || null,
             edit_stock: row[18] ? parseInt(String(row[18])) : null,
-            package_type: '출고',  // xlsx 업로드 시 분류 기본값 (이후 드롭박스로 수동 변경 가능)
             user_id: userId,
           }));
 
         console.log(`Batch ${i / batchSize + 1}: ${items.length} items`);
-        if (items.length > 0) {
-          console.log('First item in batch:', items[0]);
-        }
 
         if (items.length > 0) {
-          const { error } = await supabase
+          // ── 분류(package_type)는 새 행에만 기본값 '출고' ───────────────
+          //   예전에는 모든 행에 '출고'를 넣어 업로드할 때마다 직접 지정한 분류가 초기화됐다.
+          //   한 upsert 배치의 칼럼 구성이 다르면 빠진 칼럼이 null 로 덮이므로 기존/신규를 나눠 보낸다.
+          const { data: existingRows, error: existingError } = await supabase
             .from('si_coupang_items')
-            .upsert(items, { onConflict: 'option_id' });
+            .select('option_id')
+            .in('option_id', items.map((it) => String(it.option_id)));
 
-          if (error) {
-            console.error('Error upserting batch:', error);
-            console.error('Error details:', JSON.stringify(error, null, 2));
+          if (existingError) {
+            console.error('Error checking existing rows:', existingError);
             totalErrors++;
           } else {
-            console.log('Successfully inserted/updated batch');
-            totalInserted += items.length;
+            const existingIds = new Set((existingRows ?? []).map((r) => String(r.option_id)));
+            const updates = items.filter((it) => existingIds.has(String(it.option_id)));
+            const inserts = items
+              .filter((it) => !existingIds.has(String(it.option_id)))
+              .map((it) => ({ ...it, package_type: '출고' }));  // 분류 기본값 (이후 드롭박스로 수동 변경)
+
+            let batchFailed = false;
+            for (const rows of [updates, inserts]) {
+              if (rows.length === 0) continue;
+              const { error } = await supabase
+                .from('si_coupang_items')
+                .upsert(rows, { onConflict: 'option_id' });
+              if (error) {
+                console.error('Error upserting batch:', error);
+                console.error('Error details:', JSON.stringify(error, null, 2));
+                batchFailed = true;
+              }
+            }
+
+            if (batchFailed) {
+              totalErrors++;
+            } else {
+              totalInserted += items.length;
+            }
           }
         }
 
