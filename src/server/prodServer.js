@@ -285,6 +285,129 @@ app.put('/api/coupang/vendor-item-sale', async (req, res) => {
   }
 })
 
+// ══════════════════════════════════════════════════════════════════
+// 일반상품(판매자배송) 관리 — 상품관리 화면 (/coupang)
+//   - coupangProxy.ts 와 같은 경로 · 같은 검증 (양쪽을 같이 고친다)
+//   - 상세 조회는 기존 /api/coupang/rg-product/:id 를 같이 쓴다 (같은 seller-products 엔드포인트)
+// ══════════════════════════════════════════════════════════════════
+
+/** 상품 목록 페이징 조회 maxPerPage 최대값 (쿠팡 문서: 기본 10, 최대 100) */
+const PRODUCT_LIST_MAX_PER_PAGE = 100
+/** 상품 목록 status 필터 허용값 (쿠팡 문서) */
+const PRODUCT_LIST_STATUSES = ['IN_REVIEW', 'SAVED', 'APPROVING', 'APPROVED', 'PARTIAL_APPROVED', 'DENIED', 'DELETED']
+const SELLER_PRODUCTS_PATH = '/v2/providers/seller_api/apis/api/v1/marketplace/seller-products'
+const VENDOR_ITEMS_PATH = '/v2/providers/seller_api/apis/api/v1/marketplace/vendor-items'
+
+/** 숫자 ID 경로값 검증 — 경로에 그대로 넣으므로 숫자만 허용 */
+function isNumericId(v) {
+  return typeof v === 'string' && /^\d+$/.test(v)
+}
+
+/** 0 이상 정수 (아니면 null) */
+function toNonNegativeInt(v) {
+  const n = Number(v)
+  return Number.isInteger(n) && n >= 0 ? n : null
+}
+
+// ── GET /api/coupang/mp-products — 상품 목록 페이징 (businessTypes 없음 → 일반 + 하이브리드) ──
+// query: nextToken?, maxPerPage?(1~100), status?
+app.get('/api/coupang/mp-products', async (req, res) => {
+  try {
+    const keys = extractCoupangKeys(req)
+    if (!keys) return res.status(401).json({ success: false, error: '쿠팡 API 키가 요청에 포함되지 않았습니다.' })
+
+    const { nextToken, status } = req.query
+    const maxPerPage = toNonNegativeInt(req.query.maxPerPage ?? PRODUCT_LIST_MAX_PER_PAGE)
+    if (!maxPerPage || maxPerPage > PRODUCT_LIST_MAX_PER_PAGE) {
+      return res.status(400).json({ success: false, error: `maxPerPage 는 1~${PRODUCT_LIST_MAX_PER_PAGE}` })
+    }
+    if (status && !PRODUCT_LIST_STATUSES.includes(status)) {
+      return res.status(400).json({ success: false, error: `status 허용값: ${PRODUCT_LIST_STATUSES.join(', ')}` })
+    }
+
+    const params = { vendorId: keys.vendorCode, maxPerPage: String(maxPerPage) }
+    if (nextToken) params.nextToken = String(nextToken)
+    if (status) params.status = status
+
+    const result = await callCoupangAPI('GET', SELLER_PRODUCTS_PATH, params, keys.accessKey, keys.secretKey, null, keys.vendorCode)
+    res.json({ success: true, data: result })
+  } catch (error) {
+    console.error('[prod-server] mp-products 오류:', error.message)
+    res.status(500).json({ success: false, error: error.message })
+  }
+})
+
+// ── GET /api/coupang/product-histories?sellerProductId= — 상품 상태변경 이력 ──
+// query: sellerProductId, nextToken?, maxPerPage?
+app.get('/api/coupang/product-histories', async (req, res) => {
+  try {
+    const keys = extractCoupangKeys(req)
+    if (!keys) return res.status(401).json({ success: false, error: '쿠팡 API 키가 요청에 포함되지 않았습니다.' })
+
+    const sellerProductId = req.query.sellerProductId
+    if (!isNumericId(sellerProductId)) {
+      return res.status(400).json({ success: false, error: 'sellerProductId(숫자) 필요' })
+    }
+    const params = {}
+    if (req.query.nextToken) params.nextToken = String(req.query.nextToken)
+    if (req.query.maxPerPage && toNonNegativeInt(req.query.maxPerPage)) params.maxPerPage = String(req.query.maxPerPage)
+
+    const apiPath = `${SELLER_PRODUCTS_PATH}/${sellerProductId}/histories`
+    const result = await callCoupangAPI('GET', apiPath, Object.keys(params).length ? params : null, keys.accessKey, keys.secretKey, null, keys.vendorCode)
+    res.json({ success: true, data: result })
+  } catch (error) {
+    console.error('[prod-server] product-histories 오류:', error.message)
+    res.status(500).json({ success: false, error: error.message })
+  }
+})
+
+// ── PUT /api/coupang/vendor-item-quantity — 아이템별 수량(재고) 변경 ──
+// body: { vendorItemId, quantity(0 이상 정수) }
+app.put('/api/coupang/vendor-item-quantity', async (req, res) => {
+  try {
+    const keys = extractCoupangKeys(req)
+    if (!keys) return res.status(401).json({ success: false, error: '쿠팡 API 키가 요청에 포함되지 않았습니다.' })
+
+    const vendorItemId = String(req.body.vendorItemId ?? '')
+    const quantity = toNonNegativeInt(req.body.quantity)
+    if (!isNumericId(vendorItemId) || quantity === null) {
+      return res.status(400).json({ success: false, error: 'vendorItemId(숫자), quantity(0 이상 정수) 필수' })
+    }
+
+    const apiPath = `${VENDOR_ITEMS_PATH}/${vendorItemId}/quantities/${quantity}`
+    const result = await callCoupangAPI('PUT', apiPath, null, keys.accessKey, keys.secretKey, null, keys.vendorCode)
+    res.json({ success: true, data: result })
+  } catch (error) {
+    console.error('[prod-server] vendor-item-quantity 오류:', error.message)
+    res.status(500).json({ success: false, error: error.message })
+  }
+})
+
+// ── PUT /api/coupang/vendor-item-original-price — 아이템별 할인율 기준가격 변경 ──
+// body: { vendorItemId, originalPrice(0 이상, 10원 단위) }
+app.put('/api/coupang/vendor-item-original-price', async (req, res) => {
+  try {
+    const keys = extractCoupangKeys(req)
+    if (!keys) return res.status(401).json({ success: false, error: '쿠팡 API 키가 요청에 포함되지 않았습니다.' })
+
+    const vendorItemId = String(req.body.vendorItemId ?? '')
+    const originalPrice = toNonNegativeInt(req.body.originalPrice)
+    if (!isNumericId(vendorItemId) || originalPrice === null) {
+      return res.status(400).json({ success: false, error: 'vendorItemId(숫자), originalPrice(0 이상 정수) 필수' })
+    }
+    if (originalPrice % 10 !== 0) {
+      return res.status(400).json({ success: false, error: 'originalPrice 는 10원 단위여야 합니다.' })
+    }
+
+    const apiPath = `${VENDOR_ITEMS_PATH}/${vendorItemId}/original-prices/${originalPrice}`
+    const result = await callCoupangAPI('PUT', apiPath, null, keys.accessKey, keys.secretKey, null, keys.vendorCode)
+    res.json({ success: true, data: result })
+  } catch (error) {
+    console.error('[prod-server] vendor-item-original-price 오류:', error.message)
+    res.status(500).json({ success: false, error: error.message })
+  }
+})
+
 // ── GET /api/coupang/online-inquiries — 상품별 고객문의 조회 (CS) ──
 // answeredType(ALL/ANSWERED/NOANSWER) 필수, 기간은 7일 이내 제한.
 // 30일 조회는 클라이언트(csService)에서 7일×5회 분할 후 병합.

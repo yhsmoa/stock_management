@@ -113,6 +113,28 @@ async function callCoupangAPI(
   }
 }
 
+// ══════════════════════════════════════════════════════════════════
+// 일반상품(판매자배송) 상품 API 상수 — prodServer.js 와 같은 값
+// ══════════════════════════════════════════════════════════════════
+
+/** 상품 목록 페이징 조회 maxPerPage 최대값 (쿠팡 문서: 기본 10, 최대 100) */
+const PRODUCT_LIST_MAX_PER_PAGE = 100
+/** 상품 목록 status 필터 허용값 (쿠팡 문서) */
+const PRODUCT_LIST_STATUSES = ['IN_REVIEW', 'SAVED', 'APPROVING', 'APPROVED', 'PARTIAL_APPROVED', 'DENIED', 'DELETED']
+const SELLER_PRODUCTS_PATH = '/v2/providers/seller_api/apis/api/v1/marketplace/seller-products'
+const VENDOR_ITEMS_PATH = '/v2/providers/seller_api/apis/api/v1/marketplace/vendor-items'
+
+/** 숫자 ID 경로값 검증 — 경로에 그대로 넣으므로 숫자만 허용 */
+function isNumericId(v: unknown): v is string {
+  return typeof v === 'string' && /^\d+$/.test(v)
+}
+
+/** 0 이상 정수 */
+function toNonNegativeInt(v: unknown): number | null {
+  const n = Number(v)
+  return Number.isInteger(n) && n >= 0 ? n : null
+}
+
 // ── JSON 응답 헬퍼 ────────────────────────────────────────────────
 function sendJson(res: any, statusCode: number, body: unknown) {
   res.statusCode = statusCode
@@ -408,6 +430,135 @@ export function coupangProxyPlugin(): Plugin {
           sendJson(res, 200, { success: true, data: result })
         } catch (error: any) {
           console.error('[coupang-proxy] vendor-item-sale 오류:', error.message)
+          sendJson(res, 500, { success: false, error: error.message })
+        }
+      })
+
+      // ════════════════════════════════════════════════════════════
+      // 일반상품(판매자배송) 관리 — 상품관리 화면 (/coupang)
+      //   - 상세 조회는 기존 /api/coupang/rg-product/:id 를 같이 쓴다 (같은 seller-products 엔드포인트)
+      // ════════════════════════════════════════════════════════════
+
+      // ── GET /api/coupang/mp-products — 상품 목록 페이징 (businessTypes 없음 → 일반 + 하이브리드) ──
+      // query: nextToken?, maxPerPage?(1~100), status?
+      server.middlewares.use('/api/coupang/mp-products', async (req: any, res: any) => {
+        try {
+          const keys = extractCoupangKeys(req)
+          if (!keys) {
+            sendJson(res, 401, { success: false, error: '쿠팡 API 키가 요청에 포함되지 않았습니다.' })
+            return
+          }
+
+          const url = new URL(req.url || '/', `http://${req.headers.host}`)
+          const nextToken = url.searchParams.get('nextToken')
+          const status = url.searchParams.get('status')
+          const maxPerPage = toNonNegativeInt(url.searchParams.get('maxPerPage') ?? PRODUCT_LIST_MAX_PER_PAGE)
+          if (!maxPerPage || maxPerPage > PRODUCT_LIST_MAX_PER_PAGE) {
+            sendJson(res, 400, { success: false, error: `maxPerPage 는 1~${PRODUCT_LIST_MAX_PER_PAGE}` })
+            return
+          }
+          if (status && !PRODUCT_LIST_STATUSES.includes(status)) {
+            sendJson(res, 400, { success: false, error: `status 허용값: ${PRODUCT_LIST_STATUSES.join(', ')}` })
+            return
+          }
+
+          const params: Record<string, string> = { vendorId: keys.vendorCode, maxPerPage: String(maxPerPage) }
+          if (nextToken) params.nextToken = nextToken
+          if (status) params.status = status
+
+          const result = await callCoupangAPI('GET', SELLER_PRODUCTS_PATH, params, keys.accessKey, keys.secretKey, undefined, keys.vendorCode)
+          sendJson(res, 200, { success: true, data: result })
+        } catch (error: any) {
+          console.error('[coupang-proxy] mp-products 오류:', error.message)
+          sendJson(res, 500, { success: false, error: error.message })
+        }
+      })
+
+      // ── GET /api/coupang/product-histories?sellerProductId= — 상품 상태변경 이력 ──
+      // query: sellerProductId, nextToken?, maxPerPage?
+      server.middlewares.use('/api/coupang/product-histories', async (req: any, res: any) => {
+        try {
+          const keys = extractCoupangKeys(req)
+          if (!keys) {
+            sendJson(res, 401, { success: false, error: '쿠팡 API 키가 요청에 포함되지 않았습니다.' })
+            return
+          }
+
+          const url = new URL(req.url || '/', `http://${req.headers.host}`)
+          const sellerProductId = url.searchParams.get('sellerProductId')
+          if (!isNumericId(sellerProductId)) {
+            sendJson(res, 400, { success: false, error: 'sellerProductId(숫자) 필요' })
+            return
+          }
+          const params: Record<string, string> = {}
+          const nextToken = url.searchParams.get('nextToken')
+          const maxPerPage = url.searchParams.get('maxPerPage')
+          if (nextToken) params.nextToken = nextToken
+          if (maxPerPage && toNonNegativeInt(maxPerPage)) params.maxPerPage = maxPerPage
+
+          const apiPath = `${SELLER_PRODUCTS_PATH}/${sellerProductId}/histories`
+          const result = await callCoupangAPI('GET', apiPath, Object.keys(params).length ? params : null, keys.accessKey, keys.secretKey, undefined, keys.vendorCode)
+          sendJson(res, 200, { success: true, data: result })
+        } catch (error: any) {
+          console.error('[coupang-proxy] product-histories 오류:', error.message)
+          sendJson(res, 500, { success: false, error: error.message })
+        }
+      })
+
+      // ── PUT /api/coupang/vendor-item-quantity — 아이템별 수량(재고) 변경 ──
+      // body: { vendorItemId, quantity(0 이상 정수) }
+      server.middlewares.use('/api/coupang/vendor-item-quantity', async (req: any, res: any) => {
+        try {
+          const keys = extractCoupangKeys(req)
+          if (!keys) {
+            sendJson(res, 401, { success: false, error: '쿠팡 API 키가 요청에 포함되지 않았습니다.' })
+            return
+          }
+
+          const body = await parseBody(req)
+          const vendorItemId = String(body.vendorItemId ?? '')
+          const quantity = toNonNegativeInt(body.quantity)
+          if (!isNumericId(vendorItemId) || quantity === null) {
+            sendJson(res, 400, { success: false, error: 'vendorItemId(숫자), quantity(0 이상 정수) 필수' })
+            return
+          }
+
+          const apiPath = `${VENDOR_ITEMS_PATH}/${vendorItemId}/quantities/${quantity}`
+          const result = await callCoupangAPI('PUT', apiPath, null, keys.accessKey, keys.secretKey, undefined, keys.vendorCode)
+          sendJson(res, 200, { success: true, data: result })
+        } catch (error: any) {
+          console.error('[coupang-proxy] vendor-item-quantity 오류:', error.message)
+          sendJson(res, 500, { success: false, error: error.message })
+        }
+      })
+
+      // ── PUT /api/coupang/vendor-item-original-price — 아이템별 할인율 기준가격 변경 ──
+      // body: { vendorItemId, originalPrice(0 이상, 10원 단위) }
+      server.middlewares.use('/api/coupang/vendor-item-original-price', async (req: any, res: any) => {
+        try {
+          const keys = extractCoupangKeys(req)
+          if (!keys) {
+            sendJson(res, 401, { success: false, error: '쿠팡 API 키가 요청에 포함되지 않았습니다.' })
+            return
+          }
+
+          const body = await parseBody(req)
+          const vendorItemId = String(body.vendorItemId ?? '')
+          const originalPrice = toNonNegativeInt(body.originalPrice)
+          if (!isNumericId(vendorItemId) || originalPrice === null) {
+            sendJson(res, 400, { success: false, error: 'vendorItemId(숫자), originalPrice(0 이상 정수) 필수' })
+            return
+          }
+          if (originalPrice % 10 !== 0) {
+            sendJson(res, 400, { success: false, error: 'originalPrice 는 10원 단위여야 합니다.' })
+            return
+          }
+
+          const apiPath = `${VENDOR_ITEMS_PATH}/${vendorItemId}/original-prices/${originalPrice}`
+          const result = await callCoupangAPI('PUT', apiPath, null, keys.accessKey, keys.secretKey, undefined, keys.vendorCode)
+          sendJson(res, 200, { success: true, data: result })
+        } catch (error: any) {
+          console.error('[coupang-proxy] vendor-item-original-price 오류:', error.message)
           sendJson(res, 500, { success: false, error: error.message })
         }
       })
