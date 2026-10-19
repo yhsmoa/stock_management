@@ -47,8 +47,8 @@ function getCoupangCredentials(): { accessKey: string; secretKey: string; vendor
   }
 }
 
-/** 쿠팡 프록시 호출 시 포함할 인증 헤더 생성 */
-function getCoupangHeaders(): Record<string, string> {
+/** 쿠팡 프록시 호출 시 포함할 인증 헤더 생성 (상품관리 coupangProductService 도 같이 쓴다) */
+export function getCoupangHeaders(): Record<string, string> {
   const { accessKey, secretKey, vendorCode } = getCoupangCredentials()
   return {
     'X-Coupang-Access-Key': accessKey,

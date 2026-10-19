@@ -89,6 +89,16 @@ Electron is built separately via `scripts/build-electron.mjs` (called manually; 
 - **명령 언어**: 템플릿의 `printer_lang`(TSPL2/ZPL)이 프린터 기종과 맞아야 한다. BIXOLON(BPL-Z)에 TSPL 을 보내면 라벨 대신 프린터 정보 문구가 찍힌다.
 - **진단**: 상품관리 URL 에 `?labelDebug=1` 을 붙이면 모달에 "인쇄 명령 저장" 버튼이 생긴다 (인쇄하지 않고 바이트를 파일로).
 
+### 상품관리 — 쿠팡 일반상품 (2026-10-20)
+`/coupang`(채널 › 쿠팡관리 › 상품관리)는 쿠팡 상품을 **한 목록**에 보여 주고 상품마다 전체(로켓 + 일반) · 일반 · 로켓그로스를 구분한다. 2026-10-20 에 엑셀 전용 화면을 Open API 동기화 기반으로 전면 재작성했다 (디자인 시안: Claude Design 캔버스).
+- **구조**: 타입 `types/coupangProduct.ts` · 서비스 `services/coupangProductService.ts`(조회·동기화·변경·엑셀) · 훅 `pages/useCoupangManagement.ts` · 화면 `components/coupang/*` + `pages/CoupangManagement.tsx` · 스타일 `pages/CoupangManagement.css`(.cp-, 토큰은 `.cp-page`) · 속도 제한 큐 `utils/rateLimitQueue.ts`(초당 5회 — `purchaseService.fetchDetailsFromApi` 의 인라인 큐와 같은 규칙, 그쪽은 아직 안 옮김).
+- **데이터는 기존 `si_coupang_items`** (옵션 1행, PK option_id). 라벨·Q반품·출고·재고·입고·사입 라벨·홈 별점이 이 표를 읽어서 새 표를 만들지 않았다. 2026-10-20 추가 칼럼: `channel`('MP' 일반 / 'RG' 로켓, null 이면 바코드 유무로 판단 — 실측: 바코드 있는 행 = 전부 RG 옵션), `img_url`, `delivery_charge_type/delivery_charge/free_ship_over_amount`, 출처별 시각 `detail_synced_at`·`status_checked_at`·`app_changed_at`·`excel_synced_at`. SQL 은 `docs/sql/2026-10-20_*.sql`(칼럼 · 인덱스).
+- **동기화 3단계**: ① [목록 받기] = 일반 목록(`/api/coupang/mp-products`, `businessTypes` 없음 → `registrationType NORMAL` 상품만, **옵션 없음**) + 로켓그로스 목록(`fetchAllRgProducts`, 하이브리드 상품은 `items[].marketPlaceItemData`(대문자 P) 로 일반 옵션 ID 가 같이 온다) → 옵션 행 upsert(바뀐 행만, `defaultToNull:false` 로 다른 칼럼 유지). 행이 없는 일반 상품·처음 들어온 RG 상품은 이어서 상세를 받는다. 쿠팡 목록에 없는 상품은 지우지 않는다(보고만). ② [상세 받기] = 상품당 1회 `rg-product/:id`(같은 seller-products 엔드포인트). 순수 일반은 `items[]` 가 평평하고, 하이브리드는 `items[].marketplaceItemData`(소문자 p) / `rocketGrowthItemData` + 배송은 `marketplaceShippingAndReturnInfo`. 바코드는 API 값이 비어 있지 않을 때만 쓴다(엑셀 값 보존). 범위는 "미수신·판매중 상품만 / 미수신 전체". ③ [판매상태] = 옵션당 1회 `vendor-item-inventory`. 전체는 수만 회라 **엑셀이 빠르다** — 화면은 선택 행·오래된 순 500개만.
+- **엑셀은 보조**: WING 가격/재고 엑셀(`price_inventory`, 3행 머리글·4행부터, A~O)로 가격·재고·판매상태·승인상태를 한 번에 반영한다. 기존 행은 분류·비고·시즌·채널을 건드리지 않고 새 행에만 분류 '출고'(예전엔 매번 '출고'로 덮어썼다 — 2026-10-20 수정). 상세정보 엑셀(Catalog Template)은 안 쓴다. 판매수량(`sales_data`)은 API 에 없고 앱도 안 쓴다.
+- **변경 작업**(판매가·재고·할인율 기준가·판매 재개/중지)은 쿠팡 API 가 성공한 옵션만 DB 를 고치고 `app_changed_at` 을 기록. 판매가는 10원 단위, 한 번에 50% 초과 인하·100% 초과 인상은 `forceSalePriceUpdate` 체크가 있어야 간다.
+- **규모 주의**: immong 계정 옵션 78,012 · 상품 16,290 (하이브리드 5,387). 한 화면에서 count 쿼리를 동시에 10개 넘게 보내면 Supabase statement timeout 이 난다 → 페이지 → 요약 → 건수 **순서대로** 받는다. 쿠팡은 **등록 IP(Railway)만** 받으므로 로컬 dev 에서 쿠팡 호출은 403 — 새 프록시 경로는 배포 후에만 확인할 수 있다.
+- 사입관리 [바코드 동기화]와 같은 상세 응답을 쓰므로, 하이브리드 상품은 한 호출로 `si_rg_items` 와 `si_coupang_items` 를 같이 채울 수 있다 — 아직 합치지 않았다(각자 호출).
+
 ### 사입관리 — 상품 동기화 (2026-10-08)
 `/purchase-management` 의 행은 `si_rg_items`(로켓그로스 옵션 1개 = 1행)다. 쿠팡 값과 직접 입력값(비고·주문수량·카트·상태·입력·가격수정시각)이 **같은 행**에 있다.
 - **[리셋]·[업데이트]** = 상품 목록 API → `syncRgItemsFromList`(`purchaseService.ts`). 옵션 ID(`vendor_item_id`)로 맞춰 **목록 칼럼만** 고친다(`LIST_SYNC_COLUMNS`: 등록상품 ID·노출상품 ID·상태·상품명·판매시작·옵션명·등록옵션 ID). 리셋은 여기에 더해 목록에 없는 옵션을 지운다(저장 실패가 있으면 지우기를 건너뜀). 예전처럼 계정 행을 통째로 지우고 다시 넣으면 직접 입력값이 사라지니 그렇게 되돌리지 않는다.
