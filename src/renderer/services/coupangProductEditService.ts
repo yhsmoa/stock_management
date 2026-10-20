@@ -28,6 +28,13 @@ export const SEARCH_TAG_MAX_LENGTH = 20     // 쿠팡: 태그 1개당 20자 이�
 export const FREE_SHIP_UNIT = 100           // 쿠팡: 조건부 무료 기준 금액 100원 단위
 /** 쿠팡이 "임시저장·승인대기 상품은 수정할 수 없다" 고 한 상태 (partial) · 승인대기 중 재수정도 막는다 */
 export const EDIT_LOCKED_STATUSES = ['임시저장', '임시저장중', '승인대기', '승인대기중', '심사중']
+/**
+ * 수정 요청 직후 잠깐 거치는 상태 — 쿠팡은 임시저장 → 승인대기중 → (자동 승인이면) 승인완료 를
+ * 1초 안에 지나가기도 한다 (2026-10-20 운영 실측). 이 상태일 때 상세를 저장하면 옛 값이 남는다.
+ */
+const TRANSIENT_STATUSES = ['임시저장', '임시저장중']
+const SETTLE_POLL_INTERVAL_MS = 1500   // 상태 다시 보기 간격
+const SETTLE_POLL_MAX_TRIES = 7        // 최대 약 10초 기다린다 (그 뒤엔 그때 상태로 저장)
 /** 하이브리드 응답의 채널 데이터 키 — 상세는 소문자 p, 목록은 대문자 P 로 온다 */
 const MP_DATA_KEYS = ['marketplaceItemData', 'marketPlaceItemData'] as const
 const RG_DATA_KEY = 'rocketGrowthItemData'
@@ -290,6 +297,25 @@ export async function applyShippingEdits(userId: string, sellerProductId: string
 export interface SubmitProductEditsResult {
   /** 상세를 다시 받아 DB 를 맞췄는지 (실패해도 쿠팡 수정 요청은 이미 들어간 상태) */
   resynced: boolean
+  /** 기다린 뒤 쿠팡 상태 (승인완료 = 자동 승인됨, 승인대기중 = 심사 중) */
+  statusName: string | null
+}
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
+
+/** 수정 요청 직후 임시저장 단계를 지날 때까지 잠깐 기다린다 → 그때 상태 (못 받으면 null) */
+async function waitForSettledStatus(sellerProductId: string): Promise<string | null> {
+  let status: string | null = null
+  for (let i = 0; i < SETTLE_POLL_MAX_TRIES; i++) {
+    await sleep(SETTLE_POLL_INTERVAL_MS)
+    try {
+      status = (await fetchLiveProductDetail(sellerProductId)).statusName ?? null
+    } catch {
+      status = null
+    }
+    if (status && !TRANSIENT_STATUSES.includes(status)) break
+  }
+  return status
 }
 
 /**
@@ -319,16 +345,17 @@ export async function submitProductEdits(
   })
   assertProxyOk(await res.json(), '상품 수정 요청 실패')
 
-  // ── 3) DB 맞추기 — 승인대기로 표시하고, 상세를 다시 받아 실제 상태로 덮는다 ──
+  // ── 3) DB 맞추기 — 승인대기로 표시 → 임시저장 단계를 지날 때까지 기다린 뒤 상세를 다시 받아 실제 값으로 덮는다 ──
   await supabase
     .from(TABLE)
     .update({ coupang_approval: '승인대기중', app_changed_at: new Date().toISOString() })
     .eq('user_id', userId)
     .eq('item_id', sellerProductId)
+  const statusName = await waitForSettledStatus(sellerProductId)
   try {
     const r = await syncProductDetails(userId, [sellerProductId])
-    return { resynced: r.failed.length === 0 }
+    return { resynced: r.failed.length === 0, statusName }
   } catch {
-    return { resynced: false }
+    return { resynced: false, statusName }
   }
 }

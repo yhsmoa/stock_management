@@ -212,10 +212,12 @@ export function useCoupangProductEdit(userId: string, sellerProductId: string, o
     setMessage(null)
     try {
       const r = await submitProductEdits(userId, view.sellerProductId, edits)
+      const head = r.statusName === '승인완료'
+        ? '쿠팡이 바로 승인해 반영됐습니다.'
+        : `쿠팡에 수정 요청을 보냈습니다 (지금 상태: ${r.statusName ?? '확인 못 함'}). 승인 뒤에 반영됩니다.`
       setMessage({
         kind: 'ok',
-        text: '쿠팡에 수정 요청을 보냈습니다. 승인 뒤에 반영됩니다.'
-          + (r.resynced ? '' : ' (이 앱의 값은 다음 [상세 받기] 때 맞춰집니다)'),
+        text: head + (r.resynced ? '' : ' (이 앱의 값은 다음 [상세 받기] 때 맞춰집니다)'),
       })
       onChanged()
       await load()
