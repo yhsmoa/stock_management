@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import { theme } from '../../styles/theme'
 import {
+  CoupangApiError,
   fetchRgProductDetail,
   getRepresentativeImageUrl,
   fetchVendorItemInventory,
@@ -36,6 +37,17 @@ const formatPriceDate = (iso: string | null | undefined): string => {
   if (!iso) return ''
   const d = new Date(iso)
   return isNaN(d.getTime()) ? '' : d.toLocaleDateString('sv-SE')  // 2026-08-12
+}
+
+// ── 상세 API 실패 → 폴백 안내 문구 ──────────────────────────────────
+//   원인은 CoupangApiError 의 코드/상태(FORBIDDEN/403)로 가른다 — 메시지 문자열에 기대지 않는다
+const DETAIL_FALLBACK_NOTICE = '상세 정보를 불러올 수 없어 저장된 데이터를 표시합니다.'
+const describeDetailError = (err: unknown): string => {
+  if (err instanceof CoupangApiError && err.isForbidden) {
+    return `쿠팡 API 가 이 PC 의 IP 를 허용하지 않습니다 (WING 에서 IP 등록 필요). ${DETAIL_FALLBACK_NOTICE}`
+  }
+  const reason = err instanceof Error && err.message ? ` (${err.message})` : ''
+  return `${DETAIL_FALLBACK_NOTICE}${reason}`
 }
 
 // ── 스타일 ──────────────────────────────────────────────────────────
@@ -479,39 +491,38 @@ const ProductDetailPanel: React.FC<ProductDetailPanelProps> = ({
     }
   }, [item?.vendor_item_id])
 
-  /* ── 패널 열릴 때 상세 API 호출 ──────────────────────────────── */
+  /* ── 패널 열릴 때 상세 API 호출 ──────────────────────────────────
+     - 상품이 바뀌거나 패널이 닫히면 cancelled 로 이전 요청 결과를 버린다
+       (재시도 중이던 응답이 늦게 와서 새 상품 화면을 덮어쓰지 않도록). */
   useEffect(() => {
     if (!isOpen || !item) {
       setDetail(null)
       setError(null)
       setImgError(false)
+      setDetailLoading(false)   // 닫히는 순간 진행 중이던 요청은 cancelled 로 버려지므로 여기서 정리
       return
     }
     setImgError(false)
 
+    let cancelled = false
     const loadDetail = async () => {
       setDetailLoading(true)
       setError(null)
       try {
         const data = await fetchRgProductDetail(Number(item.seller_product_id))
-        // [진단] 노출상품ID(productId) 위치 확인용 — 실제 응답 구조 로깅
-        console.log('[ProductDetailPanel][진단] 상세 응답 ID 필드:', {
-          topLevelKeys: data ? Object.keys(data) : null,
-          productId: (data as any)?.productId,
-          sellerProductId: data?.sellerProductId,
-          firstItem: data?.items?.[0],
-          firstItemKeys: data?.items?.[0] ? Object.keys(data.items[0]) : null,
-        })
+        if (cancelled) return
         setDetail(data)
       } catch (err: any) {
+        if (cancelled) return
         console.error('[ProductDetailPanel] 상세 조회 실패:', err)
-        setError('상세 정보를 불러올 수 없어 저장된 데이터를 표시합니다.')
+        setError(describeDetailError(err))
       } finally {
-        setDetailLoading(false)
+        if (!cancelled) setDetailLoading(false)
       }
     }
 
     loadDetail()
+    return () => { cancelled = true }
   }, [isOpen, item?.seller_product_id])
 
   /* ── 패널 열릴 때 inventories 조회 (현재 가격·판매상태) ──────────

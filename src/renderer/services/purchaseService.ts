@@ -2,7 +2,7 @@
    사입관리 (PurchaseManagement) 서비스
    - Vite 프록시를 통한 쿠팡 로켓그로스 API 호출
    - nextToken 순회로 전체 상품 수집
-   - 큐 기반 동시 상세 조회 (초당 5회 제한 준수, retry with backoff)
+   - 큐 기반 동시 상세 조회 (초당 5회 제한 준수, 속도 제한 오류만 retry with backoff)
    - Supabase si_rg_items 테이블 CRUD
    ================================================================ */
 
@@ -55,6 +55,72 @@ export function getCoupangHeaders(): Record<string, string> {
     'X-Coupang-Secret-Key': secretKey,
     'X-Vendor-Code': vendorCode,
   }
+}
+
+// ══════════════════════════════════════════════════════════════════
+// 쿠팡 프록시 오류 분류
+//   - 프록시 실패 { success:false, error } · 쿠팡 업무 오류 { code, message } ·
+//     쿠팡 게이트웨이 오류 { error:'FORBIDDEN', status:403, message } 를 한 모양으로 모은다
+//   - 재시도는 다시 부르면 결과가 달라질 수 있는 오류(속도 제한 429 · 5xx · 프록시 500)에만.
+//     IP 미허용(FORBIDDEN/403) · 인증(401) · 없음(404) 은 다시 불러도 같으므로 바로 실패시킨다
+// ══════════════════════════════════════════════════════════════════
+
+/** 속도 제한 응답 문구 — status 없이 message 만 오는 경우의 보조 판단 */
+const RATE_LIMIT_MESSAGE_PATTERN = /rate|limit|too many/i
+
+/** 쿠팡 프록시 호출 실패 — 원인 코드·상태를 함께 담아 화면에서 구분할 수 있게 한다 */
+export class CoupangApiError extends Error {
+  /** 쿠팡 본문의 error(게이트웨이: FORBIDDEN 등) 또는 code(업무 오류: ERROR 등). 프록시 실패면 null */
+  readonly code: string | null
+  /** 쿠팡 본문의 status(403 등). 프록시 실패면 프록시 HTTP status */
+  readonly status: number | null
+  /** 다시 부르면 성공할 수 있는 오류인지 (속도 제한 · 서버 오류) */
+  readonly retryable: boolean
+
+  constructor(message: string, info: { code: string | null; status: number | null; retryable: boolean }) {
+    super(message)
+    this.name = 'CoupangApiError'
+    this.code = info.code
+    this.status = info.status
+    this.retryable = info.retryable
+  }
+
+  /** 쿠팡 게이트웨이 403 — 등록되지 않은 IP 에서 호출했을 때 (WING 에 IP 등록 필요) */
+  get isForbidden(): boolean {
+    return this.status === 403 || this.code === 'FORBIDDEN'
+  }
+}
+
+/** 재시도해 볼 만한 오류인지 — 429 · 5xx · 속도 제한 문구 */
+function isRetryableFailure(status: number | null, message: string): boolean {
+  if (status === 429 || (status != null && status >= 500)) return true
+  return RATE_LIMIT_MESSAGE_PATTERN.test(message)
+}
+
+/**
+ * 실패한 프록시 응답 → CoupangApiError (성공 여부 판단은 호출 쪽에서 한다)
+ * @param json        프록시 응답 본문 { success, data } 또는 { success:false, error }
+ * @param fallbackMsg 본문에 메시지가 없을 때 쓸 문구
+ * @param httpStatus  프록시 HTTP status — 프록시 실패(500 = 쿠팡 비JSON/네트워크 오류)의 재시도 판단용
+ */
+export function toCoupangApiError(json: any, fallbackMsg: string, httpStatus?: number): CoupangApiError {
+  // 프록시 레벨 실패 — 400/401 은 요청 자체 문제라 재시도하지 않는다
+  if (!json?.success) {
+    const status = httpStatus ?? null
+    const message: string = json?.error || fallbackMsg
+    return new CoupangApiError(message, { code: null, status, retryable: isRetryableFailure(status, message) })
+  }
+
+  // 쿠팡 레벨 실패 — 게이트웨이 오류는 error/status, 업무 오류는 code 로 온다
+  const body = json.data ?? {}
+  const code: string | null =
+    (typeof body.error === 'string' && body.error) ||
+    (typeof body.code === 'string' && body.code) ||
+    null
+  const statusNum = Number(body.status)
+  const status = Number.isFinite(statusNum) && statusNum > 0 ? statusNum : null
+  const message: string = body.message || fallbackMsg
+  return new CoupangApiError(message, { code, status, retryable: isRetryableFailure(status, message) })
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -123,17 +189,19 @@ export async function fetchAllRgProducts(
 
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
 
-// ── 상품 상세 조회 (단건, retry with exponential backoff) ──────────────
+// ── 상품 상세 조회 (단건, 속도 제한 오류만 retry with exponential backoff) ──
 
 /**
  * 로켓그로스 상품 상세 조회 (단건)
- * - 쿠팡 rate limit(초당 5회) 초과 시 500 반환 → 재시도
+ * - 쿠팡 rate limit(초당 5회) 초과 → 429 또는 프록시 500 → 재시도
  * - 최대 3회, 대기 시간 1초 → 2초 → 4초 (exponential backoff)
+ * - IP 미허용(403)·401·404 처럼 다시 불러도 같은 오류는 재시도 없이 바로 CoupangApiError 를 던진다
+ *   (쿠팡 message 를 그대로 담는다 — 예: "Your ip address ... is not allowed")
  */
 export async function fetchRgProductDetail(
   sellerProductId: number,
 ): Promise<CoupangProductDetail> {
-  for (let attempt = 0; attempt <= RETRY_MAX; attempt++) {
+  for (let attempt = 0; ; attempt++) {
     const res = await fetch(`/api/coupang/rg-product/${sellerProductId}`, {
       headers: getCoupangHeaders(),
     })
@@ -144,19 +212,17 @@ export async function fetchRgProductDetail(
       return json.data.data
     }
 
-    // 마지막 시도였으면 에러 throw
-    if (attempt === RETRY_MAX) {
-      throw new Error(json.error || json.data?.message || '상품 상세 조회 실패')
+    // 재시도해도 같은 결과인 오류이거나 마지막 시도였으면 throw
+    const error = toCoupangApiError(json, '상품 상세 조회 실패', res.status)
+    if (!error.retryable || attempt >= RETRY_MAX) {
+      throw error
     }
 
     // 재시도 대기 (exponential backoff: 1s → 2s → 4s)
     const waitMs = RETRY_BASE_MS * Math.pow(2, attempt)
-    console.warn(`[fetchRgProductDetail] ${sellerProductId} 재시도 ${attempt + 1}/${RETRY_MAX} (${waitMs}ms 후)`)
+    console.warn(`[fetchRgProductDetail] ${sellerProductId} 재시도 ${attempt + 1}/${RETRY_MAX} (${waitMs}ms 후) — ${error.message}`)
     await delay(waitMs)
   }
-
-  // TypeScript 타입 안전성용 (실제로 도달하지 않음)
-  throw new Error('상품 상세 조회 실패')
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -175,15 +241,15 @@ export interface VendorItemInventory {
   onSale: boolean             // 해석된 '판매중' 여부
 }
 
-/** 공통 응답 검증 — { success, data: { code, message, data } } */
+/** 공통 응답 검증 — { success, data: { code, message, data } } (오류는 CoupangApiError 로 — 코드·상태 포함) */
 function assertCoupangOk(json: any, fallbackMsg: string): any {
   // 프록시 레벨 실패
   if (!json?.success) {
-    throw new Error(json?.error || fallbackMsg)
+    throw toCoupangApiError(json, fallbackMsg)
   }
   // 쿠팡 API 레벨 실패 (code !== SUCCESS)
   if (json.data?.code && json.data.code !== 'SUCCESS') {
-    throw new Error(json.data?.message || fallbackMsg)
+    throw toCoupangApiError(json, fallbackMsg)
   }
   return json.data
 }
