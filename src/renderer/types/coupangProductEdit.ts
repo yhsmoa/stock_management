@@ -55,6 +55,11 @@ export interface ProductEdits {
   /** 검색태그 — 쿠팡은 옵션마다 있지만 화면에서는 상품 단위로 고쳐 모든 옵션에 넣는다 */
   searchTags?: string[]
   items: Record<string, ItemEdits>
+  /**
+   * 로켓그로스 입고 불가 조건 동의 — 로켓·하이브리드 상품을 수정하려면 쿠팡이 요구한다
+   * (additionalInformationForRocketGrowth.legalAgreement = 'AGREE'). 사용자가 화면에서 직접 체크해야만 보낸다.
+   */
+  rocketGrowthAgreement?: boolean
 }
 
 // ── 화면용 보기 모델 (상세 응답 → 수정 폼) ──────────────────────

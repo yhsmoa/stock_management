@@ -38,6 +38,9 @@ const COMMON_COURIERS: [string, string][] = [
   ['LOGEN', '로젠택배'],
   ['KDEXP', '경동택배'],
 ]
+/** 로켓그로스 상품 수정 문서 (입고 불가 조건 동의 legalAgreement 설명이 있는 곳) */
+const ROCKET_GROWTH_TERMS_URL = 'https://developers.coupang.com/ko/api/rocket-growth/modify-product-rocket-growth-rocket-growthmarketplace-hybrid-products'
+
 const OFFER_CONDITION_LABELS: Record<string, string> = {
   NEW: '새상품', REFURBISHED: '리퍼', USED_BEST: '중고(최상)', USED_GOOD: '중고(상)', USED_NORMAL: '중고(중)',
 }
@@ -323,13 +326,32 @@ const CoupangProductEditForm: React.FC<Props> = ({ edit }) => {
       {/* ══ 재승인 수정 보내기 ══ */}
       <div className="cp-edit-submit">
         {edit.productProblems.length > 0 && <div className="cp-inline-error">{edit.productProblems.join(' · ')}</div>}
+        {/* 로켓·하이브리드 상품은 쿠팡이 '로켓그로스 입고 불가 조건' 동의를 요구한다 — 사용자가 직접 체크해야만 보낸다 */}
+        {edit.needsRocketGrowthAgreement && productChanged && (
+          <label className="cp-edit-agree">
+            <input
+              type="checkbox"
+              checked={edit.edits.rocketGrowthAgreement === true}
+              disabled={locked}
+              onChange={(e) => edit.setRocketGrowthAgreement(e.target.checked)}
+            />
+            <span>
+              쿠팡 <b>로켓그로스 입고 불가 조건</b>을 확인했고 동의합니다. 로켓그로스 상품을 수정하려면 쿠팡이 이 동의를 요구합니다.
+              {' '}
+              <a href={ROCKET_GROWTH_TERMS_URL} target="_blank" rel="noreferrer">쿠팡 안내 ↗</a>
+            </span>
+          </label>
+        )}
         <div className="cp-edit-submit-row">
           <span className="cp-edit-hint">{productChanged ? `바꾼 칸 ${edit.productChanges.length}개` : '상품 정보 · 옵션에서 바꾼 칸이 없습니다'}</span>
           <button type="button" className="cp-btn" disabled={!!saving || (!productChanged && !edit.shippingChanged)} onClick={edit.resetEdits}>변경 취소</button>
           <button
             type="button"
             className="cp-btn cp-btn-primary"
-            disabled={locked || !productChanged || edit.productProblems.length > 0}
+            disabled={
+              locked || !productChanged || edit.productProblems.length > 0
+              || (edit.needsRocketGrowthAgreement && edit.edits.rocketGrowthAgreement !== true)
+            }
             onClick={() => void edit.submitProduct()}
           >
             {saving === 'product' ? '요청 중…' : '쿠팡에 수정 요청 (승인요청 포함)'}

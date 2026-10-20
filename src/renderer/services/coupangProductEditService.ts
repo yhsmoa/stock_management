@@ -35,6 +35,8 @@ export const EDIT_LOCKED_STATUSES = ['임시저장', '임시저장중', '승인�
 const TRANSIENT_STATUSES = ['임시저장', '임시저장중']
 const SETTLE_POLL_INTERVAL_MS = 1500   // 상태 다시 보기 간격
 const SETTLE_POLL_MAX_TRIES = 7        // 최대 약 10초 기다린다 (그 뒤엔 그때 상태로 저장)
+/** 쿠팡 로켓그로스 상품 수정 문서: additionalInformationForRocketGrowth.legalAgreement — 'AGREE' 가 아니면 처리 안 됨 */
+const ROCKET_GROWTH_LEGAL_AGREEMENT = 'AGREE'
 /** 하이브리드 응답의 채널 데이터 키 — 상세는 소문자 p, 목록은 대문자 P 로 온다 */
 const MP_DATA_KEYS = ['marketplaceItemData', 'marketPlaceItemData'] as const
 const RG_DATA_KEY = 'rocketGrowthItemData'
@@ -239,8 +241,25 @@ export function mergeProductEdits(raw: Json, edits: ProductEdits): Json {
     for (const it of items) it.searchTags = tags
   }
 
+  // ── 로켓그로스 입고 불가 조건 동의 — 로켓·하이브리드 상품은 쿠팡이 요구한다 (2026-10-20 운영 실측:
+  //    빠지면 "로켓그로스 입고 불가 조건을 확인하시고 동의해주세요" 로 거절). 사용자가 체크한 경우만 넣는다 ──
+  if (hasRocketGrowth(raw)) {
+    if (edits.rocketGrowthAgreement !== true) {
+      throw new Error('로켓그로스 상품은 쿠팡의 "로켓그로스 입고 불가 조건" 동의가 있어야 수정할 수 있습니다. 동의 체크 후 다시 보내 주세요.')
+    }
+    body.additionalInformationForRocketGrowth = {
+      ...(body.additionalInformationForRocketGrowth ?? {}),
+      legalAgreement: ROCKET_GROWTH_LEGAL_AGREEMENT,
+    }
+  }
+
   body.requested = true
   return body
+}
+
+/** 로켓그로스 옵션이 하나라도 있는 상품인지 (로켓 전용 · 하이브리드) */
+export function hasRocketGrowth(detail: Json): boolean {
+  return Array.isArray(detail.items) && detail.items.some((it: Json) => !!it?.[RG_DATA_KEY])
 }
 
 /** 바뀐 칸이 하나라도 있는지 */

@@ -135,6 +135,11 @@ export function useCoupangProductEdit(userId: string, sellerProductId: string, o
     })
   }, [view])
 
+  /** 로켓그로스 입고 불가 조건 동의 — 사용자가 직접 체크 (요청마다, 폼을 다시 받으면 해제된다) */
+  const setRocketGrowthAgreement = useCallback((checked: boolean) => {
+    setEdits((prev) => ({ ...prev, rocketGrowthAgreement: checked }))
+  }, [])
+
   const setShipping = useCallback(<K extends keyof ShippingValues>(field: K, value: ShippingValues[K]) => {
     setShippingEdits((prev) => {
       const next = { ...prev }
@@ -233,7 +238,8 @@ export function useCoupangProductEdit(userId: string, sellerProductId: string, o
   return {
     view, loading, loadError, reload: load, lockReason,
     edits, infoValue, searchTagsValue, shippingValue,
-    setInfo, setSearchTags, setItemField, setChannelField, setShipping,
+    setInfo, setSearchTags, setItemField, setChannelField, setShipping, setRocketGrowthAgreement,
+    needsRocketGrowthAgreement: !!view && view.kind !== 'mp',
     productChanges, productProblems, shippingChanged: Object.keys(shipping).length > 0, shippingProblems,
     saving, message, submitShipping, submitProduct, resetEdits,
   }
