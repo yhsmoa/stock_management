@@ -35,6 +35,16 @@ import { toLabelPrintItems, applyManualComposition } from '../services/labelServ
 import { compareOptionNames } from '../components/coupang/optionSort'
 import { inlineEditBlock, type InlineField } from '../components/coupang/editRules'
 import { priceInputProblem, priceLimitViolation } from '../components/coupang/priceRules'
+import {
+  startSyncRun,
+  updateSyncRun,
+  finishSyncRun,
+  fetchLatestSyncRuns,
+  runViewStatus,
+  RUN_WRITE_INTERVAL_MS,
+  type SyncRun,
+  type SyncRunKind,
+} from '../services/coupangSyncRunService'
 import type { LabelPrintItem } from '../services/labelPrintService'
 import type {
   CoupangProductRow,
@@ -53,6 +63,11 @@ import type {
 // ── 상수 ──────────────────────────────────────────────────────────
 export const PRODUCTS_PER_PAGE = 50        // 한 페이지 상품 수 (옵션은 그 상품들 것 전부)
 const STATUS_CHECK_STALE_BATCH = 500       // [오래된 순 확인] 한 번에 확인할 옵션 수 (≈ 100초)
+
+/** 다른 곳에서 동기화가 도는 동안 카드 진행률을 다시 읽는 간격 */
+const REMOTE_RUN_POLL_MS = 5000
+/** 실행 기록을 남기는 진행 종류 (가격 변경 · 엑셀은 기록하지 않는다) */
+const RECORDED_KINDS: ReadonlySet<SyncProgress['kind']> = new Set<SyncProgress['kind']>(['list', 'detail', 'status'])
 
 /** 옵션을 겨냥한 검색이면 결과 상품을 펼쳐서 보여 준다 (찾는 옵션이 바로 보이게) */
 const OPTION_TARGET_SEARCH: ReadonlySet<SearchField> = new Set<SearchField>(['optionId', 'barcode', 'itemCode'])
@@ -110,7 +125,16 @@ export function useCoupangManagement() {
   const [excelUpload, setExcelUpload] = useState<{ percent: number; status: string } | null>(null)
   const [noteEditing, setNoteEditing] = useState<{ optionId: string; value: string } | null>(null)
 
+  // ── 동기화 실행 기록 (카드 맨 아래 · 다른 창 진행 감지) ──
+  const [latestRuns, setLatestRuns] = useState<Partial<Record<SyncRunKind, SyncRun>>>({})
+  /** 이 화면이 지금 기록 중인 실행 — id 는 insert 가 끝나야 나와서 Promise 로 든다 */
+  const runRef = useRef<{ idPromise: Promise<string | null>; done: number; total: number; message: string; title: string; lastWrite: number } | null>(null)
+
   const busy = !!progress?.running || !!excelUpload
+  /** 다른 창 · 다른 화면에서 같은 계정의 동기화가 돌고 있음 (기록이 최근에 갱신된 running) */
+  const remoteRunning = !progress?.running && Object.values(latestRuns).some((r) => r && runViewStatus(r) === 'running')
+  /** 동기화 버튼 잠금 — 이 화면에서 진행 중이거나, 다른 곳에서 진행 중 (같은 동기화를 두 번 돌리지 않도록) */
+  const syncLocked = busy || remoteRunning
 
   // ══════════════════════════════════════════════════════════════
   // 조회
@@ -153,7 +177,11 @@ export function useCoupangManagement() {
         setSalesCounts(counts)
 
         const summary = await fetchSyncSummary(userId)
-        if (!cancelled) setSyncSummary(summary)
+        if (cancelled) return
+        setSyncSummary(summary)
+
+        const runs = await fetchLatestSyncRuns(userId)
+        if (!cancelled) setLatestRuns(runs)
       } catch (err) {
         if (!cancelled) setLoadError(err instanceof Error ? err.message : '조회 실패')
       } finally {
@@ -164,6 +192,27 @@ export function useCoupangManagement() {
   }, [userId, filters, pageCursor, reloadKey]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const reload = useCallback(() => setReloadKey((k) => k + 1), [])
+
+  // ── 동기화 중 창 닫기 경고 — 닫으면 진행 중인 호출이 끊긴다 (받은 것은 남고, 다시 누르면 이어서 받는다) ──
+  const syncRunning = !!progress?.running
+  useEffect(() => {
+    if (!syncRunning) return
+    const onBeforeUnload = (e: BeforeUnloadEvent) => { e.preventDefault(); e.returnValue = '' }
+    window.addEventListener('beforeunload', onBeforeUnload)
+    return () => window.removeEventListener('beforeunload', onBeforeUnload)
+  }, [syncRunning])
+
+  // ── 다른 곳에서 동기화가 도는 동안: 기록을 몇 초마다 다시 읽어 카드 진행률을 갱신, 끝나면 목록 다시 읽기 ──
+  useEffect(() => {
+    if (!userId || !remoteRunning) return
+    const timer = window.setInterval(async () => {
+      const runs = await fetchLatestSyncRuns(userId)
+      setLatestRuns(runs)
+      const stillRunning = Object.values(runs).some((r) => r && runViewStatus(r) === 'running')
+      if (!stillRunning) reload()
+    }, REMOTE_RUN_POLL_MS)
+    return () => window.clearInterval(timer)
+  }, [userId, remoteRunning, reload])
 
   // ── 페이지 이동 (커서) ──
   const resetPages = useCallback(() => setCursors([null]), [])
@@ -270,21 +319,49 @@ export function useCoupangManagement() {
   // 동기화 진행 공통
   // ══════════════════════════════════════════════════════════════
 
-  const startProgress = useCallback((kind: SyncProgress['kind'], title: string, message: string): AbortController => {
+  const startProgress = useCallback((kind: SyncProgress['kind'], title: string, message: string, record = true): AbortController => {
     const controller = new AbortController()
     abortRef.current = controller
     setProgress({ kind, title, running: true, done: 0, total: 0, message, errors: [], result: null })
+    // 실행 기록 시작 (목록 · 상세 · 판매상태만) — 기록 실패는 동기화를 막지 않는다
+    runRef.current = userId && record && RECORDED_KINDS.has(kind)
+      ? { idPromise: startSyncRun(userId, kind as SyncRunKind, title), done: 0, total: 0, message, title, lastWrite: Date.now() }
+      : null
     return controller
-  }, [])
+  }, [userId])
 
   const updateProgress = useCallback((patch: Partial<SyncProgress>) => {
     setProgress((p) => (p ? { ...p, ...patch } : p))
+    // 실행 기록 갱신 — RUN_WRITE_INTERVAL_MS 마다 한 번만 (매건 쓰면 DB 호출이 쿠팡 호출만큼 늘어난다)
+    const run = runRef.current
+    if (!run) return
+    if (patch.done !== undefined) run.done = patch.done
+    if (patch.total !== undefined) run.total = patch.total
+    if (patch.message !== undefined) run.message = patch.message
+    if (patch.title !== undefined) run.title = patch.title
+    const now = Date.now()
+    if (now - run.lastWrite < RUN_WRITE_INTERVAL_MS) return
+    run.lastWrite = now
+    const snapshot = { done: run.done, total: run.total, message: run.message, title: run.title }
+    void run.idPromise.then((id) => updateSyncRun(id, snapshot))
   }, [])
 
   const finishProgress = useCallback((result: string, errors: string[] = []) => {
+    const aborted = !!abortRef.current?.signal.aborted
     abortRef.current = null
     setProgress((p) => (p ? { ...p, running: false, result, errors: [...p.errors, ...errors] } : p))
-    reload()
+    // 실행 기록 끝 — 중단 / 실패 / 완료 (기록이 끝난 뒤 목록을 다시 읽어야 카드에 최신 상태가 뜬다)
+    const run = runRef.current
+    runRef.current = null
+    if (run) {
+      const status = aborted ? 'aborted' : result === '실패' ? 'failed' : 'done'
+      const message = errors.length ? `${result} · 실패 ${errors.length}건` : result
+      void run.idPromise
+        .then((id) => finishSyncRun(id, status, { done: run.done, total: run.total, message }))
+        .finally(() => reload())
+    } else {
+      reload()
+    }
   }, [reload])
 
   const abortSync = useCallback(() => {
@@ -296,7 +373,7 @@ export function useCoupangManagement() {
 
   // ── 1) 목록 동기화 → 새 상품은 바로 상세까지 ──
   const runListSync = useCallback(async () => {
-    if (!userId || busy) return
+    if (!userId || syncLocked) return
     const controller = startProgress('list', '상품 목록 동기화', '시작…')
     try {
       const result = await syncProductList(userId, (message) => updateProgress({ message }))
@@ -318,11 +395,11 @@ export function useCoupangManagement() {
     } catch (err) {
       finishProgress('실패', [err instanceof Error ? err.message : String(err)])
     }
-  }, [userId, busy, startProgress, updateProgress, finishProgress])
+  }, [userId, syncLocked, startProgress, updateProgress, finishProgress])
 
   // ── 2) 상세 동기화 — 범위 선택 모달 → 실행 ──
   const openDetailSync = useCallback(async () => {
-    if (!userId || busy) return
+    if (!userId || syncLocked) return
     setDetailScope({ open: true, counts: null })
     try {
       // 순서대로 — 큰 계정에서 동시에 세면 statement timeout (CLAUDE.md 규모 주의)
@@ -333,13 +410,14 @@ export function useCoupangManagement() {
       console.error('[openDetailSync] 대상 조회 실패:', err)
       setDetailScope({ open: false, counts: null })
     }
-  }, [userId, busy])
+  }, [userId, syncLocked])
 
   const closeDetailScope = useCallback(() => setDetailScope({ open: false, counts: null }), [])
 
-  const runDetailSync = useCallback(async (ids: string[], title = '상세 받기') => {
-    if (!userId || busy || ids.length === 0) return
-    const controller = startProgress('detail', title, `상품 ${ids.length.toLocaleString()}개의 옵션·가격·재고·이미지를 받습니다`)
+  /** @param record 실행 기록을 남길지 — 상품 1개 다시 받기는 남기지 않는다 (카드의 대량 실행 기록을 가리지 않게) */
+  const runDetailSync = useCallback(async (ids: string[], title = '상세 받기', record = true) => {
+    if (!userId || syncLocked || ids.length === 0) return
+    const controller = startProgress('detail', title, `상품 ${ids.length.toLocaleString()}개의 옵션·가격·재고·이미지·고시정보를 받습니다`, record)
     updateProgress({ total: ids.length })
     try {
       const d = await syncProductDetails(userId, ids, (done, total) => updateProgress({ done, total }), controller.signal)
@@ -350,7 +428,7 @@ export function useCoupangManagement() {
     } catch (err) {
       finishProgress('실패', [err instanceof Error ? err.message : String(err)])
     }
-  }, [userId, busy, startProgress, updateProgress, finishProgress])
+  }, [userId, syncLocked, startProgress, updateProgress, finishProgress])
 
   const confirmDetailScope = useCallback((scope: DetailSyncScope) => {
     const counts = detailScope.counts
@@ -364,11 +442,11 @@ export function useCoupangManagement() {
     }
   }, [detailScope.counts, runDetailSync])
 
-  const runDetailForProduct = useCallback((itemId: string) => runDetailSync([itemId], '이 상품 다시 받기'), [runDetailSync])
+  const runDetailForProduct = useCallback((itemId: string) => runDetailSync([itemId], '이 상품 다시 받기', false), [runDetailSync])
 
   // ── 3) 판매상태 확인 ──
   const runStatusCheck = useCallback(async (target: 'selected' | 'page' | 'stale') => {
-    if (!userId || busy) return
+    if (!userId || syncLocked) return
     let ids: string[]
     if (target === 'selected') ids = selectedRows.map((r) => r.option_id)
     else if (target === 'page') ids = rows.map((r) => r.option_id)
@@ -382,7 +460,7 @@ export function useCoupangManagement() {
     } catch (err) {
       finishProgress('실패', [err instanceof Error ? err.message : String(err)])
     }
-  }, [userId, busy, selectedRows, rows, startProgress, updateProgress, finishProgress])
+  }, [userId, syncLocked, selectedRows, rows, startProgress, updateProgress, finishProgress])
 
   // ══════════════════════════════════════════════════════════════
   // 변경 작업 (가격 · 재고 · 할인율 기준가 · 판매 재개/중지)
@@ -584,7 +662,7 @@ export function useCoupangManagement() {
     // 선택
     selected, selectedRows, toggleOption, toggleRows, clearSelection,
     // 동기화
-    busy, progress, abortSync, closeProgress,
+    busy, syncLocked, latestRuns, progress, abortSync, closeProgress,
     runListSync, openDetailSync, detailScope, closeDetailScope, confirmDetailScope, runDetailForProduct, runStatusCheck,
     // 변경
     changeKind, openChange, closeChange, applyChange, applyInline,

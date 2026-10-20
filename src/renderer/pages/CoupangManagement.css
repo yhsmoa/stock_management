@@ -103,10 +103,19 @@
   border-radius: 10px;
   padding: 14px 16px;
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
+  flex-direction: column;
+  gap: 10px;
 }
+.cp-sync-card-main { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+/* 카드 맨 아래 — 어디까지 받았는지 (실행 기록 · 받은 비율) */
+.cp-sync-card-foot { border-top: 1px solid var(--cp-line-soft); padding-top: 8px; margin-top: auto; display: flex; flex-direction: column; gap: 6px; }
+.cp-sync-run { font-size: 12px; color: var(--cp-muted); line-height: 1.45; display: flex; flex-direction: column; gap: 4px; }
+.cp-sync-run.is-running { color: #1D4ED8; }
+.cp-sync-run.is-warn { color: var(--cp-amber-text); }
+.cp-sync-coverage { display: flex; flex-direction: column; gap: 3px; }
+.cp-sync-coverage-head { display: flex; justify-content: space-between; font-size: 12px; color: var(--cp-text-2); }
+.cp-sync-bar { height: 6px; border-radius: 999px; background: var(--cp-line-soft); overflow: hidden; }
+.cp-sync-bar-fill { height: 100%; background: var(--cp-blue); border-radius: 999px; transition: width .3s ease; }
 .cp-sync-card-body { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
 .cp-sync-card-step { font-size: 12px; color: var(--cp-text-2); font-weight: 600; }
 .cp-sync-card-value { font-size: 15px; font-weight: 600; }

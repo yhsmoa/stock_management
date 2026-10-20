@@ -124,6 +124,7 @@ export type SalesCounts = Record<SalesFilter, number>
 export interface CoupangSyncSummary {
   totalRows: number
   detailMissing: number        // detail_synced_at 이 없는 행
+  noticesReceived: number      // 고시정보를 받은 행 (notices 가 null 이 아님)
   statusUnchecked: number      // 판매상태 값이 없는 행 (API 로도 엑셀로도 받은 적 없음)
   lastDetailAt: string | null
   lastStatusAt: string | null  // API 확인 · 엑셀 반영 중 최근

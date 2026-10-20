@@ -122,6 +122,7 @@ function chunk<T>(arr: readonly T[], n: number): T[][] {
 interface FilterableQuery {
   eq: (column: string, value: unknown) => unknown
   is: (column: string, value: null) => unknown
+  not: (column: string, operator: string, value: unknown) => unknown
   or: (filters: string) => unknown
   ilike: (column: string, pattern: string) => unknown
 }
@@ -349,13 +350,14 @@ export async function fetchSyncSummary(userId: string): Promise<CoupangSyncSumma
   // 동시에 보내면 큰 계정에서 statement timeout — 순서대로
   const totalRows = await countWhere(() => undefined)
   const detailMissing = await countWhere((q) => q.is('detail_synced_at', null))
+  const noticesReceived = await countWhere((q) => q.not('notices', 'is', null))
   const statusUnchecked = await countWhere((q) => q.is('sales_status', null))
   const lastDetailAt = await latest('detail_synced_at')
   const lastCheckedAt = await latest('status_checked_at')
   const lastExcelAt = await latest('excel_synced_at')
 
   const lastStatusAt = [lastCheckedAt, lastExcelAt].filter((v): v is string => !!v).sort().pop() ?? null
-  return { totalRows, detailMissing, statusUnchecked, lastDetailAt, lastStatusAt, lastExcelAt }
+  return { totalRows, detailMissing, noticesReceived, statusUnchecked, lastDetailAt, lastStatusAt, lastExcelAt }
 }
 
 // ── 전체 행 조회 (동기화 비교 · 내보내기) ───────────────────────────
@@ -369,7 +371,7 @@ async function fetchAllRows<T>(
   select: string,
   onProgress?: (done: number, total: number) => void,
   /** 추가 조건 (건수 · 페이지 조회에 똑같이 건다) */
-  where?: (q: FilterableQuery & { not: (c: string, op: string, v: unknown) => unknown }) => void,
+  where?: (q: FilterableQuery) => void,
 ): Promise<T[]> {
   const countQuery = supabase
     .from(TABLE)

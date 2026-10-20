@@ -60,6 +60,8 @@ const CoupangManagement: React.FC = () => {
       {/* ── 동기화 3단계 ── */}
       <CoupangSyncCards
         summary={s.syncSummary}
+        latestRuns={s.latestRuns}
+        locked={s.syncLocked}
         busy={s.busy}
         onListSync={s.runListSync}
         onDetailSync={s.openDetailSync}
