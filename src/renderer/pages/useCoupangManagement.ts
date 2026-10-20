@@ -33,6 +33,7 @@ import {
 } from '../services/coupangProductService'
 import { toLabelPrintItems, applyManualComposition } from '../services/labelService'
 import { compareOptionNames } from '../components/coupang/optionSort'
+import { isAbortError } from '../utils/rateLimitQueue'
 import { inlineEditBlock, type InlineField } from '../components/coupang/editRules'
 import { priceInputProblem, priceLimitViolation } from '../components/coupang/priceRules'
 import {
@@ -366,7 +367,7 @@ export function useCoupangManagement() {
 
   const abortSync = useCallback(() => {
     abortRef.current?.abort()
-    updateProgress({ message: '중단하는 중… (진행 중인 요청은 끝까지 기다립니다)' })
+    updateProgress({ message: '중단하는 중… (목록은 바로 멈추고, 상세는 보내 둔 몇 건만 끝까지 기다립니다)' })
   }, [updateProgress])
 
   const closeProgress = useCallback(() => { if (!progress?.running) setProgress(null) }, [progress])
@@ -376,9 +377,9 @@ export function useCoupangManagement() {
     if (!userId || syncLocked) return
     const controller = startProgress('list', '상품 목록 동기화', '시작…')
     try {
-      const result = await syncProductList(userId, (message) => updateProgress({ message }))
+      const result = await syncProductList(userId, (message) => updateProgress({ message }), controller.signal)
       const newProducts = [...new Set([...result.needDetail, ...result.newRgProducts])]
-      let detailLine = ''
+      let detailLine = result.aborted ? ' · 저장 도중 중단됨 (앞부분만 저장)' : ''
       if (newProducts.length > 0 && !controller.signal.aborted) {
         updateProgress({ title: '새 상품 상세 받기', message: `새로 들어온 상품 ${newProducts.length.toLocaleString()}개의 옵션·가격·재고를 받습니다`, done: 0, total: newProducts.length })
         const d = await syncProductDetails(userId, newProducts, (done, total) => updateProgress({ done, total }), controller.signal)
@@ -393,7 +394,9 @@ export function useCoupangManagement() {
         result.errors,
       )
     } catch (err) {
-      finishProgress('실패', [err instanceof Error ? err.message : String(err)])
+      // 목록을 받는 중 [중단] — 저장 전이라 남는 것이 없다
+      if (isAbortError(err)) finishProgress('중단됨 — 쿠팡 목록을 받는 중에 멈춰 저장한 것이 없습니다. 다음 [목록 받기] 는 목록부터 다시 받습니다.')
+      else finishProgress('실패', [err instanceof Error ? err.message : String(err)])
     }
   }, [userId, syncLocked, startProgress, updateProgress, finishProgress])
 

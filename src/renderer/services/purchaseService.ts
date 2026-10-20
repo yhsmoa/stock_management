@@ -8,6 +8,7 @@
 
 import * as XLSX from 'xlsx'
 import { supabase } from './supabase'
+import { throwIfAborted } from '../utils/rateLimitQueue'
 import type {
   RgItem,
   RgItemData,
@@ -129,16 +130,18 @@ export function toCoupangApiError(json: any, fallbackMsg: string, httpStatus?: n
 
 // ── 상품 목록 (단일 페이지) ──────────────────────────────────────────
 
-/** 상품 목록 한 페이지 조회 (nextToken 기반) */
+/** 상품 목록 한 페이지 조회 (nextToken 기반) — signal 로 중단하면 진행 중인 요청도 바로 끊는다 */
 async function fetchRgProductPage(
   nextToken?: string,
   pageSize = LIST_PAGE_SIZE,
+  signal?: AbortSignal,
 ): Promise<{ items: CoupangProductListItem[]; nextToken: string | null }> {
   const params = new URLSearchParams({ pageSize: String(pageSize) })
   if (nextToken) params.set('nextToken', nextToken)
 
   const res = await fetch(`/api/coupang/rg-products?${params}`, {
     headers: getCoupangHeaders(),
+    signal,
   })
   const json = await res.json()
 
@@ -160,16 +163,19 @@ async function fetchRgProductPage(
 /**
  * nextToken을 순회하며 전체 로켓그로스 상품 목록 수집
  * @param onProgress - 진행 콜백 (수집된 상품 수)
+ * @param signal     - 중단 (상품관리 [목록 받기] 의 [중단]) — 다음 페이지를 받지 않고 AbortError
  */
 export async function fetchAllRgProducts(
   onProgress?: (count: number) => void,
+  signal?: AbortSignal,
 ): Promise<CoupangProductListItem[]> {
   const pages: CoupangProductListItem[][] = []
   let nextToken: string | undefined
   let page = 0
 
   do {
-    const result = await fetchRgProductPage(nextToken, LIST_PAGE_SIZE)
+    throwIfAborted(signal)
+    const result = await fetchRgProductPage(nextToken, LIST_PAGE_SIZE, signal)
     pages.push(result.items)
     nextToken = result.nextToken ?? undefined
     page++

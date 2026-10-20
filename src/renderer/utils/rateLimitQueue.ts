@@ -82,7 +82,15 @@ export async function runRateLimited<T, R>(
   return results
 }
 
-/** AbortError 인지 */
+/** AbortError 인지 (fetch 의 signal 중단 DOMException 도 name 이 'AbortError') */
 export function isAbortError(reason: unknown): boolean {
   return reason instanceof Error && reason.name === 'AbortError'
+}
+
+/** 중단됐으면 AbortError 를 던진다 — 페이지를 차례로 받는 루프(목록 받기 등)의 단계 사이에서 쓴다 */
+export function throwIfAborted(signal: AbortSignal | undefined): void {
+  if (!signal?.aborted) return
+  const err = new Error('중단됨')
+  err.name = 'AbortError'
+  throw err
 }

@@ -18,7 +18,7 @@ import {
   getCoupangHeaders,
   getRepresentativeImageUrl,
 } from './purchaseService'
-import { runRateLimited, COUPANG_RATE_LIMIT, isAbortError } from '../utils/rateLimitQueue'
+import { runRateLimited, COUPANG_RATE_LIMIT, isAbortError, throwIfAborted } from '../utils/rateLimitQueue'
 import type {
   CoupangProductRow,
   CoupangProductFilters,
@@ -442,15 +442,16 @@ export async function deleteProductRow(userId: string, optionId: string): Promis
 
 // ── 일반 목록 (businessTypes 없음) — 전체 페이지 ──
 //   실측(2026-10-20): registrationType 'NORMAL' 상품만 오고 items 가 없다. 하이브리드는 로켓그로스 목록에서 온다.
-async function fetchAllMpProducts(onProgress?: (count: number) => void): Promise<ApiListProduct[]> {
+async function fetchAllMpProducts(onProgress?: (count: number) => void, signal?: AbortSignal): Promise<ApiListProduct[]> {
   const all: ApiListProduct[] = []
   let nextToken: string | null = null
   const seenTokens = new Set<string>()
 
   for (let page = 0; page < LIST_MAX_PAGES; page++) {
+    throwIfAborted(signal)   // [중단] — 다음 페이지를 받지 않는다 (진행 중인 요청은 signal 로 바로 끊긴다)
     const params = new URLSearchParams({ maxPerPage: String(LIST_PAGE_SIZE) })
     if (nextToken) params.set('nextToken', nextToken)
-    const res = await fetch(`/api/coupang/mp-products?${params}`, { headers: getCoupangHeaders() })
+    const res = await fetch(`/api/coupang/mp-products?${params}`, { headers: getCoupangHeaders(), signal })
     const body = assertProxyOk(await res.json(), '일반 상품 목록 조회 실패')
     const data = Array.isArray(body?.data) ? (body.data as ApiListProduct[]) : []
     all.push(...data)
@@ -528,17 +529,25 @@ export interface ListSyncResult {
   newRgProducts: string[]   // 이번에 처음 들어온 로켓그로스/하이브리드 상품
   notInCoupang: number      // DB 에는 있지만 두 목록 어디에도 없는 상품 수 (지우지 않는다)
   errors: string[]
+  /** 저장 도중 [중단] — 앞 배치까지만 저장됐다 (목록을 받는 중 중단은 AbortError 로 던진다) */
+  aborted: boolean
 }
 
+/**
+ * @param signal [중단] — 목록을 받는 중이면 진행 중인 요청까지 바로 끊고 AbortError (아무것도 저장하지 않음),
+ *               저장 중이면 지금 배치까지 저장하고 멈춘다 (aborted: true)
+ */
 export async function syncProductList(
   userId: string,
   onProgress?: (message: string) => void,
+  signal?: AbortSignal,
 ): Promise<ListSyncResult> {
   // ── STEP 1: 쿠팡 두 목록 ──
   onProgress?.('일반 상품 목록 받는 중…')
-  const mpList = await fetchAllMpProducts((n) => onProgress?.(`일반 상품 목록 ${n.toLocaleString()}개…`))
+  const mpList = await fetchAllMpProducts((n) => onProgress?.(`일반 상품 목록 ${n.toLocaleString()}개…`), signal)
   onProgress?.('로켓그로스 상품 목록 받는 중…')
-  const rgList = (await fetchAllRgProducts((n) => onProgress?.(`로켓그로스 상품 목록 ${n.toLocaleString()}개…`))) as unknown as ApiListProduct[]
+  const rgList = (await fetchAllRgProducts((n) => onProgress?.(`로켓그로스 상품 목록 ${n.toLocaleString()}개…`), signal)) as unknown as ApiListProduct[]
+  throwIfAborted(signal)
 
   // ── STEP 2: 기존 행 ──
   onProgress?.('기존 데이터 읽는 중…')
@@ -638,10 +647,14 @@ export async function syncProductList(
     toUpsert.push(row)
   }
 
+  throwIfAborted(signal)   // 기존 행을 읽는 동안 [중단] — 아직 저장 전
   const errors: string[] = []
   let upserted = 0
+  let aborted = false
   const batches = chunk(toUpsert, UPSERT_BATCH)
   for (let i = 0; i < batches.length; i++) {
+    // 저장 중 [중단] — 배치마다 독립이라 앞 배치까지만 저장하고 멈춰도 된다 (다음 목록 받기가 나머지를 저장)
+    if (signal?.aborted) { aborted = true; break }
     onProgress?.(`저장 중… ${Math.min((i + 1) * UPSERT_BATCH, toUpsert.length).toLocaleString()} / ${toUpsert.length.toLocaleString()}`)
     const { error } = await supabase.from(TABLE).upsert(batches[i], { onConflict: 'option_id', defaultToNull: false })
     if (error) {
@@ -667,6 +680,7 @@ export async function syncProductList(
     newRgProducts,
     notInCoupang,
     errors,
+    aborted,
   }
 }
 

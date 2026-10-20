@@ -54,7 +54,12 @@ const CoupangSyncModal: React.FC<Props> = ({ progress, onAbort, onClose }) => {
 
         <div className="cp-modal-foot">
           <div style={{ fontSize: 12, color: '#4B5563' }}>
-            {progress.running ? '중단해도 지금까지 저장한 것은 남습니다.' : '닫으면 목록을 다시 불러옵니다.'}
+            {!progress.running
+              ? '닫으면 목록을 다시 불러옵니다.'
+              // 목록 받기의 첫 단계(쿠팡 목록 전체를 받는 중)는 total 이 0 — 아직 저장 전이다
+              : progress.kind === 'list' && progress.total === 0
+                ? '중단하면 바로 멈춥니다. 쿠팡 목록을 받는 중이라 아직 저장한 것은 없습니다.'
+                : '중단해도 지금까지 저장한 것은 남습니다.'}
           </div>
           <div className="cp-modal-actions">
             {progress.running
