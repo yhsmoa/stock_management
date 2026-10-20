@@ -1,7 +1,9 @@
 /* ================================================================
    상품관리 — 목록 (상품 묶음 머리줄 + 옵션 줄) · 페이지 이동
-   - 행 단위 페이지(100행)를 등록상품 ID 로 묶어 보여 준다. 묶음 머리줄의
-     "옵션 N개 · 판매중 M" 은 페이지에 안 보이는 옵션까지 센 값(summary)
+   - 페이지는 상품 단위(50개, 이전/다음)다. 상품마다 조건에 맞는 옵션이 전부 실려 온다.
+   - 상품은 기본으로 접혀 있고, 머리줄을 누르면 옵션이 펼쳐진다 (옵션은 옵션명 순 — 훅에서 정렬).
+     접힌 상태에서도 머리줄에 조건에 맞는 옵션 수 · 가격 범위 · 재고 합을 보여 준다.
+   - 머리줄의 "옵션 N개 · 판매중 M" 은 조건과 무관한 상품 전체 옵션 기준(summary)
    ================================================================ */
 
 import React from 'react'
@@ -15,11 +17,21 @@ interface Props {
   error: string | null
   selected: Map<string, CoupangProductRow>
   noteEditing: { optionId: string; value: string } | null
-  // 페이지
+  // 페이지 (상품 단위 · 이전/다음)
   page: number
-  pageSize: number
-  total: number
-  onPage: (page: number) => void
+  productsPerPage: number
+  /** 지금 조건에 맞는 옵션 수 (판매상태 칩 건수에서). 아직 모르면 null */
+  optionCount: number | null
+  hasPrev: boolean
+  hasNext: boolean
+  onPrev: () => void
+  onNext: () => void
+  onFirst: () => void
+  // 펼치기
+  expanded: Set<string>
+  onToggleExpand: (itemId: string) => void
+  onExpandAll: () => void
+  onCollapseAll: () => void
   // 동작
   onToggleOption: (row: CoupangProductRow, checked: boolean) => void
   onToggleRows: (rows: CoupangProductRow[], checked: boolean) => void
@@ -40,6 +52,11 @@ const ImageIcon = () => (
 )
 const ChevronIcon = () => (
   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><path d="M9 6l6 6-6 6" /></svg>
+)
+const PanelIcon = () => (
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+    <rect x="3" y="4" width="18" height="16" rx="2" /><path d="M14 4v16" />
+  </svg>
 )
 const TrashIcon = () => (
   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
@@ -65,26 +82,45 @@ function KindBadge({ group }: { group: CoupangProductGroup }) {
   return <span className="cp-badge cp-badge-mp">일반</span>
 }
 
-// ── 페이지 번호 ──────────────────────────────────────────────────
-function pageNumbers(current: number, totalPages: number): (number | '…')[] {
-  if (totalPages <= 7) return Array.from({ length: totalPages }, (_, i) => i + 1)
-  if (current <= 4) return [1, 2, 3, 4, 5, '…', totalPages]
-  if (current >= totalPages - 3) return [1, '…', totalPages - 4, totalPages - 3, totalPages - 2, totalPages - 1, totalPages]
-  return [1, '…', current - 1, current, current + 1, '…', totalPages]
+// ── 접힌 머리줄 요약 — 조건에 맞는 옵션의 가격 범위 · 재고 합 ──────
+function rowsOverview(rows: CoupangProductRow[]): { price: string; stock: string } {
+  const prices = rows.map((r) => r.price).filter((p): p is number => p != null)
+  const stocks = rows.map((r) => r.stock).filter((s): s is number => s != null)
+  const min = prices.length ? Math.min(...prices) : null
+  const max = prices.length ? Math.max(...prices) : null
+  const price = min == null ? '가격 —' : min === max ? won(min) : `${num(min)} ~ ${won(max)}`
+  const stock = stocks.length ? `재고 ${num(stocks.reduce((s, v) => s + v, 0))}` : '재고 —'
+  return { price, stock }
+}
+
+/** 머리줄 빈 곳 클릭 = 펼치기/접기. 버튼·링크·체크박스 클릭은 각자 동작 */
+function isInteractive(target: EventTarget | null): boolean {
+  return target instanceof Element && !!target.closest('button, a, input, select, textarea, label')
 }
 
 const CoupangProductTable: React.FC<Props> = ({
   groups, loading, error, selected, noteEditing,
-  page, pageSize, total, onPage,
+  page, productsPerPage, optionCount, hasPrev, hasNext, onPrev, onNext, onFirst,
+  expanded, onToggleExpand, onExpandAll, onCollapseAll,
   onToggleOption, onToggleRows, onOpenDetail, onFetchDetail,
   onPackageType, onStartNote, onNoteValue, onCommitNote, onDelete,
 }) => {
-  const totalPages = Math.max(1, Math.ceil(total / pageSize))
-  const from = total === 0 ? 0 : (page - 1) * pageSize + 1
-  const to = Math.min(page * pageSize, total)
+  const openCount = groups.filter((g) => expanded.has(g.itemId)).length
 
   return (
     <>
+      {/* ── 목록 도구 막대 — 펼치기 / 접기 ── */}
+      <div className="cp-list-toolbar">
+        <div className="cp-num">
+          {page}페이지 · 상품 {num(groups.length)}개
+          {optionCount != null && ` · 조건에 맞는 옵션 전체 ${num(optionCount)}개`}
+        </div>
+        <div className="cp-list-toolbar-actions">
+          <button type="button" className="cp-btn cp-btn-xs" disabled={groups.length === 0 || openCount === groups.length} onClick={onExpandAll}>모두 펼치기</button>
+          <button type="button" className="cp-btn cp-btn-xs" disabled={openCount === 0} onClick={onCollapseAll}>모두 접기</button>
+        </div>
+      </div>
+
       <div className="cp-list">
         <div className="cp-list-inner">
           <div className="cp-grid cp-list-head" role="row">
@@ -108,16 +144,32 @@ const CoupangProductTable: React.FC<Props> = ({
           {groups.map((g) => {
             const summary = g.summary
             const allChecked = g.rows.length > 0 && g.rows.every((r) => selected.has(r.option_id))
+            const someChecked = !allChecked && g.rows.some((r) => selected.has(r.option_id))
             const approvalBad = !!g.approval && g.approval !== '승인완료'
             const detailMissing = !summary?.detailSynced
+            const isOpen = expanded.has(g.itemId)
+            const overview = rowsOverview(g.rows)
             return (
-              <div key={g.itemId} className="cp-product">
-                {/* ── 상품 머리줄 ── */}
-                <div className="cp-product-head">
+              <div key={g.itemId} className={`cp-product${isOpen ? ' is-open' : ''}`}>
+                {/* ── 상품 머리줄 (빈 곳 클릭 = 펼치기/접기) ── */}
+                <div
+                  className="cp-product-head"
+                  onClick={(e) => { if (!isInteractive(e.target)) onToggleExpand(g.itemId) }}
+                >
+                  <button
+                    type="button"
+                    className="cp-expand-btn"
+                    aria-expanded={isOpen}
+                    aria-label={isOpen ? `${g.itemName} 옵션 접기` : `${g.itemName} 옵션 펼치기`}
+                    onClick={() => onToggleExpand(g.itemId)}
+                  >
+                    <ChevronIcon />
+                  </button>
                   <input
                     type="checkbox"
                     className="cp-checkbox"
                     checked={allChecked}
+                    ref={(el) => { if (el) el.indeterminate = someChecked }}
                     aria-label={`${g.itemName} 옵션 전체 선택`}
                     onChange={(e) => onToggleRows(g.rows, e.target.checked)}
                   />
@@ -137,30 +189,35 @@ const CoupangProductTable: React.FC<Props> = ({
                         ? <a href={`https://www.coupang.com/vp/products/${g.productId}`} target="_blank" rel="noreferrer">노출상품 {g.productId} ↗</a>
                         : '노출상품 ID 없음'}
                       {summary && ` · 옵션 ${num(summary.totalOptions)}개`}
-                      {summary && summary.totalOptions > g.rows.length && ` (이 페이지 ${g.rows.length})`}
+                      {summary && summary.totalOptions > g.rows.length && ` (조건에 맞는 ${g.rows.length})`}
                     </div>
                   </div>
                   <div className="cp-product-side">
+                    {/* 조건에 맞는 옵션 기준 — 접혀 있어도 한눈에 */}
+                    <div className="cp-product-stat cp-num">
+                      <div className="cp-product-stat-main">{overview.price}</div>
+                      <div className="cp-product-stat-sub">{overview.stock}</div>
+                    </div>
                     {summary && (
                       <div className="cp-product-summary cp-num">
                         판매중 {num(summary.onSale)} / {num(summary.totalOptions)}
                       </div>
                     )}
-                    <button type="button" className="cp-btn cp-btn-icon" aria-label="상세 보기" onClick={() => onOpenDetail(g.itemId)}>
-                      <ChevronIcon />
+                    <button type="button" className="cp-btn cp-btn-icon" aria-label="상세 패널 열기" title="상세 패널" onClick={() => onOpenDetail(g.itemId)}>
+                      <PanelIcon />
                     </button>
                   </div>
                 </div>
 
-                {detailMissing && (
+                {isOpen && detailMissing && (
                   <div className="cp-product-notice">
                     상세를 아직 받지 않았습니다 — 가격 · 재고 · 이미지 · 업체상품코드는 상세를 받은 뒤 최신이 됩니다.
                     <button type="button" className="cp-btn cp-btn-xs" onClick={() => onFetchDetail(g.itemId)}>이 상품만 받기</button>
                   </div>
                 )}
 
-                {/* ── 옵션 줄 ── */}
-                {g.rows.map((row) => {
+                {/* ── 옵션 줄 (펼쳤을 때만) ── */}
+                {isOpen && g.rows.map((row) => {
                   const checked = selected.has(row.option_id)
                   const ch = rowChannel(row)
                   const discount = row.regular_price && row.price && row.regular_price > row.price
@@ -235,30 +292,17 @@ const CoupangProductTable: React.FC<Props> = ({
         </div>
       </div>
 
-      {/* ── 페이지 이동 ── */}
+      {/* ── 페이지 이동 (상품 단위 · 이전/다음) ── */}
       <nav className="cp-pagination" aria-label="페이지">
         <div className="cp-num">
-          {total === 0 ? '옵션 0개' : `옵션 ${num(from)}–${num(to)} / ${num(total)} · 한 페이지 ${pageSize}개`}
+          {page}페이지 · 한 페이지 상품 {productsPerPage}개
           {loading && ' · 불러오는 중…'}
         </div>
         <div className="cp-pages">
-          <button type="button" className="cp-page-btn" aria-label="이전 페이지" disabled={page <= 1} onClick={() => onPage(page - 1)}>‹</button>
-          {pageNumbers(page, totalPages).map((p, i) => (
-            p === '…'
-              ? <span key={`e${i}`} className="cp-page-ellipsis">…</span>
-              : (
-                <button
-                  key={p}
-                  type="button"
-                  className={`cp-page-btn${p === page ? ' is-active' : ''}`}
-                  aria-current={p === page ? 'page' : undefined}
-                  onClick={() => onPage(p)}
-                >
-                  {p}
-                </button>
-              )
-          ))}
-          <button type="button" className="cp-page-btn" aria-label="다음 페이지" disabled={page >= totalPages} onClick={() => onPage(page + 1)}>›</button>
+          <button type="button" className="cp-page-btn" disabled={!hasPrev || loading} onClick={onFirst}>처음</button>
+          <button type="button" className="cp-page-btn" aria-label="이전 페이지" disabled={!hasPrev || loading} onClick={onPrev}>‹ 이전</button>
+          <span className="cp-page-btn is-active" aria-current="page">{page}</span>
+          <button type="button" className="cp-page-btn" aria-label="다음 페이지" disabled={!hasNext || loading} onClick={onNext}>다음 ›</button>
         </div>
       </nav>
     </>

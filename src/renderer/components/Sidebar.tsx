@@ -90,7 +90,7 @@ const SECTIONS: Section[] = [
         type: 'group', icon: 'cart', label: '쿠팡관리',
         children: [
           { path: '/personal-order',      label: '개인주문' },
-          { path: '/coupang',             label: '상품관리' },
+          { path: '/coupang',             label: '일반판매자 상품' },
           { path: '/purchase-management', label: '로켓그로스 사입' },
           { path: '/outbound-management', label: '반출관리' },
         ],

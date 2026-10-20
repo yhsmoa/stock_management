@@ -200,17 +200,51 @@
 .cp-list-empty { padding: 40px 16px; text-align: center; color: var(--cp-muted); }
 .cp-list-loading { padding: 40px 16px; text-align: center; color: var(--cp-muted); }
 
-.cp-product { border-bottom: 1px solid var(--cp-line); }
+/* 목록 도구 막대 (펼치기 / 접기) */
+.cp-list-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--cp-text-2);
+  font-size: 12px;
+  margin-bottom: -6px;
+}
+.cp-list-toolbar-actions { display: flex; gap: 6px; }
+
+/* 상품 묶음 — 상품 사이 경계는 진하게 (옵션 줄과 구분) */
+.cp-product { border-bottom: 1px solid #D5DAE3; }
 .cp-product:last-child { border-bottom: 0; }
 
-/* 상품 머리줄 */
+/* 상품 머리줄 — 옵션 줄(흰 바탕)과 구분되도록 회청색 바탕 + 굵은 상품명 (2026-10-20) */
 .cp-product-head {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 12px 16px;
-  background: #FCFCFD;
+  padding: 12px 16px 12px 8px;
+  background: #EEF2F7;
+  cursor: pointer;
+  user-select: none;
 }
+.cp-product-head:hover { background: #E6EBF3; }
+.cp-product.is-open > .cp-product-head { border-bottom: 1px solid #D5DAE3; }
+.cp-expand-btn {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--cp-text-2);
+  cursor: pointer;
+  transition: transform .15s ease;
+}
+.cp-expand-btn:hover { background: #DCE3EE; color: var(--cp-text); }
+.cp-expand-btn[aria-expanded="true"] { transform: rotate(90deg); }
 .cp-product-thumb {
   flex: none;
   width: 44px;
@@ -228,7 +262,7 @@
 .cp-product-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .cp-product-main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
 .cp-product-name-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.cp-product-name { font-size: 14px; font-weight: 600; color: var(--cp-text); background: transparent; border: 0; padding: 0; cursor: pointer; text-align: left; }
+.cp-product-name { font-size: 14px; font-weight: 700; color: var(--cp-text); background: transparent; border: 0; padding: 0; cursor: pointer; text-align: left; }
 .cp-product-name:hover { color: var(--cp-blue); }
 .cp-product-ids { font-size: 12px; color: var(--cp-muted); }
 .cp-product-side { flex: none; display: flex; align-items: center; gap: 18px; }
@@ -240,14 +274,17 @@
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 8px 16px 12px 72px;
+  padding: 8px 16px 10px 128px;   /* 머리줄의 펼침 버튼 · 체크박스 · 썸네일 다음, 상품명 시작 위치에 맞춤 */
   color: var(--cp-amber-text);
   font-size: 12px;
+  background: #FFFFFF;
+  box-shadow: inset 3px 0 0 #D5DAE3;
 }
 
-/* 옵션 줄 */
-.cp-option { border-top: 1px solid var(--cp-line-soft); }
-.cp-option.is-selected { background: #F5F8FF; }
+/* 옵션 줄 — 흰 바탕 · 왼쪽 들여쓰기 선으로 "상품 아래 옵션"임을 보인다 */
+.cp-option { border-top: 1px solid var(--cp-line-soft); background: #FFFFFF; box-shadow: inset 3px 0 0 #D5DAE3; }
+.cp-product-head + .cp-option, .cp-product-notice + .cp-option { border-top: 0; }
+.cp-option.is-selected { background: #F5F8FF; box-shadow: inset 3px 0 0 var(--cp-blue); }
 .cp-option-name { font-weight: 500; display: flex; align-items: center; gap: 6px; min-width: 0; }
 .cp-option-name span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cp-ellipsis { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }

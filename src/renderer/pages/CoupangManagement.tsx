@@ -3,6 +3,7 @@
    - 쿠팡 Open API 동기화 기반 (2026-10-20 전면 재작성). 엑셀 업로드는 보조
    - 상태·동작은 useCoupangManagement, 데이터는 services/coupangProductService
    - 화면: 머리(제목 · 엑셀 보조) → 동기화 3단계 카드 → 필터 → 선택 작업 막대 → 목록 → 페이지
+   - 목록은 상품 단위 페이지(50개 · 이전/다음), 상품은 기본 접힘 · 옵션은 옵션명 순 (2026-10-20)
    ================================================================ */
 
 import React from 'react'
@@ -40,7 +41,7 @@ const CoupangManagement: React.FC = () => {
       {/* ── 머리 ── */}
       <header className="cp-header">
         <div>
-          <h1 className="cp-title">상품관리</h1>
+          <h1 className="cp-title">일반판매자 상품</h1>
           <div className="cp-subtitle">쿠팡 상품을 한 목록에서 — 상품마다 전체(로켓 + 일반) · 일반 · 로켓그로스로 구분 · Open API 동기화 · 엑셀은 보조</div>
         </div>
         <div className="cp-header-actions">
@@ -100,9 +101,17 @@ const CoupangManagement: React.FC = () => {
         selected={s.selected}
         noteEditing={s.noteEditing}
         page={s.page}
-        pageSize={s.pageSize}
-        total={s.total}
-        onPage={s.setPage}
+        productsPerPage={s.productsPerPage}
+        optionCount={s.salesCounts ? s.salesCounts[s.filters.sales] : null}
+        hasPrev={s.hasPrevPage}
+        hasNext={s.hasNextPage}
+        onPrev={s.goPrevPage}
+        onNext={s.goNextPage}
+        onFirst={s.goFirstPage}
+        expanded={s.expanded}
+        onToggleExpand={s.toggleExpanded}
+        onExpandAll={s.expandAll}
+        onCollapseAll={s.collapseAll}
         onToggleOption={s.toggleOption}
         onToggleRows={s.toggleRows}
         onOpenDetail={s.setDetailItemId}

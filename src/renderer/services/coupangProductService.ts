@@ -154,25 +154,81 @@ function applyFilters(q: FilterableQuery, userId: string, f: CoupangProductFilte
   }
 }
 
-/** 한 페이지 (행 단위 · 등록상품 ID 내림차순 → 옵션 ID) */
+/** 상품 단위 한 페이지 결과 */
+export interface ProductPageResult {
+  /** 이 페이지 상품들의 (필터에 맞는) 옵션 행 전부 */
+  rows: CoupangProductRow[]
+  /** 이 페이지 상품의 등록상품 ID (화면 순서) */
+  itemIds: string[]
+  /** 다음 페이지 커서 = 이 페이지 마지막 등록상품 ID. 다음 페이지가 없으면 null */
+  nextCursor: string | null
+}
+
+/**
+ * 한 페이지 — **상품 단위** (등록상품 ID 내림차순, 커서 방식)
+ * - 예전에는 옵션 100행씩 잘라 한 상품의 옵션이 두 페이지에 걸쳤다. 상품을 접어서 보여 주려면
+ *   페이지가 상품 단위여야 해서 바꿨다 (2026-10-20).
+ * - DB 함수 없이 상품 단위로 자르려고 커서를 쓴다: ① 등록상품 ID 만 훑어 이 페이지 상품 N 개를 고르고
+ *   ② 그 상품들의 옵션 행을 받는다. 다음 페이지는 "마지막 등록상품 ID 보다 작은 것"부터.
+ *   → 페이지 번호로 바로 건너뛰기는 안 된다 (이전 · 다음만).
+ * - item_id 는 text 라 정렬·비교가 문자열 기준이다 — 정렬과 커서 비교가 같은 기준이라 빠짐·중복은 없다.
+ * - item_id 가 없는 행은 상품으로 묶을 수 없어 이 목록에 나오지 않는다 (2026-10-20 실측 0건).
+ * @param cursor 이전 페이지의 nextCursor (첫 페이지는 null)
+ */
 export async function fetchProductPage(
   userId: string,
   filters: CoupangProductFilters,
-  page: number,
-  pageSize: number,
-): Promise<{ rows: CoupangProductRow[]; total: number }> {
-  const from = (page - 1) * pageSize
-  const query = supabase.from(TABLE).select('*', { count: 'exact' })
-  applyFilters(query as unknown as FilterableQuery, userId, filters)
-  const { data, error, count } = await query
-    .order('item_id', { ascending: false })
-    .order('option_id', { ascending: true })
-    .range(from, from + pageSize - 1)
-  if (error) {
-    console.error('[fetchProductPage] 조회 오류:', error)
-    throw error
+  cursor: string | null,
+  productsPerPage: number,
+): Promise<ProductPageResult> {
+  // ── ① 이 페이지 상품 고르기 — 등록상품 ID 만, 1000행씩 (한 상품의 옵션이 여러 행이라 중복 제거) ──
+  const itemIds: string[] = []
+  const seen = new Set<string>()
+  let hasMore = false
+  scan: for (let from = 0; ; from += PAGE_ROWS) {
+    const query = supabase.from(TABLE).select('item_id')
+    applyFilters(query as unknown as FilterableQuery, userId, filters)
+    query.not('item_id', 'is', null)
+    if (cursor) query.lt('item_id', cursor)
+    const { data, error } = await query
+      .order('item_id', { ascending: false })
+      .order('option_id', { ascending: true })
+      .range(from, from + PAGE_ROWS - 1)
+    if (error) {
+      console.error('[fetchProductPage] 상품 ID 조회 오류:', error)
+      throw error
+    }
+    for (const r of (data ?? []) as { item_id: string | null }[]) {
+      if (!r.item_id || seen.has(r.item_id)) continue
+      if (itemIds.length === productsPerPage) { hasMore = true; break scan }   // 한 상품 더 있음 = 다음 페이지 있음
+      seen.add(r.item_id)
+      itemIds.push(r.item_id)
+    }
+    if (!data || data.length < PAGE_ROWS) break
   }
-  return { rows: (data ?? []) as CoupangProductRow[], total: count ?? 0 }
+  if (itemIds.length === 0) return { rows: [], itemIds, nextCursor: null }
+
+  // ── ② 고른 상품들의 옵션 행 (필터에 맞는 것만, 1000행 루프) ──
+  const rows: CoupangProductRow[] = []
+  for (const ids of chunk(itemIds, IN_CHUNK)) {
+    for (let from = 0; ; from += PAGE_ROWS) {
+      const query = supabase.from(TABLE).select('*')
+      applyFilters(query as unknown as FilterableQuery, userId, filters)
+      const { data, error } = await query
+        .in('item_id', ids)
+        .order('item_id', { ascending: false })
+        .order('option_id', { ascending: true })
+        .range(from, from + PAGE_ROWS - 1)
+      if (error) {
+        console.error('[fetchProductPage] 옵션 행 조회 오류:', error)
+        throw error
+      }
+      rows.push(...((data ?? []) as CoupangProductRow[]))
+      if (!data || data.length < PAGE_ROWS) break
+    }
+  }
+
+  return { rows, itemIds, nextCursor: hasMore ? itemIds[itemIds.length - 1] : null }
 }
 
 /**

@@ -31,6 +31,7 @@ import {
   type DetailMissingIds,
 } from '../services/coupangProductService'
 import { toLabelPrintItems } from '../services/labelService'
+import { compareOptionNames } from '../components/coupang/optionSort'
 import type { LabelPrintItem } from '../services/labelPrintService'
 import type {
   CoupangProductRow,
@@ -47,8 +48,11 @@ import type {
 } from '../types/coupangProduct'
 
 // ── 상수 ──────────────────────────────────────────────────────────
-export const PAGE_SIZE = 100               // 한 페이지 옵션 행 수
+export const PRODUCTS_PER_PAGE = 50        // 한 페이지 상품 수 (옵션은 그 상품들 것 전부)
 const STATUS_CHECK_STALE_BATCH = 500       // [오래된 순 확인] 한 번에 확인할 옵션 수 (≈ 100초)
+
+/** 옵션을 겨냥한 검색이면 결과 상품을 펼쳐서 보여 준다 (찾는 옵션이 바로 보이게) */
+const OPTION_TARGET_SEARCH: ReadonlySet<SearchField> = new Set<SearchField>(['optionId', 'barcode', 'itemCode'])
 
 const DEFAULT_FILTERS: CoupangProductFilters = {
   channel: 'all',
@@ -67,9 +71,12 @@ export function useCoupangManagement() {
   // ── 조회 상태 ──
   const [filters, setFilters] = useState<CoupangProductFilters>(DEFAULT_FILTERS)
   const [searchInput, setSearchInput] = useState('')
-  const [page, setPage] = useState(1)
+  // 페이지 = 커서 목록. cursors[i] 는 i+1 페이지를 여는 커서 (첫 페이지는 null) — 이전으로 갈 때 되짚는다
+  const [cursors, setCursors] = useState<(string | null)[]>([null])
+  const [nextCursor, setNextCursor] = useState<string | null>(null)
   const [rows, setRows] = useState<CoupangProductRow[]>([])
-  const [total, setTotal] = useState(0)
+  // 펼친 상품 (등록상품 ID). 기본은 모두 접힘
+  const [expanded, setExpanded] = useState<Set<string>>(new Set())
   const [summaries, setSummaries] = useState<Map<string, CoupangProductSummary>>(new Map())
   const [salesCounts, setSalesCounts] = useState<SalesCounts | null>(null)
   const [syncSummary, setSyncSummary] = useState<CoupangSyncSummary | null>(null)
@@ -100,6 +107,12 @@ export function useCoupangManagement() {
   // 조회
   // ══════════════════════════════════════════════════════════════
 
+  const pageCursor = cursors[cursors.length - 1]
+  const page = cursors.length                       // 1부터
+  const autoExpand = !!filters.search && OPTION_TARGET_SEARCH.has(filters.searchField)
+  // 펼침 상태는 "다른 페이지·조건"으로 갈 때만 초기화한다 — 같은 페이지 다시 읽기(가격 변경·비고 저장 뒤)는 유지
+  const lastPageKeyRef = useRef<string>('')
+
   // 페이지 → 상품 요약 → 판매상태 건수 → 머리 카드 요약, 순서대로.
   //   큰 계정(7.8만 행)에서 count 쿼리를 한꺼번에 보내면 Supabase statement timeout 이 난다 (2026-10-20 실측)
   useEffect(() => {
@@ -109,13 +122,19 @@ export function useCoupangManagement() {
     setLoadError(null)
     ;(async () => {
       try {
-        const pageResult = await fetchProductPage(userId, filters, page, PAGE_SIZE)
+        const pageResult = await fetchProductPage(userId, filters, pageCursor, PRODUCTS_PER_PAGE)
         if (cancelled) return
         setRows(pageResult.rows)
-        setTotal(pageResult.total)
+        setNextCursor(pageResult.nextCursor)
+        // 새 페이지·새 조건은 접어서 시작 (옵션을 겨냥한 검색이면 펼쳐서), 같은 페이지 다시 읽기는 그대로
+        const pageKey = JSON.stringify([filters, pageCursor])
+        if (pageKey !== lastPageKeyRef.current) {
+          lastPageKeyRef.current = pageKey
+          setExpanded(autoExpand ? new Set(pageResult.itemIds) : new Set())
+        }
         setLoading(false)
 
-        const itemIds = [...new Set(pageResult.rows.map((r) => r.item_id).filter((v): v is string => !!v))]
+        const itemIds = pageResult.itemIds
         const sums = await fetchProductSummaries(userId, itemIds)
         if (cancelled) return
         setSummaries(sums)
@@ -133,11 +152,29 @@ export function useCoupangManagement() {
       }
     })()
     return () => { cancelled = true }
-  }, [userId, filters, page, reloadKey])
+  }, [userId, filters, pageCursor, reloadKey]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const reload = useCallback(() => setReloadKey((k) => k + 1), [])
 
-  // ── 상품 묶음 (행 순서 유지) ──
+  // ── 페이지 이동 (커서) ──
+  const resetPages = useCallback(() => setCursors([null]), [])
+  const goNextPage = useCallback(() => {
+    if (nextCursor) setCursors((c) => [...c, nextCursor])
+  }, [nextCursor])
+  const goPrevPage = useCallback(() => setCursors((c) => (c.length > 1 ? c.slice(0, -1) : c)), [])
+  const goFirstPage = resetPages
+
+  // ── 펼치기 / 접기 ──
+  const toggleExpanded = useCallback((itemId: string) => {
+    setExpanded((prev) => {
+      const next = new Set(prev)
+      if (next.has(itemId)) next.delete(itemId)
+      else next.add(itemId)
+      return next
+    })
+  }, [])
+
+  // ── 상품 묶음 (상품 순서 유지 · 옵션은 옵션명 순) ──
   const groups = useMemo<CoupangProductGroup[]>(() => {
     const out: CoupangProductGroup[] = []
     const byItem = new Map<string, CoupangProductGroup>()
@@ -162,16 +199,23 @@ export function useCoupangManagement() {
       if (!g.imgUrl && r.img_url) g.imgUrl = r.img_url
       if (!g.productId && r.product_id) g.productId = r.product_id
     }
+    // 옵션은 옵션명 순 (색상끼리 · 사이즈는 S → M → L …), 이름이 같으면 옵션 ID 순
+    for (const g of out) {
+      g.rows.sort((a, b) => compareOptionNames(a.option_name, b.option_name) || a.option_id.localeCompare(b.option_id))
+    }
     return out
   }, [rows, summaries])
 
-  // ── 필터 ──
-  const setChannel = useCallback((channel: ChannelFilter) => { setFilters((f) => ({ ...f, channel })); setPage(1) }, [])
-  const setSales = useCallback((sales: SalesFilter) => { setFilters((f) => ({ ...f, sales })); setPage(1) }, [])
-  const setApproval = useCallback((approval: ApprovalFilter) => { setFilters((f) => ({ ...f, approval })); setPage(1) }, [])
+  const expandAll = useCallback(() => setExpanded(new Set(groups.map((g) => g.itemId))), [groups])
+  const collapseAll = useCallback(() => setExpanded(new Set()), [])
+
+  // ── 필터 (바뀌면 첫 페이지로) ──
+  const setChannel = useCallback((channel: ChannelFilter) => { setFilters((f) => ({ ...f, channel })); resetPages() }, [resetPages])
+  const setSales = useCallback((sales: SalesFilter) => { setFilters((f) => ({ ...f, sales })); resetPages() }, [resetPages])
+  const setApproval = useCallback((approval: ApprovalFilter) => { setFilters((f) => ({ ...f, approval })); resetPages() }, [resetPages])
   const setSearchField = useCallback((searchField: SearchField) => setFilters((f) => ({ ...f, searchField })), [])
-  const submitSearch = useCallback(() => { setFilters((f) => ({ ...f, search: searchInput.trim() })); setPage(1) }, [searchInput])
-  const clearSearch = useCallback(() => { setSearchInput(''); setFilters((f) => ({ ...f, search: '' })); setPage(1) }, [])
+  const submitSearch = useCallback(() => { setFilters((f) => ({ ...f, search: searchInput.trim() })); resetPages() }, [searchInput, resetPages])
+  const clearSearch = useCallback(() => { setSearchInput(''); setFilters((f) => ({ ...f, search: '' })); resetPages() }, [resetPages])
 
   // ══════════════════════════════════════════════════════════════
   // 선택
@@ -452,7 +496,12 @@ export function useCoupangManagement() {
     userId,
     // 조회
     filters, searchInput, setSearchInput, setChannel, setSales, setApproval, setSearchField, submitSearch, clearSearch,
-    page, setPage, pageSize: PAGE_SIZE, total, rows, groups, loading, loadError, salesCounts, syncSummary, reload,
+    rows, groups, loading, loadError, salesCounts, syncSummary, reload,
+    // 페이지 (상품 단위 · 이전/다음)
+    page, productsPerPage: PRODUCTS_PER_PAGE, hasNextPage: !!nextCursor, hasPrevPage: page > 1,
+    goNextPage, goPrevPage, goFirstPage,
+    // 펼치기
+    expanded, toggleExpanded, expandAll, collapseAll,
     // 선택
     selected, selectedRows, toggleOption, toggleRows, clearSelection,
     // 동기화
