@@ -353,6 +353,42 @@
   outline: none;
   background: #FFFFFF;
 }
+/* 칸 바로 수정 (판매가 · 기준가 · 재고) — 보기 모드는 글자처럼, 마우스를 올리면 수정 가능 표시 */
+.cp-inline-view {
+  display: inline-block;
+  max-width: 100%;
+  border: 1px dashed transparent;
+  border-radius: 5px;
+  background: transparent;
+  padding: 1px 4px;
+  margin: -2px -5px;
+  font: inherit;
+  color: inherit;
+  text-align: inherit;
+  cursor: text;
+}
+.cp-inline-view:hover { border-color: var(--cp-blue-line); background: var(--cp-blue-soft); }
+.cp-inline-view.is-locked { cursor: not-allowed; }
+.cp-inline-view.is-locked:hover { border-color: transparent; background: transparent; }
+.cp-inline-edit { display: flex; align-items: center; justify-content: flex-end; gap: 4px; }
+.cp-inline-input {
+  width: 84px;
+  height: 26px;
+  box-sizing: border-box;
+  border: 1px solid var(--cp-blue);
+  border-radius: 5px;
+  padding: 0 6px;
+  text-align: right;
+  font-size: 12px;
+  outline: none;
+  background: #FFFFFF;
+}
+.cp-inline-unit { font-size: 11px; color: var(--cp-muted); white-space: nowrap; }
+.cp-inline-error { margin-top: 3px; font-size: 11px; line-height: 1.35; color: var(--cp-danger); text-align: left; white-space: normal; }
+.cp-status-btn { cursor: pointer; font-family: inherit; }
+.cp-status-btn:hover:not(.is-locked) { box-shadow: 0 0 0 2px var(--cp-blue-soft); }
+.cp-status-btn.is-locked { cursor: not-allowed; }
+
 .cp-checked-at { font-size: 12px; color: var(--cp-muted); text-align: right; }
 .cp-row-menu { display: flex; justify-content: flex-end; }
 .cp-row-delete { border: 0; background: transparent; color: #9CA3AF; cursor: pointer; padding: 4px; border-radius: 4px; }
@@ -548,6 +584,60 @@
   font-size: 13px;
   box-shadow: -12px 0 40px rgba(0, 0, 0, .12);
 }
+.cp-panel.cp-panel-wide { width: 760px; }
+
+/* 상세 패널 탭 (정보 · 수정) */
+.cp-panel-tabs { display: flex; gap: 4px; padding: 0 24px; border-bottom: 1px solid var(--cp-line); }
+.cp-panel-tabs button {
+  height: 38px;
+  padding: 0 14px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--cp-text-2);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  margin-bottom: -1px;
+}
+.cp-panel-tabs button.is-active { color: var(--cp-blue); border-bottom-color: var(--cp-blue); }
+
+/* ── 상품 수정 폼 ─────────────────────────────────────────── */
+.cp-edit { display: flex; flex-direction: column; gap: 22px; }
+.cp-edit-empty { padding: 40px 0; text-align: center; color: var(--cp-muted); display: flex; flex-direction: column; gap: 10px; align-items: center; }
+.cp-edit-section-head { display: flex; align-items: center; gap: 8px; }
+.cp-edit-tag { display: inline-flex; align-items: center; height: 20px; padding: 0 8px; border-radius: 999px; font-size: 11px; font-weight: 600; border: 1px solid; }
+.cp-edit-tag-now { color: #1D4ED8; border-color: #BFDBFE; }
+.cp-edit-tag-approval { color: var(--cp-amber-text); border-color: var(--cp-amber-line); background: var(--cp-amber-bg); }
+.cp-edit-hint { font-size: 12px; color: var(--cp-muted); }
+.cp-edit-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px 14px; }
+.cp-edit-grid-wide { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.cp-edit-field { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.cp-edit-field label { font-size: 12px; font-weight: 600; color: #374151; }
+.cp-edit-inline { display: flex; align-items: center; gap: 6px; }
+.cp-edit-input { height: 34px; font-size: 13px; width: 100%; }
+.cp-edit-input.cp-input-num { width: 110px; }
+.cp-edit-input:disabled { background: #F3F4F6; color: var(--cp-muted); cursor: not-allowed; }
+.cp-edit-input.is-changed { border-color: var(--cp-blue); background: var(--cp-blue-soft); }
+.cp-edit-actions { display: flex; justify-content: flex-end; }
+.cp-edit-options { display: flex; flex-direction: column; gap: 10px; }
+.cp-edit-option { border: 1px solid var(--cp-line); border-radius: 8px; padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; }
+.cp-edit-option-head { display: flex; align-items: center; gap: 10px; }
+.cp-edit-option-name { flex: 1 1 auto; font-weight: 600; }
+.cp-edit-channel { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.cp-edit-vid { color: var(--cp-muted); min-width: 92px; }
+.cp-edit-small { height: 30px; font-size: 12px; width: 150px; }
+.cp-edit-small.cp-input-num { width: 70px; }
+.cp-edit-small-label { font-size: 12px; color: var(--cp-text-2); min-width: 92px; }
+.cp-edit-submit { position: sticky; bottom: -18px; background: var(--cp-card); border-top: 1px solid var(--cp-line); padding: 12px 0; display: flex; flex-direction: column; gap: 6px; }
+.cp-edit-submit-row { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
+.cp-edit-submit-row .cp-edit-hint { margin-right: auto; }
+.cp-edit-msg-ok { border: 1px solid #BFDBFE; background: var(--cp-blue-soft); color: #1E3A8A; border-radius: 8px; padding: 10px 12px; font-size: 12px; }
+.cp-edit-msg-error { border: 1px solid #FECACA; background: #FEF2F2; color: var(--cp-danger); border-radius: 8px; padding: 10px 12px; font-size: 12px; }
+@media (max-width: 800px) {
+  .cp-edit-grid, .cp-edit-grid-wide { grid-template-columns: minmax(0, 1fr); }
+}
+
 .cp-panel-head {
   padding: 20px 24px 16px;
   border-bottom: 1px solid var(--cp-line);

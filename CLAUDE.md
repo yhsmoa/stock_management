@@ -97,6 +97,11 @@ Electron is built separately via `scripts/build-electron.mjs` (called manually; 
 - **엑셀은 보조**: WING 가격/재고 엑셀(`price_inventory`, 3행 머리글·4행부터, A~O)로 가격·재고·판매상태·승인상태를 한 번에 반영한다. 기존 행은 분류·비고·시즌·채널을 건드리지 않고 새 행에만 분류 '출고'(예전엔 매번 '출고'로 덮어썼다 — 2026-10-20 수정). 상세정보 엑셀(Catalog Template)은 안 쓴다. 판매수량(`sales_data`)은 API 에 없고 앱도 안 쓴다.
 - **변경 작업**(판매가·재고·할인율 기준가·판매 재개/중지)은 쿠팡 API 가 성공한 옵션만 DB 를 고치고 `app_changed_at` 을 기록. 판매가는 10원 단위, 한 번에 50% 초과 인하·100% 초과 인상은 `forceSalePriceUpdate` 체크가 있어야 간다.
 - **목록 = 상품 단위 페이지 (커서)**: `fetchProductPage` 가 ① 필터에 맞는 행의 `item_id` 만 훑어 상품 50개(`PRODUCTS_PER_PAGE`)를 고르고 ② 그 상품들의 옵션 행을 받는다. 다음 페이지는 `item_id < 마지막 ID`(text 비교 — 정렬도 text 라 일치). 페이지 번호 건너뛰기는 없고 이전/다음만(훅의 커서 스택). 옵션 100행씩 자르던 예전 방식은 한 상품이 두 페이지에 걸쳐 접기가 안 돼서 바꿨다. 상품은 기본 접힘(옵션을 겨냥한 검색 — 옵션 ID·바코드·상품코드 — 은 펼쳐서), 같은 페이지 다시 읽기는 펼침 유지. 옵션은 `components/coupang/optionSort.ts` 순(색상끼리 · S→M→L→XL→2XL · FREE 뒤).
+- **상품 수정 (2026-10-20, 계획 `docs/plan-coupang-product-edit.md`)** — 쿠팡 규칙대로 세 묶음:
+  ① **즉시 반영(옵션)** 판매가·기준가·재고·판매상태 = 목록 칸 클릭(`CoupangInlineCell` · 훅 `applyInline` → `applyChanges` 1건). 칸 잠금 규칙은 `components/coupang/editRules.ts` 한 곳(승인완료 아닌 상품 · 로켓 재고 · 로켓 옵션은 `RG_OPTION_DIRECT_EDIT` 를 켜기 전까지). 가격 규칙(10원 단위 · -50%~+100%, 넘으면 강제 적용 확인)은 `priceRules.ts` — 선택 모달과 공용.
+  ② **즉시 반영(상품 배송·반품)** = `PUT /api/coupang/seller-product-partial` (쿠팡 `seller-products/{id}/partial`, 허용 필드 `PARTIAL_UPDATE_FIELDS` 는 프록시 양쪽에 같은 목록). 임시저장·승인대기 상품은 쿠팡이 거절. 하이브리드는 일반 쪽만, 로켓 전용은 배송 정보가 없다.
+  ③ **재승인(상품 전문)** = `PUT /api/coupang/seller-product`. 저장 직전에 상세를 **다시 받아** 바꾼 칸만 덮어쓴 전문을 보낸다(`mergeProductEdits` — 옵션은 등록옵션 ID 로 맞추고, 못 찾으면 멈춤). `requested:true` 로 승인요청 자동, 프록시가 `vendorId` 를 헤더 값으로 고정. 성공하면 행을 '승인대기중'으로 표시하고 상세를 다시 받는다. 화면은 상세 패널 [수정] 탭(`CoupangProductEditForm` · `useCoupangProductEdit` · `services/coupangProductEditService.ts`).
+  바꿀 수 없는 값: 카테고리 · 상품상태 · 묶음정보 · 승인된 옵션 삭제. 이미지·상세 콘텐츠·고시정보·출고지/반품지 코드는 아직 안 만들었다(편집기 규모).
 - **규모 주의**: immong 계정 옵션 78,012 · 상품 16,290 (하이브리드 5,387). 한 화면에서 count 쿼리를 동시에 10개 넘게 보내면 Supabase statement timeout 이 난다 → 페이지 → 요약 → 건수 **순서대로** 받는다. 쿠팡은 **등록 IP(Railway)만** 받으므로 로컬 dev 에서 쿠팡 호출은 403 — 새 프록시 경로는 배포 후에만 확인할 수 있다.
 - 사입관리 [바코드 동기화]와 같은 상세 응답을 쓰므로, 하이브리드 상품은 한 호출로 `si_rg_items` 와 `si_coupang_items` 를 같이 채울 수 있다 — 아직 합치지 않았다(각자 호출).
 

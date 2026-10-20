@@ -1,6 +1,8 @@
 /* ================================================================
    상품관리 — 상품 상세 패널 (오른쪽 슬라이드)
-   - 저장된 행(si_coupang_items)으로 바로 그리고, 상태 변경 이력만 쿠팡 API 로 받는다
+   - [정보] 탭: 저장된 행(si_coupang_items)으로 바로 그리고, 상태 변경 이력만 쿠팡 API 로 받는다
+   - [수정] 탭: 쿠팡 최신 상세를 받아 배송·반품(즉시) · 상품 정보·옵션(재승인)을 고친다
+     (CoupangProductEditForm — 탭을 열 때만 쿠팡을 부른다)
    ================================================================ */
 
 import React, { useEffect, useState } from 'react'
@@ -8,17 +10,34 @@ import type { CoupangProductGroup, ApiProductHistory } from '../../types/coupang
 import { productKind, rowChannel } from '../../types/coupangProduct'
 import { fetchProductHistories } from '../../services/coupangProductService'
 import { num, won, deliveryChargeLabel, shortDateTime } from './format'
+import CoupangProductEditForm from './CoupangProductEditForm'
+import { useCoupangProductEdit } from './useCoupangProductEdit'
 
 interface Props {
   group: CoupangProductGroup
+  userId: string
   busy: boolean
   onClose: () => void
   onRefetch: (itemId: string) => void
+  /** 수정이 쿠팡에 반영된 뒤 — 목록 다시 읽기 */
+  onChanged: () => void
 }
 
-const CoupangProductDetailPanel: React.FC<Props> = ({ group, busy, onClose, onRefetch }) => {
+type PanelTab = 'info' | 'edit'
+
+/** [수정] 탭 — 이 컴포넌트가 그려질 때만 쿠팡 최신 상세를 받는다 */
+const EditTab: React.FC<{ userId: string; itemId: string; onChanged: () => void }> = ({ userId, itemId, onChanged }) => {
+  const edit = useCoupangProductEdit(userId, itemId, onChanged)
+  return <CoupangProductEditForm edit={edit} />
+}
+
+const CoupangProductDetailPanel: React.FC<Props> = ({ group, userId, busy, onClose, onRefetch, onChanged }) => {
+  const [tab, setTab] = useState<PanelTab>('info')
   const [histories, setHistories] = useState<ApiProductHistory[] | null>(null)
   const [historyError, setHistoryError] = useState<string | null>(null)
+
+  // 다른 상품을 열면 [정보] 탭부터
+  useEffect(() => { setTab('info') }, [group.itemId])
 
   // 상태 변경 이력 — 패널을 열 때 한 번
   useEffect(() => {
@@ -46,7 +65,7 @@ const CoupangProductDetailPanel: React.FC<Props> = ({ group, busy, onClose, onRe
   return (
     <>
       <div className="cp-panel-overlay" onClick={onClose} aria-hidden="true" />
-      <aside className="cp-panel" role="dialog" aria-label="상품 상세">
+      <aside className={`cp-panel${tab === 'edit' ? ' cp-panel-wide' : ''}`} role="dialog" aria-label="상품 상세">
         <header className="cp-panel-head">
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6, minWidth: 0 }}>
             <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
@@ -73,6 +92,17 @@ const CoupangProductDetailPanel: React.FC<Props> = ({ group, busy, onClose, onRe
           </button>
         </header>
 
+        {/* ── 탭 ── */}
+        <div className="cp-panel-tabs" role="tablist">
+          <button type="button" role="tab" aria-selected={tab === 'info'} className={tab === 'info' ? 'is-active' : ''} onClick={() => setTab('info')}>정보</button>
+          <button type="button" role="tab" aria-selected={tab === 'edit'} className={tab === 'edit' ? 'is-active' : ''} onClick={() => setTab('edit')}>수정</button>
+        </div>
+
+        {tab === 'edit' ? (
+          <div className="cp-panel-body">
+            <EditTab userId={userId} itemId={group.itemId} onChanged={onChanged} />
+          </div>
+        ) : (
         <div className="cp-panel-body">
           {/* ── 이미지 · 기본 정보 ── */}
           <section className="cp-panel-section" style={{ flexDirection: 'row', gap: 16, alignItems: 'flex-start' }}>
@@ -126,6 +156,7 @@ const CoupangProductDetailPanel: React.FC<Props> = ({ group, busy, onClose, onRe
             )}
           </section>
         </div>
+        )}
 
         <footer className="cp-panel-foot">
           {group.productId && (

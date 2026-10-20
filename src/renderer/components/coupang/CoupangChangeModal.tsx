@@ -9,6 +9,7 @@ import type { CoupangProductRow } from '../../types/coupangProduct'
 import type { ChangeKind, ChangeTarget } from '../../services/coupangProductService'
 import { CHANGE_KIND_LABELS } from '../../services/coupangProductService'
 import { num, estimateDuration } from './format'
+import { PRICE_UNIT, priceLimitViolation } from './priceRules'
 
 interface Props {
   kind: ChangeKind
@@ -19,11 +20,6 @@ interface Props {
 
 type Mode = 'set' | 'percent' | 'delta'
 type Rounding = 'floor' | 'round' | 'ceil'
-
-/** 쿠팡 판매가 변경 한도 — 변경 전 가격 대비 */
-const PRICE_DOWN_LIMIT = 0.5   // 50% 까지 인하
-const PRICE_UP_LIMIT = 1.0     // 100% 까지 인상
-const PRICE_UNIT = 10          // 10원 단위
 
 function roundTo(value: number, unit: number, mode: Rounding): number {
   const q = value / unit
@@ -70,9 +66,10 @@ const CoupangChangeModal: React.FC<Props> = ({ kind, rows, onApply, onClose }) =
         after = isMoney ? roundTo(after, PRICE_UNIT, rounding) : Math.max(0, Math.round(after))
         if (!Number.isInteger(after) || after < 0) blocked = '값이 올바르지 않음'
         else if (kind === 'price' && after === 0) blocked = '판매가는 0원 불가'
-        else if (kind === 'price' && before != null && before > 0 && !force) {
-          if (after < before * (1 - PRICE_DOWN_LIMIT)) blocked = '50% 넘게 인하 — 강제 적용 필요'
-          else if (after > before * (1 + PRICE_UP_LIMIT)) blocked = '100% 넘게 인상 — 강제 적용 필요'
+        else if (kind === 'price' && !force) {
+          const violation = priceLimitViolation(before, after)
+          if (violation === 'down') blocked = '50% 넘게 인하 — 강제 적용 필요'
+          else if (violation === 'up') blocked = '100% 넘게 인상 — 강제 적용 필요'
         }
         if (!blocked && before === after) blocked = '변경 없음'
       }

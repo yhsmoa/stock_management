@@ -76,8 +76,8 @@ function numOrNull(v: unknown): number | null {
   return typeof v === 'number' && Number.isFinite(v) ? v : null
 }
 
-/** 프록시 응답 { success, data: { code, message, data } } 검증 → 쿠팡 응답 본문 */
-function assertProxyOk(json: any, fallback: string): any {
+/** 프록시 응답 { success, data: { code, message, data } } 검증 → 쿠팡 응답 본문 (상품 수정 서비스도 쓴다) */
+export function assertProxyOk(json: any, fallback: string): any {
   if (!json?.success) throw new Error(json?.error || fallback)
   if (json.data?.code && json.data.code !== 'SUCCESS') throw new Error(json.data?.message || fallback)
   return json.data

@@ -309,6 +309,67 @@ function toNonNegativeInt(v) {
   return Number.isInteger(n) && n >= 0 ? n : null
 }
 
+/**
+ * 상품 수정(승인불필요, partial) 허용 필드 — 쿠팡 문서 그대로. 그 외 키는 프록시가 버린다.
+ * coupangProxy.ts 의 PARTIAL_UPDATE_FIELDS 와 같아야 한다.
+ */
+const PARTIAL_UPDATE_FIELDS = [
+  'companyContactNumber', 'deliveryCharge', 'deliveryChargeOnReturn', 'deliveryChargeType',
+  'deliveryCompanyCode', 'deliveryMethod', 'extraInfoMessage', 'freeShipOverAmount',
+  'outboundShippingPlaceCode', 'outboundShippingTimeDay', 'pccNeeded', 'remoteAreaDeliverable',
+  'returnAddress', 'returnAddressDetail', 'returnCenterCode', 'returnCharge', 'returnChargeName',
+  'returnZipCode', 'unionDeliveryType',
+]
+
+// ── PUT /api/coupang/seller-product-partial — 상품 수정 (승인불필요: 배송·반품) ──
+// body: { sellerProductId, ...허용 필드(PARTIAL_UPDATE_FIELDS) }. 임시저장·승인대기 상품은 쿠팡이 거절한다.
+app.put('/api/coupang/seller-product-partial', async (req, res) => {
+  try {
+    const keys = extractCoupangKeys(req)
+    if (!keys) return res.status(401).json({ success: false, error: '쿠팡 API 키가 요청에 포함되지 않았습니다.' })
+
+    const body = req.body || {}
+    const sellerProductId = String(body.sellerProductId ?? '')
+    if (!isNumericId(sellerProductId)) {
+      return res.status(400).json({ success: false, error: 'sellerProductId(숫자) 필수' })
+    }
+    const payload = { sellerProductId: Number(sellerProductId) }
+    for (const key of PARTIAL_UPDATE_FIELDS) if (body[key] !== undefined) payload[key] = body[key]
+    if (Object.keys(payload).length === 1) {
+      return res.status(400).json({ success: false, error: '바꿀 필드가 없습니다.' })
+    }
+
+    const apiPath = `${SELLER_PRODUCTS_PATH}/${sellerProductId}/partial`
+    const result = await callCoupangAPI('PUT', apiPath, null, keys.accessKey, keys.secretKey, payload, keys.vendorCode)
+    res.json({ success: true, data: result })
+  } catch (error) {
+    console.error('[prod-server] seller-product-partial 오류:', error.message)
+    res.status(500).json({ success: false, error: error.message })
+  }
+})
+
+// ── PUT /api/coupang/seller-product — 상품 수정 (승인필요: 상품 전문) ──
+// body: 상품 조회 응답 전문에서 바꿀 칸만 고친 것 + requested(true = 승인요청 자동). 승인 뒤 반영된다.
+app.put('/api/coupang/seller-product', async (req, res) => {
+  try {
+    const keys = extractCoupangKeys(req)
+    if (!keys) return res.status(401).json({ success: false, error: '쿠팡 API 키가 요청에 포함되지 않았습니다.' })
+
+    const body = req.body || {}
+    if (!isNumericId(String(body.sellerProductId ?? '')) || !Array.isArray(body.items) || body.items.length === 0) {
+      return res.status(400).json({ success: false, error: 'sellerProductId(숫자) · items(1개 이상) 필수 — 상품 조회 응답 전문을 보내야 합니다.' })
+    }
+    // 다른 판매자 상품을 고치지 않도록 vendorId 는 헤더의 값으로 맞춘다
+    const payload = { ...body, vendorId: keys.vendorCode }
+
+    const result = await callCoupangAPI('PUT', SELLER_PRODUCTS_PATH, null, keys.accessKey, keys.secretKey, payload, keys.vendorCode)
+    res.json({ success: true, data: result })
+  } catch (error) {
+    console.error('[prod-server] seller-product 오류:', error.message)
+    res.status(500).json({ success: false, error: error.message })
+  }
+})
+
 // ── GET /api/coupang/mp-products — 상품 목록 페이징 (businessTypes 없음 → 일반 + 하이브리드) ──
 // query: nextToken?, maxPerPage?(1~100), status?
 app.get('/api/coupang/mp-products', async (req, res) => {

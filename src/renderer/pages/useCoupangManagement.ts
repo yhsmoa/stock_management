@@ -32,6 +32,8 @@ import {
 } from '../services/coupangProductService'
 import { toLabelPrintItems } from '../services/labelService'
 import { compareOptionNames } from '../components/coupang/optionSort'
+import { inlineEditBlock, type InlineField } from '../components/coupang/editRules'
+import { priceInputProblem, priceLimitViolation } from '../components/coupang/priceRules'
 import type { LabelPrintItem } from '../services/labelPrintService'
 import type {
   CoupangProductRow,
@@ -393,13 +395,71 @@ export function useCoupangManagement() {
     }
   }, [userId, changeKind, startProgress, updateProgress, finishProgress, clearSelection])
 
-  // ══════════════════════════════════════════════════════════════
-  // 분류 · 비고 · 삭제
-  // ══════════════════════════════════════════════════════════════
-
   const patchRow = useCallback((optionId: string, patch: Partial<CoupangProductRow>) => {
     setRows((prev) => prev.map((r) => (r.option_id === optionId ? { ...r, ...patch } : r)))
   }, [])
+
+  // ══════════════════════════════════════════════════════════════
+  // 칸 바로 수정 (옵션 1개 · 즉시 반영 묶음) — 판매가 · 기준가 · 재고 · 판매상태
+  //   쿠팡이 성공해야 DB·화면을 고친다 (applyChanges). 실패하면 Error 를 던져 칸에 사유를 띄운다.
+  //   목록 전체를 다시 읽지 않고 그 행만 고친다 (펼침·스크롤 유지)
+  // ══════════════════════════════════════════════════════════════
+
+  const applyInline = useCallback(async (row: CoupangProductRow, field: InlineField, value?: number): Promise<void> => {
+    if (!userId) throw new Error('로그인 정보가 없습니다.')
+    if (busy) throw new Error('다른 작업이 진행 중입니다. 끝난 뒤 다시 시도하세요.')
+    const blocked = inlineEditBlock(row, field)
+    if (blocked) throw new Error(blocked)
+
+    let kind: ChangeKind
+    let force = false
+    switch (field) {
+      case 'price': {
+        if (value == null) throw new Error('값 없음')
+        const problem = priceInputProblem(value, { allowZero: false })
+        if (problem) throw new Error(problem)
+        const violation = priceLimitViolation(row.price, value)
+        if (violation) {
+          const msg = violation === 'down'
+            ? `현재가 ${row.price?.toLocaleString()}원에서 50% 넘게 내립니다.`
+            : `현재가 ${row.price?.toLocaleString()}원에서 100% 넘게 올립니다.`
+          if (!confirm(`${msg}\n쿠팡 한도를 넘는 변경이라 강제 적용으로 보냅니다. 진행할까요?`)) throw new Error('취소했습니다.')
+          force = true
+        }
+        kind = 'price'
+        break
+      }
+      case 'originalPrice': {
+        if (value == null) throw new Error('값 없음')
+        const problem = priceInputProblem(value, { allowZero: true })
+        if (problem) throw new Error(problem)
+        kind = 'originalPrice'
+        break
+      }
+      case 'quantity':
+        if (value == null || !Number.isInteger(value) || value < 0) throw new Error('0 이상의 정수로 입력하세요.')
+        kind = 'quantity'
+        break
+      case 'status':
+        kind = row.sales_status === '판매중' ? 'stop' : 'resume'
+        break
+    }
+
+    const r = await applyChanges(userId, kind, [{ optionId: row.option_id, value }], { force })
+    if (r.failed.length > 0) throw new Error(r.failed[0].error)
+
+    const now = new Date().toISOString()
+    const patch: Partial<CoupangProductRow> = { app_changed_at: now }
+    if (kind === 'price') patch.price = value!
+    else if (kind === 'originalPrice') patch.regular_price = value!
+    else if (kind === 'quantity') patch.stock = value!
+    else { patch.sales_status = kind === 'resume' ? '판매중' : '판매중지'; patch.status_checked_at = now }
+    patchRow(row.option_id, patch)
+  }, [userId, busy, patchRow])
+
+  // ══════════════════════════════════════════════════════════════
+  // 분류 · 비고 · 삭제
+  // ══════════════════════════════════════════════════════════════
 
   const changePackageType = useCallback(async (optionId: string, packageType: string) => {
     if (!userId) return
@@ -508,7 +568,7 @@ export function useCoupangManagement() {
     busy, progress, abortSync, closeProgress,
     runListSync, openDetailSync, detailScope, closeDetailScope, confirmDetailScope, runDetailForProduct, runStatusCheck,
     // 변경
-    changeKind, openChange, closeChange, applyChange,
+    changeKind, openChange, closeChange, applyChange, applyInline,
     // 분류 · 비고 · 삭제
     changePackageType, noteEditing, startNote, setNoteValue, commitNote,
     classifyOpen, setClassifyOpen, submitClassify, deleteRow,

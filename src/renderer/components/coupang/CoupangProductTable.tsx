@@ -6,10 +6,12 @@
    - 머리줄의 "옵션 N개 · 판매중 M" 은 조건과 무관한 상품 전체 옵션 기준(summary)
    ================================================================ */
 
-import React from 'react'
+import React, { useState } from 'react'
 import type { CoupangProductGroup, CoupangProductRow } from '../../types/coupangProduct'
 import { PACKAGE_TYPE_OPTIONS, productKind, rowChannel } from '../../types/coupangProduct'
 import { won, num, relativeTime } from './format'
+import CoupangInlineCell from './CoupangInlineCell'
+import { inlineEditBlock, type InlineField } from './editRules'
 
 interface Props {
   groups: CoupangProductGroup[]
@@ -35,6 +37,8 @@ interface Props {
   // 동작
   onToggleOption: (row: CoupangProductRow, checked: boolean) => void
   onToggleRows: (rows: CoupangProductRow[], checked: boolean) => void
+  /** 칸 바로 수정 (판매가 · 기준가 · 재고 · 판매상태) — 실패하면 Error */
+  onInline: (row: CoupangProductRow, field: InlineField, value?: number) => Promise<void>
   onOpenDetail: (itemId: string) => void
   onFetchDetail: (itemId: string) => void
   onPackageType: (optionId: string, value: string) => void
@@ -65,13 +69,48 @@ const TrashIcon = () => (
 )
 
 // ── 판매상태 칩 ──────────────────────────────────────────────────
-function StatusChip({ row }: { row: CoupangProductRow }) {
+function statusChipClass(row: CoupangProductRow): { cls: string; label: string } {
   if (row.sales_status === '판매중') {
-    if (row.stock === 0) return <span className="cp-status cp-status-zero">재고 0</span>
-    return <span className="cp-status cp-status-on">판매중</span>
+    if (row.stock === 0) return { cls: 'cp-status-zero', label: '재고 0' }
+    return { cls: 'cp-status-on', label: '판매중' }
   }
-  if (row.sales_status === '판매중지') return <span className="cp-status cp-status-off">판매중지</span>
-  return <span className="cp-status cp-status-unknown">미확인</span>
+  if (row.sales_status === '판매중지') return { cls: 'cp-status-off', label: '판매중지' }
+  return { cls: 'cp-status-unknown', label: '미확인' }
+}
+
+/** 판매상태 칩 — 누르면 확인 후 판매 중지/재개 (상태를 모르면 바꾸지 않는다) */
+function StatusButton({ row, onInline }: { row: CoupangProductRow; onInline: Props['onInline'] }) {
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const { cls, label } = statusChipClass(row)
+  const known = row.sales_status === '판매중' || row.sales_status === '판매중지'
+  const blocked = known ? inlineEditBlock(row, 'status') : '판매상태를 아직 모릅니다 — [판매상태 확인] 뒤에 바꿀 수 있습니다'
+  const action = row.sales_status === '판매중' ? '판매 중지' : '판매 재개'
+
+  const click = async () => {
+    if (blocked || saving) return
+    if (!confirm(`${row.option_name ?? row.option_id}\n이 옵션을 ${action}할까요? (쿠팡에 바로 반영)`)) return
+    setSaving(true)
+    setError(null)
+    try { await onInline(row, 'status') }
+    catch (err) { setError(err instanceof Error ? err.message : '실패') }
+    finally { setSaving(false) }
+  }
+
+  return (
+    <div>
+      <button
+        type="button"
+        className={`cp-status ${cls} cp-status-btn${blocked ? ' is-locked' : ''}`}
+        title={blocked ?? `클릭해서 ${action}`}
+        disabled={saving}
+        onClick={click}
+      >
+        {saving ? '적용 중…' : label}
+      </button>
+      {error && <div className="cp-inline-error" role="alert">{error}</div>}
+    </div>
+  )
 }
 
 // ── 상품 구분 배지 ───────────────────────────────────────────────
@@ -102,7 +141,7 @@ const CoupangProductTable: React.FC<Props> = ({
   groups, loading, error, selected, noteEditing,
   page, productsPerPage, optionCount, hasPrev, hasNext, onPrev, onNext, onFirst,
   expanded, onToggleExpand, onExpandAll, onCollapseAll,
-  onToggleOption, onToggleRows, onOpenDetail, onFetchDetail,
+  onToggleOption, onToggleRows, onInline, onOpenDetail, onFetchDetail,
   onPackageType, onStartNote, onNoteValue, onCommitNote, onDelete,
 }) => {
   const openCount = groups.filter((g) => expanded.has(g.itemId)).length
@@ -242,13 +281,35 @@ const CoupangProductTable: React.FC<Props> = ({
                       </div>
                       <div className="cp-mono">{row.option_id}</div>
                       <div className="cp-right cp-num">
-                        <div style={{ fontWeight: 600 }}>{won(row.price)}</div>
-                        <div className="cp-price-sub">
-                          {row.regular_price ? `기준가 ${num(row.regular_price)}${discount != null ? ` · ${discount}%` : ''}` : '기준가 없음'}
-                        </div>
+                        <CoupangInlineCell
+                          value={row.price}
+                          label="판매가"
+                          unit="원"
+                          blockedReason={inlineEditBlock(row, 'price')}
+                          display={<span style={{ fontWeight: 600 }}>{won(row.price)}</span>}
+                          onCommit={(v) => onInline(row, 'price', v)}
+                        />
+                        <CoupangInlineCell
+                          value={row.regular_price}
+                          label="할인율 기준가"
+                          unit="원"
+                          className="cp-price-sub"
+                          blockedReason={inlineEditBlock(row, 'originalPrice')}
+                          display={row.regular_price ? `기준가 ${num(row.regular_price)}${discount != null ? ` · ${discount}%` : ''}` : '기준가 없음'}
+                          onCommit={(v) => onInline(row, 'originalPrice', v)}
+                        />
                       </div>
-                      <div className={`cp-right cp-num${row.stock === 0 ? ' cp-stock-zero' : ''}`}>{num(row.stock)}</div>
-                      <div><StatusChip row={row} /></div>
+                      <div className={`cp-right cp-num${row.stock === 0 ? ' cp-stock-zero' : ''}`}>
+                        <CoupangInlineCell
+                          value={row.stock}
+                          label="재고"
+                          unit="개"
+                          blockedReason={inlineEditBlock(row, 'quantity')}
+                          display={num(row.stock)}
+                          onCommit={(v) => onInline(row, 'quantity', v)}
+                        />
+                      </div>
+                      <div><StatusButton row={row} onInline={onInline} /></div>
                       <div style={{ fontSize: 12, lineHeight: 1.35, minWidth: 0 }}>
                         <div className="cp-mono cp-ellipsis" title={row.barcode ?? ''}>{row.barcode || '—'}</div>
                         <div className="cp-ellipsis" style={{ color: '#6B7280' }} title={row.item_code ?? ''}>{row.item_code || '—'}</div>

@@ -114,6 +114,7 @@ const CoupangManagement: React.FC = () => {
         onCollapseAll={s.collapseAll}
         onToggleOption={s.toggleOption}
         onToggleRows={s.toggleRows}
+        onInline={s.applyInline}
         onOpenDetail={s.setDetailItemId}
         onFetchDetail={s.runDetailForProduct}
         onPackageType={s.changePackageType}
@@ -127,6 +128,8 @@ const CoupangManagement: React.FC = () => {
       {s.detailGroup && (
         <CoupangProductDetailPanel
           group={s.detailGroup}
+          userId={s.userId}
+          onChanged={s.reload}
           busy={s.busy}
           onClose={() => s.setDetailItemId(null)}
           onRefetch={(itemId) => { s.setDetailItemId(null); void s.runDetailForProduct(itemId) }}
