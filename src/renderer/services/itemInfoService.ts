@@ -60,6 +60,39 @@ export async function fetchItemInfos(userId: string): Promise<ItemInfoRow[]> {
 }
 
 // ══════════════════════════════════════════════════════════════════
+// 조회 — 바코드 목록의 행만 (라벨 출력 때 직접 입력 혼용률을 덮어쓰기용)
+//   바코드를 IN_CHUNK 개씩 in() 조회 (URL 길이), 각 묶음도 1000-row 루프
+// ══════════════════════════════════════════════════════════════════
+
+const IN_CHUNK = 100
+
+export async function fetchItemInfosByBarcodes(userId: string, barcodes: string[]): Promise<Map<string, ItemInfoRow>> {
+  const map = new Map<string, ItemInfoRow>()
+  const unique = Array.from(new Set(barcodes.map((b) => b.trim()).filter(Boolean)))
+  if (!userId || unique.length === 0) return map
+
+  for (let i = 0; i < unique.length; i += IN_CHUNK) {
+    const chunk = unique.slice(i, i + IN_CHUNK)
+    for (let from = 0; ; from += PAGE_SIZE) {
+      const { data, error } = await supabase
+        .from('si_item_info')
+        .select('*')
+        .eq('user_id', userId)
+        .in('barcode', chunk)
+        .range(from, from + PAGE_SIZE - 1)
+      if (error) {
+        console.error('[fetchItemInfosByBarcodes]', error)
+        throw error
+      }
+      const rows = (data ?? []) as ItemInfoRow[]
+      for (const r of rows) if (r.barcode) map.set(r.barcode, r)
+      if (rows.length < PAGE_SIZE) break
+    }
+  }
+  return map
+}
+
+// ══════════════════════════════════════════════════════════════════
 // 저장 — 기존 행은 id 기준, 신규 행은 (user_id, barcode) 기준 upsert
 // ══════════════════════════════════════════════════════════════════
 

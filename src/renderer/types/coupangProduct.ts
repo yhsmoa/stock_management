@@ -40,6 +40,20 @@ export interface CoupangProductRow {
   status_checked_at: string | null  // 판매상태 API 로 확인한 시각
   app_changed_at: string | null     // 이 앱에서 가격·재고·상태를 바꾼 시각
   excel_synced_at: string | null    // 가격/재고 엑셀로 반영된 시각
+  /**
+   * 고시정보 (상세 받기 때 저장) — null = 아직 받은 적 없음, [] = 받았지만 없음.
+   * 목록 조회(ROW_COLUMNS)에는 싣지 않아 보통 undefined — 상세 패널이 fetchProductNotices 로 따로 받는다
+   */
+  notices?: CoupangNotice[] | null
+  /** 혼용률 — 고시정보 "제품 소재"/"소재" 값 (라벨 소재란). 안내 문구뿐이면 null */
+  composition: string | null
+}
+
+/** 고시정보 한 칸 (쿠팡 notices[] 를 줄인 모양) */
+export interface CoupangNotice {
+  category: string   // 고시정보 분류 (noticeCategoryName) — 예: 의류
+  name: string       // 항목명 (noticeCategoryDetailName) — 예: 제품 소재
+  content: string    // 값 — 예: COTTON 80 POLYESTER 20
 }
 
 /** 행의 출처 — channel 이 없으면 바코드 유무로 판단 */
@@ -207,6 +221,14 @@ export interface ApiDetailItem {
   images?: ApiDetailImage[] | null
   attributes?: ApiDetailAttribute[] | null
   searchTags?: string[] | null
+  notices?: ApiDetailNotice[] | null
+}
+
+/** 상세 응답의 고시정보 한 칸 */
+export interface ApiDetailNotice {
+  noticeCategoryName?: string | null
+  noticeCategoryDetailName?: string | null
+  content?: string | null
 }
 
 export interface ApiShippingInfo {

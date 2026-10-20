@@ -6,9 +6,10 @@
    ================================================================ */
 
 import React, { useEffect, useState } from 'react'
-import type { CoupangProductGroup, ApiProductHistory } from '../../types/coupangProduct'
+import type { CoupangProductGroup, ApiProductHistory, CoupangNotice } from '../../types/coupangProduct'
 import { productKind, rowChannel } from '../../types/coupangProduct'
-import { fetchProductHistories } from '../../services/coupangProductService'
+import { fetchProductHistories, fetchProductNotices } from '../../services/coupangProductService'
+import { isCompositionNoticeName } from '../../services/coupangNotices'
 import { num, won, deliveryChargeLabel, shortDateTime } from './format'
 import CoupangProductEditForm from './CoupangProductEditForm'
 import { useCoupangProductEdit } from './useCoupangProductEdit'
@@ -36,8 +37,23 @@ const CoupangProductDetailPanel: React.FC<Props> = ({ group, userId, busy, onClo
   const [histories, setHistories] = useState<ApiProductHistory[] | null>(null)
   const [historyError, setHistoryError] = useState<string | null>(null)
 
+  // 고시정보 — DB 에 저장된 값 (상세 받기 때 저장). undefined = 읽는 중, null = 받은 적 없음
+  const [notices, setNotices] = useState<{ list: CoupangNotice[] | null; composition: string | null } | undefined>(undefined)
+  const [noticeError, setNoticeError] = useState<string | null>(null)
+
   // 다른 상품을 열면 [정보] 탭부터
   useEffect(() => { setTab('info') }, [group.itemId])
+
+  // 고시정보 — 패널을 열 때 상품 1개만 (목록 조회에는 싣지 않는다)
+  useEffect(() => {
+    let cancelled = false
+    setNotices(undefined)
+    setNoticeError(null)
+    fetchProductNotices(userId, group.itemId)
+      .then((r) => { if (!cancelled) setNotices({ list: r.notices, composition: r.composition }) })
+      .catch((err) => { if (!cancelled) setNoticeError(err instanceof Error ? err.message : '고시정보 조회 실패') })
+    return () => { cancelled = true }
+  }, [userId, group.itemId])
 
   // 상태 변경 이력 — 패널을 열 때 한 번
   useEffect(() => {
@@ -132,6 +148,42 @@ const CoupangProductDetailPanel: React.FC<Props> = ({ group, userId, busy, onClo
                 </div>
               ))}
             </div>
+          </section>
+
+          {/* ── 고시정보 (상세 받기 때 저장한 값) ── */}
+          <section className="cp-panel-section">
+            <h3>
+              고시정보
+              {notices?.list && notices.list[0]?.category && <span className="cp-notice-category"> · {notices.list[0].category}</span>}
+            </h3>
+            {noticeError && <div style={{ color: '#B91C1C', fontSize: 12 }}>{noticeError}</div>}
+            {!noticeError && notices === undefined && <div style={{ color: '#6B7280', fontSize: 12 }}>불러오는 중…</div>}
+            {notices && notices.list === null && (
+              <div style={{ color: '#6B7280', fontSize: 12 }}>
+                아직 받지 않았습니다 — 아래 [이 상품 다시 받기] 나 [상세 받기] › 고시정보 받기 뒤에 보입니다.
+              </div>
+            )}
+            {notices?.list && notices.list.length === 0 && <div style={{ color: '#6B7280', fontSize: 12 }}>쿠팡에 등록된 고시정보가 없습니다.</div>}
+            {notices?.list && notices.list.length > 0 && (
+              <>
+                <dl className="cp-dl">
+                  {notices.list.map((n, i) => {
+                    const isComposition = isCompositionNoticeName(n.name)
+                    return (
+                      <React.Fragment key={i}>
+                        <dt className={isComposition ? 'cp-notice-key' : undefined}>{n.name}</dt>
+                        <dd className={isComposition ? 'cp-notice-key' : undefined}>{n.content || '—'}</dd>
+                      </React.Fragment>
+                    )
+                  })}
+                </dl>
+                <div className="cp-notice-composition">
+                  라벨 혼용률: {notices.composition
+                    ? <b>{notices.composition}</b>
+                    : <span>없음 (소재 칸이 비었거나 "상세페이지 참조" 같은 안내 문구 — 상품정보 화면에서 직접 입력하면 그 값을 씁니다)</span>}
+                </div>
+              </>
+            )}
           </section>
 
           {/* ── 상태 변경 이력 (쿠팡 API) ── */}

@@ -18,6 +18,7 @@ import {
   syncProductList,
   syncProductDetails,
   fetchDetailMissingProductIds,
+  fetchNoticesMissingProductIds,
   checkSalesStatus,
   fetchStaleStatusOptionIds,
   applyChanges,
@@ -30,7 +31,7 @@ import {
   type ClassifyExcelResult,
   type DetailMissingIds,
 } from '../services/coupangProductService'
-import { toLabelPrintItems } from '../services/labelService'
+import { toLabelPrintItems, applyManualComposition } from '../services/labelService'
 import { compareOptionNames } from '../components/coupang/optionSort'
 import { inlineEditBlock, type InlineField } from '../components/coupang/editRules'
 import { priceInputProblem, priceLimitViolation } from '../components/coupang/priceRules'
@@ -64,8 +65,14 @@ const DEFAULT_FILTERS: CoupangProductFilters = {
   search: '',
 }
 
-/** 상세 동기화 범위 */
-export type DetailSyncScope = 'missingOnSale' | 'missingAll'
+/** 상세 동기화 범위 — 상세 미수신 / 고시정보 미수신(고시정보 저장 전에 상세를 받은 상품) */
+export type DetailSyncScope = 'missingOnSale' | 'missingAll' | 'noticesOnSale' | 'noticesAll'
+
+/** 범위 선택 모달의 대상 수 */
+export interface DetailScopeCounts {
+  missing: DetailMissingIds
+  notices: DetailMissingIds
+}
 
 export function useCoupangManagement() {
   const userId = useMemo(() => getCurrentUserId(), [])
@@ -92,7 +99,7 @@ export function useCoupangManagement() {
   // ── 동기화 · 변경 진행 ──
   const [progress, setProgress] = useState<SyncProgress | null>(null)
   const abortRef = useRef<AbortController | null>(null)
-  const [detailScope, setDetailScope] = useState<{ open: boolean; counts: DetailMissingIds | null }>({ open: false, counts: null })
+  const [detailScope, setDetailScope] = useState<{ open: boolean; counts: DetailScopeCounts | null }>({ open: false, counts: null })
 
   // ── 모달 · 패널 ──
   const [detailItemId, setDetailItemId] = useState<string | null>(null)
@@ -318,8 +325,10 @@ export function useCoupangManagement() {
     if (!userId || busy) return
     setDetailScope({ open: true, counts: null })
     try {
-      const counts = await fetchDetailMissingProductIds(userId)
-      setDetailScope((s) => (s.open ? { open: true, counts } : s))
+      // 순서대로 — 큰 계정에서 동시에 세면 statement timeout (CLAUDE.md 규모 주의)
+      const missing = await fetchDetailMissingProductIds(userId)
+      const notices = await fetchNoticesMissingProductIds(userId)
+      setDetailScope((s) => (s.open ? { open: true, counts: { missing, notices } } : s))
     } catch (err) {
       console.error('[openDetailSync] 대상 조회 실패:', err)
       setDetailScope({ open: false, counts: null })
@@ -347,7 +356,12 @@ export function useCoupangManagement() {
     const counts = detailScope.counts
     setDetailScope({ open: false, counts: null })
     if (!counts) return
-    void runDetailSync(scope === 'missingOnSale' ? counts.onSale : counts.all)
+    switch (scope) {
+      case 'missingOnSale': void runDetailSync(counts.missing.onSale); break
+      case 'missingAll': void runDetailSync(counts.missing.all); break
+      case 'noticesOnSale': void runDetailSync(counts.notices.onSale, '고시정보 받기'); break
+      case 'noticesAll': void runDetailSync(counts.notices.all, '고시정보 받기'); break
+    }
   }, [detailScope.counts, runDetailSync])
 
   const runDetailForProduct = useCallback((itemId: string) => runDetailSync([itemId], '이 상품 다시 받기'), [runDetailSync])
@@ -539,12 +553,17 @@ export function useCoupangManagement() {
     }
   }, [userId, busy, startProgress, updateProgress, finishProgress])
 
-  const printLabels = useCallback(() => {
+  const printLabels = useCallback(async () => {
     const { items, skipped } = toLabelPrintItems(selectedRows)
     if (items.length === 0) { alert('선택한 항목에 바코드가 없어 라벨을 출력할 수 없습니다.'); return }
     if (skipped > 0) alert(`바코드가 없는 ${skipped}개 항목은 제외하고 ${items.length}개만 출력합니다.`)
+    // 혼용률: 쿠팡 고시정보 값(행의 composition) → 상품정보 화면 직접 입력값이 있으면 그쪽으로
+    if (userId) {
+      try { await applyManualComposition(items, userId) }
+      catch (err) { console.error('[printLabels] 직접 입력 혼용률 조회 실패 — 쿠팡 값으로 인쇄:', err) }
+    }
     setLabelItems(items)
-  }, [selectedRows])
+  }, [selectedRows, userId])
 
   // ══════════════════════════════════════════════════════════════
   // 상세 패널

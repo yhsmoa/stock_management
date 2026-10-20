@@ -12,7 +12,7 @@
    ================================================================ */
 
 import { supabase } from './supabase'
-import { toLabelPrintItems, type LabelSourceItem } from './labelService'
+import { toLabelPrintItems, applyManualComposition, type LabelSourceItem } from './labelService'
 import type { LabelPrintItem } from './labelPrintService'
 import type { RgItem } from '../types/purchase'
 
@@ -23,7 +23,7 @@ const OPTION_ID_CHUNK = 100
 
 /** toLabelPrintItems 가 읽는 si_coupang_items 컬럼 (LabelSourceItem 과 같게) */
 const COUPANG_LABEL_COLUMNS =
-  'option_id, barcode, item_name, option_name, product_name, item_code, item_id, product_id, price, regular_price, stock, season, note, package_type'
+  'option_id, barcode, item_name, option_name, product_name, item_code, item_id, product_id, price, regular_price, stock, season, note, package_type, composition'
 
 // ══════════════════════════════════════════════════════════════════
 // 타입 정의
@@ -112,6 +112,8 @@ export async function buildPurchaseLabelItems(rows: RgItem[], userId: string): P
   })
   // 바코드 없는 행 제외 규칙은 상품관리와 같다 (toLabelPrintItems)
   const { items, skipped } = toLabelPrintItems(sources)
+  // 혼용률: 상품정보 화면의 직접 입력값이 있으면 쿠팡 고시정보 값보다 우선
+  await applyManualComposition(items, userId)
   const missingCode = items.filter((it) => !String(it.data.item_code ?? '').trim()).length
   return { items, skipped, missingCode }
 }

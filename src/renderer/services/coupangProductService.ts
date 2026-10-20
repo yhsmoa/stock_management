@@ -34,6 +34,8 @@ import type {
   ApiProductHistory,
 } from '../types/coupangProduct'
 import { PACKAGE_TYPE_OPTIONS } from '../types/coupangProduct'
+import type { CoupangNotice } from '../types/coupangProduct'
+import { toCoupangNotices, extractComposition } from './coupangNotices'
 
 // ── 상수 ──────────────────────────────────────────────────────────
 const TABLE = 'si_coupang_items'
@@ -43,6 +45,19 @@ const UPSERT_BATCH = 500           // upsert 배치 크기
 const IN_CHUNK = 100               // .in() 한 번에 보낼 ID 수 (URL 길이 보호)
 const LIST_PAGE_SIZE = 100         // 쿠팡 목록 maxPerPage 최대
 const LIST_MAX_PAGES = 5000        // 목록 nextToken 무한 루프 방지
+
+/**
+ * 목록 · 내보내기에서 읽는 칼럼 — 고시정보(notices, 옵션당 ~1KB JSON)는 뺀다.
+ * 7.8만 행 계정에서 '*' 로 읽으면 고시정보만 수십 MB 라, 고시정보는 상세 패널을 열 때 상품 1개만 받는다
+ * (fetchProductNotices). CoupangProductRow 의 칼럼이 늘면 여기도 같이 늘린다.
+ */
+const ROW_COLUMNS = [
+  'option_id', 'user_id', 'item_id', 'product_id', 'item_status', 'barcode', 'item_code',
+  'product_name', 'item_name', 'option_name', 'price', 'regular_price', 'sales_status', 'stock',
+  'sales_data', 'coupang_approval', 'package_type', 'note', 'season', 'channel', 'img_url',
+  'delivery_charge_type', 'delivery_charge', 'free_ship_over_amount',
+  'detail_synced_at', 'status_checked_at', 'app_changed_at', 'excel_synced_at', 'composition',
+].join(', ')
 
 // ══════════════════════════════════════════════════════════════════
 // 공통 헬퍼
@@ -212,7 +227,7 @@ export async function fetchProductPage(
   const rows: CoupangProductRow[] = []
   for (const ids of chunk(itemIds, IN_CHUNK)) {
     for (let from = 0; ; from += PAGE_ROWS) {
-      const query = supabase.from(TABLE).select('*')
+      const query = supabase.from(TABLE).select(ROW_COLUMNS)
       applyFilters(query as unknown as FilterableQuery, userId, filters)
       const { data, error } = await query
         .in('item_id', ids)
@@ -223,7 +238,8 @@ export async function fetchProductPage(
         console.error('[fetchProductPage] 옵션 행 조회 오류:', error)
         throw error
       }
-      rows.push(...((data ?? []) as CoupangProductRow[]))
+      // ROW_COLUMNS 가 런타임 문자열이라 supabase 가 행 타입을 추론하지 못한다 → 칼럼 목록과 같은 모양으로 단언
+      rows.push(...((data ?? []) as unknown as CoupangProductRow[]))
       if (!data || data.length < PAGE_ROWS) break
     }
   }
@@ -352,11 +368,15 @@ async function fetchAllRows<T>(
   userId: string,
   select: string,
   onProgress?: (done: number, total: number) => void,
+  /** 추가 조건 (건수 · 페이지 조회에 똑같이 건다) */
+  where?: (q: FilterableQuery & { not: (c: string, op: string, v: unknown) => unknown }) => void,
 ): Promise<T[]> {
-  const { count, error: countError } = await supabase
+  const countQuery = supabase
     .from(TABLE)
     .select('option_id', { count: 'exact', head: true })
     .eq('user_id', userId)
+  where?.(countQuery as never)
+  const { count, error: countError } = await countQuery
   if (countError) throw countError
   const total = count ?? 0
   const pages = Math.ceil(total / PAGE_ROWS)
@@ -365,10 +385,12 @@ async function fetchAllRows<T>(
 
   const fetchPage = async (p: number) => {
     const from = p * PAGE_ROWS
-    const { data, error } = await supabase
+    const pageQuery = supabase
       .from(TABLE)
       .select(select)
       .eq('user_id', userId)
+    where?.(pageQuery as never)
+    const { data, error } = await pageQuery
       .order('option_id')
       .range(from, from + PAGE_ROWS - 1)
     if (error) throw error
@@ -673,6 +695,9 @@ interface DetailRow {
   delivery_charge: number | null
   free_ship_over_amount: number | null
   detail_synced_at: string
+  /** 고시정보 — 받았으면 항상 배열([] 포함) 이라 "미수신(null)" 과 구분된다 */
+  notices: CoupangNotice[]
+  composition: string | null
 }
 
 interface ParsedDetail {
@@ -723,6 +748,9 @@ export function parseProductDetail(detail: ApiProductDetail, userId: string, now
     const optionName = textOrNull(item.itemName)
     const itemStatus = offerConditionLabel(item.offerCondition)
     const imgUrl = getRepresentativeImageUrl(item.images ?? undefined)
+    // 고시정보는 옵션(item) 단위 — 하이브리드면 일반·로켓 두 행에 같은 값을 둔다
+    const notices = toCoupangNotices(item.notices)
+    const composition = extractComposition(notices)
     const mp = item.marketplaceItemData ?? item.marketPlaceItemData
     const rg = item.rocketGrowthItemData
 
@@ -740,6 +768,8 @@ export function parseProductDetail(detail: ApiProductDetail, userId: string, now
           stock: v.stock,
           channel,
           img_url: imgUrl,
+          notices,
+          composition,
           ...common,
         },
       })
@@ -837,6 +867,46 @@ export async function fetchDetailMissingProductIds(userId: string): Promise<Deta
   const missing = [...all].filter((id) => !synced.has(id))
   const missingOnSale = missing.filter((id) => onSale.has(id))
   return { onSale: missingOnSale, all: [...missingOnSale, ...missing.filter((id) => !onSale.has(id))] }
+}
+
+/**
+ * 상세는 받았지만 고시정보가 없는(notices = null) 상품 — 고시정보 저장(2026-10-20) 전에 상세를 받은 상품.
+ * [상세 받기] 의 '고시정보 받기' 범위. 고시정보 JSON 은 읽지 않고 서버에서 null 로 거른다.
+ */
+export async function fetchNoticesMissingProductIds(userId: string): Promise<DetailMissingIds> {
+  type Row = Pick<CoupangProductRow, 'item_id' | 'sales_status'>
+  const rows = await fetchAllRows<Row>(userId, 'item_id, sales_status', undefined, (q) => {
+    q.is('notices', null)
+    q.not('detail_synced_at', 'is', null)
+  })
+  const onSale = new Set<string>()
+  const all = new Set<string>()
+  for (const r of rows) {
+    if (!r.item_id) continue
+    all.add(r.item_id)
+    if (r.sales_status === '판매중') onSale.add(r.item_id)
+  }
+  const onSaleIds = [...all].filter((id) => onSale.has(id))
+  return { onSale: onSaleIds, all: [...onSaleIds, ...[...all].filter((id) => !onSale.has(id))] }
+}
+
+/** 상품 1개의 고시정보 · 혼용률 (상세 패널용) — 받은 적이 없으면 notices = null */
+export async function fetchProductNotices(
+  userId: string,
+  itemId: string,
+): Promise<{ notices: CoupangNotice[] | null; composition: string | null }> {
+  // 하이브리드면 같은 고시정보가 일반·로켓 두 행에 있다 — 받은 행 하나면 충분
+  const { data, error } = await supabase
+    .from(TABLE)
+    .select('notices, composition')
+    .eq('user_id', userId)
+    .eq('item_id', itemId)
+    .not('notices', 'is', null)
+    .order('option_id')
+    .limit(1)
+  if (error) throw error
+  const row = (data ?? [])[0] as { notices: CoupangNotice[] | null; composition: string | null } | undefined
+  return { notices: row?.notices ?? null, composition: row?.composition ?? null }
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -1125,7 +1195,7 @@ export async function uploadClassifyExcel(file: File, userId: string): Promise<C
 // ══════════════════════════════════════════════════════════════════
 
 export async function exportProductsToExcel(userId: string, onProgress?: (done: number, total: number) => void): Promise<number> {
-  const rows = await fetchAllRows<CoupangProductRow>(userId, '*', onProgress)
+  const rows = await fetchAllRows<CoupangProductRow>(userId, ROW_COLUMNS, onProgress)
   if (rows.length === 0) return 0
 
   const sheetRows = rows.map((r) => ({
@@ -1143,6 +1213,7 @@ export async function exportProductsToExcel(userId: string, onProgress?: (done: 
     '판매상태': r.sales_status,
     '재고': r.stock,
     '승인상태': r.coupang_approval,
+    '혼용률': r.composition,
     '분류': r.package_type,
     '비고': r.note,
     '시즌': r.season,

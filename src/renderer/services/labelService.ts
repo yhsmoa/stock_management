@@ -7,6 +7,8 @@
 
 import type { AuthUser } from '../types/auth'
 import type { LabelPrintItem } from './labelPrintService'
+import { fetchItemInfosByBarcodes } from './itemInfoService'
+import { isRealComposition } from './coupangNotices'
 
 // ══════════════════════════════════════════════════════════════════
 // 타입 정의
@@ -28,6 +30,8 @@ export interface LabelSourceItem {
   season?: string | null
   note?: string | null
   package_type?: string | null
+  /** 혼용률 — 쿠팡 고시정보 "제품 소재"/"소재" (상세 받기 때 저장). 직접 입력값(si_item_info)이 있으면 그쪽 우선 */
+  composition?: string | null
 }
 
 /** 로그인 계정 — 템플릿 범위("내 것 + 공용")·인쇄 기록에 쓴다 */
@@ -86,8 +90,28 @@ export function toLabelPrintItems(items: LabelSourceItem[]): { items: LabelPrint
         season: it.season ?? '',
         note: it.note ?? '',
         package_type: it.package_type ?? '',
+        composition: it.composition ?? '',
       },
     })
   }
   return { items: out, skipped }
+}
+
+// ══════════════════════════════════════════════════════════════════
+// 직접 입력 혼용률 덮어쓰기 — 아이템관리 › 상품정보(si_item_info)
+//   혼용률 출처 우선순위: ① 상품정보 화면에서 직접 입력한 값 (바코드 기준)
+//                       ② 쿠팡 고시정보 "제품 소재"/"소재" (si_coupang_items.composition)
+//   쿠팡 값이 "상세페이지 참조" 같은 안내 문구라 비어 있거나, 틀린 상품을 직접 고칠 때 ①을 쓴다.
+//   두 라벨 화면(상품관리 [라벨출력] · 사입관리 [라벨])이 인쇄 직전에 같이 부른다.
+// ══════════════════════════════════════════════════════════════════
+
+/** 인쇄 항목의 data.composition 을 직접 입력값으로 덮어쓴다 (items 를 직접 고친다) */
+export async function applyManualComposition(items: LabelPrintItem[], userId: string): Promise<void> {
+  const barcodes = items.map((it) => String(it.data.barcode ?? ''))
+  const manual = await fetchItemInfosByBarcodes(userId, barcodes)
+  if (manual.size === 0) return
+  for (const it of items) {
+    const row = manual.get(String(it.data.barcode ?? '').trim())
+    if (row && isRealComposition(row.composition)) it.data.composition = row.composition!.trim()
+  }
 }
