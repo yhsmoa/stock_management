@@ -1,8 +1,9 @@
 /* ================================================================
    상품관리 — 옵션 칸 바로 수정 가능 여부 (즉시 반영 묶음: 판매가 · 기준가 · 재고 · 판매상태)
    - 쿠팡 옵션별 API 는 승인완료 후 발급된 옵션 ID 에만 쓸 수 있다
-   - 로켓그로스 옵션에 이 API 들이 통하는지는 쿠팡 문서에 없다 → 운영 시험 전까지 잠근다
-     (docs/plan-coupang-product-edit.md 4단계. 시험이 통과하면 RG_OPTION_DIRECT_EDIT 를 켠다)
+   - 로켓그로스 옵션: 쿠팡 문서에는 언급이 없어 운영에서 시험했다 (2026-10-20, hilili 하이브리드 상품의
+     로켓 옵션 90361189025) — 판매가 · 기준가 · 판매 중지/재개 모두 성공 → RG_OPTION_DIRECT_EDIT 켬.
+     재고는 로켓창고 수량이라 계속 막는다.
    ================================================================ */
 
 import type { CoupangProductRow } from '../../types/coupangProduct'
@@ -10,8 +11,8 @@ import { rowChannel } from '../../types/coupangProduct'
 
 export type InlineField = 'price' | 'originalPrice' | 'quantity' | 'status'
 
-/** 로켓그로스 옵션의 판매가 · 기준가 · 판매상태 바로 수정 — 운영 시험 전까지 꺼 둔다 */
-export const RG_OPTION_DIRECT_EDIT = false
+/** 로켓그로스 옵션의 판매가 · 기준가 · 판매상태 바로 수정 — 운영 시험 통과 (2026-10-20) */
+export const RG_OPTION_DIRECT_EDIT = true
 
 const APPROVED = '승인완료'
 
