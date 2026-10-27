@@ -109,6 +109,15 @@ Electron is built separately via `scripts/build-electron.mjs` (called manually; 
 - **규모 주의**: immong 계정 옵션 78,012 · 상품 16,290 (하이브리드 5,387). 한 화면에서 count 쿼리를 동시에 10개 넘게 보내면 Supabase statement timeout 이 난다 → 페이지 → 요약 → 건수 **순서대로** 받는다. 쿠팡은 **등록 IP(Railway)만** 받으므로 로컬 dev 에서 쿠팡 호출은 403 — 새 프록시 경로는 배포 후에만 확인할 수 있다.
 - 사입관리 [바코드 동기화]와 같은 상세 응답을 쓰므로, 하이브리드 상품은 한 호출로 `si_rg_items` 와 `si_coupang_items` 를 같이 채울 수 있다 — 아직 합치지 않았다(각자 호출).
 
+### 로켓그로스 콘솔 (2026-10-27)
+`/rocket-console`(물류 › 출고관리 › 로켓그로스 콘솔)은 쿠팡윙 로켓그로스 **입고 생성** 화면에 F12 › Console 로 붙여넣을 자동화 스크립트를 만든다. 쿠팡 API 나 DB 는 쓰지 않는다 — 엑셀을 읽어 문자열을 만들고 복사만 한다.
+- **화면**: 맨 위 엑셀 드롭 영역(`components/rocket-console/InboundExcelDrop.tsx`)에서 한 번만 받고, 아래 보드(`ConsoleBoard.tsx`)들이 같은 엑셀로 각자 스크립트를 만든다. 보드는 `pages/useRocketConsole.ts` 의 `BOARD_DEFS` 배열 — 단계를 늘릴 때는 항목 하나 + 서비스 build 함수 하나 + 템플릿 하나. 예정 5단계 중 1·2단계가 있다.
+- **엑셀 해석**: `parseInboundExcel` (`services/rocketConsoleService.ts`) — 시트 '로켓그로스 입고', '옵션 ID' 머리글 아래 · '예시 및 설명' 행 제외. 옵션 ID 가 숫자가 아니거나 입고 수량이 양의 정수가 아닌 행은 **모든 단계에서 함께 뺀다**(2단계가 화면 ↔ 엑셀을 대조하므로 단계마다 목록이 다르면 안 된다). 같은 옵션 ID 가 다시 나오면 첫 행만 쓰고 경고, 2단계는 수량을 정할 수 없어 만들지 않는다.
+- **스크립트 = 템플릿 원문**: `services/rocketConsoleScripts/*.console.js` 를 `?raw` 로 읽어 `@@FILE_NAME@@`·`@@COUNT@@`·데이터 줄(`    /*@@이름@@*/`)만 바꾼다. 운영자가 쓰던 콘솔과 글자 단위로 같다(첨부 엑셀로 대조 확인). 쿠팡윙 화면 선택자가 바뀌면 템플릿만 고치고 자리표시는 남긴다 — 빠진 자리표시가 있으면 서비스가 오류를 낸다. 템플릿은 tsc 대상이 아니다(allowJs 없음).
+  - 1단계 상품 선택 = `selectProducts.console.js` (옵션 ID 20개씩 검색 → 체크) · 2단계 상품 확인·수량 입력 = `inputQuantities.console.js` (화면 상품 ↔ 엑셀 대조, 다르면 아무것도 입력하지 않고 정지 → 수량 입력 → 재검증).
+  - 상품명 · 옵션명은 `jsString` 으로 이스케이프한다(`'` · `\` · 줄바꿈 · U+2028/2029).
+- 클립보드 복사는 `utils/clipboard.ts`(`copyTextToClipboard`) — 다른 화면의 인라인 execCommand 복사는 아직 이걸로 안 옮겼다.
+
 ### 사입관리 — 상품 동기화 (2026-10-08)
 `/purchase-management` 의 행은 `si_rg_items`(로켓그로스 옵션 1개 = 1행)다. 쿠팡 값과 직접 입력값(비고·주문수량·카트·상태·입력·가격수정시각)이 **같은 행**에 있다.
 - **[리셋]·[업데이트]** = 상품 목록 API → `syncRgItemsFromList`(`purchaseService.ts`). 옵션 ID(`vendor_item_id`)로 맞춰 **목록 칼럼만** 고친다(`LIST_SYNC_COLUMNS`: 등록상품 ID·노출상품 ID·상태·상품명·판매시작·옵션명·등록옵션 ID). 리셋은 여기에 더해 목록에 없는 옵션을 지운다(저장 실패가 있으면 지우기를 건너뜀). 예전처럼 계정 행을 통째로 지우고 다시 넣으면 직접 입력값이 사라지니 그렇게 되돌리지 않는다.

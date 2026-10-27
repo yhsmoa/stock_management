@@ -119,6 +119,8 @@ const SECTIONS: Section[] = [
         children: [
           { path: '/shipment-list',   label: '출고리스트' },
           { path: '/rocket-shipment', label: '로켓그로스 출고' },
+          // 쿠팡윙 로켓그로스 입고 단계별 자동화 콘솔 스크립트 생성
+          { path: '/rocket-console',  label: '로켓그로스 콘솔' },
         ],
       },
       // 라벨 양식 편집 · PC별 프린터 지정 (상품관리 [라벨출력] 이 이 템플릿으로 인쇄)

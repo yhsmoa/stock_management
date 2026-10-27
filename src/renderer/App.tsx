@@ -9,6 +9,7 @@ import Inventory from './pages/Inventory'
 import InManagement from './pages/InManagement'
 import ShipmentList from './pages/ShipmentList'
 import RocketShipment from './pages/RocketShipment'
+import RocketConsole from './pages/RocketConsole'
 import Export from './pages/Export'
 import CoupangManagement from './pages/CoupangManagement'
 import PurchaseManagement from './pages/PurchaseManagement'
@@ -52,6 +53,7 @@ const router = createBrowserRouter([
       { path: '/in-management', element: <InManagement /> },
       { path: '/shipment-list', element: <ShipmentList /> },
       { path: '/rocket-shipment', element: <RocketShipment /> },
+      { path: '/rocket-console', element: <RocketConsole /> },
       { path: '/coupang-return', element: <Export /> },
       { path: '/label-settings', element: <LabelSettings /> },
     ],
