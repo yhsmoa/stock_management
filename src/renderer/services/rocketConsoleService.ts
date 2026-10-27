@@ -5,6 +5,7 @@
      스크립트를 만든다.
        · 1단계 상품 선택        — buildSelectProductsScript
        · 2단계 상품 확인·수량 입력 — buildInputQuantitiesScript
+       · 3단계 사이즈 분류 리포트  — buildSizeReportScript
    - 스크립트 본문은 rocketConsoleScripts/*.console.js 템플릿 원문 그대로이고,
      @@자리표시@@ 만 바꾼다. 쿠팡윙 화면이 바뀌어 스크립트를 고칠 때는
      템플릿 파일만 고친다 (자리표시는 남겨 둘 것).
@@ -15,6 +16,7 @@
 import * as XLSX from 'xlsx'
 import selectProductsTemplate from './rocketConsoleScripts/selectProducts.console.js?raw'
 import inputQuantitiesTemplate from './rocketConsoleScripts/inputQuantities.console.js?raw'
+import sizeReportTemplate from './rocketConsoleScripts/sizeReport.console.js?raw'
 
 // ══════════════════════════════════════════════════════════════════
 // 엑셀 해석
@@ -33,6 +35,8 @@ const HEADERS = {
   optionName: { name: '옵션명',     prefix: false },
   optionId:   { name: '옵션 ID',    prefix: false },
   qty:        { name: '입고 수량',  prefix: true  },   // '입고 수량 입력\n(필수)'
+  barcode:    { name: '상품바코드', prefix: true  },   // '상품바코드\n(필수)'
+  sizeLabel:  { name: '상품 사이즈', prefix: true },   // '상품 사이즈\n(필수)' — Small/Medium/Large
 } as const
 type HeaderKey = keyof typeof HEADERS
 const REQUIRED_HEADERS: HeaderKey[] = ['optionId', 'qty']
@@ -64,6 +68,8 @@ export interface InboundRow {
   itemName: string        // 등록상품명
   optionName: string      // 옵션명
   qty: number             // 입고 수량 (양의 정수)
+  barcode: string         // 상품바코드 (없으면 '')
+  sizeLabel: string       // 엑셀 상품 사이즈 (없으면 '')
   excelRow: number        // 엑셀 행 번호 (1부터) — 안내용
 }
 
@@ -155,6 +161,8 @@ export async function parseInboundExcel(file: File): Promise<InboundExcel> {
       itemName: cellText(get(row, 'itemName')),
       optionName: cellText(get(row, 'optionName')),
       qty,
+      barcode: cellText(get(row, 'barcode')),
+      sizeLabel: cellText(get(row, 'sizeLabel')),
       excelRow,
     })
   }
@@ -208,6 +216,21 @@ function fillTemplate(template: string, values: Record<string, string>): string 
 /** 데이터 줄 자리표시: 템플릿에는 '    /*@@NAME@@*\/' 한 줄로 두고 여러 줄로 바꾼다 */
 const dataLinesToken = (name: string): string => `    /*@@${name}@@*/`
 
+/**
+ * 수량을 화면과 대조하는 단계(2·3단계) 공통 — 엑셀에 같은 옵션 ID 가 여러 번 있으면
+ * 어느 수량이 맞는지 정할 수 없어 만들지 않는다.
+ */
+function assertNoDuplicateIds(excel: InboundExcel): void {
+  if (excel.duplicateIds.length === 0) return
+  throw new Error(
+    `엑셀에 같은 옵션 ID 가 두 번 이상 있어 입고 수량을 정할 수 없습니다: ${excel.duplicateIds.join(', ')}` +
+    ' — 엑셀에서 한 행으로 합친 뒤 다시 넣어 주세요.',
+  )
+}
+
+/** 파일명에서 엑셀 확장자를 뗀 이름 (3단계 다운로드 파일명 앞부분) */
+const fileTagOf = (fileName: string): string => fileName.replace(/\.(xlsx|xls)$/i, '')
+
 // ══════════════════════════════════════════════════════════════════
 // 1단계 — 상품 선택
 // ══════════════════════════════════════════════════════════════════
@@ -241,17 +264,34 @@ export function buildSelectProductsScript(excel: InboundExcel): string {
  * - 엑셀에 같은 옵션 ID 가 여러 번 있으면 어느 수량이 맞는지 정할 수 없어 만들지 않는다.
  */
 export function buildInputQuantitiesScript(excel: InboundExcel): string {
-  if (excel.duplicateIds.length > 0) {
-    throw new Error(
-      `엑셀에 같은 옵션 ID 가 두 번 이상 있어 입고 수량을 정할 수 없습니다: ${excel.duplicateIds.join(', ')}` +
-      ' — 엑셀에서 한 행으로 합친 뒤 다시 넣어 주세요.',
-    )
-  }
+  assertNoDuplicateIds(excel)
   const lines = excel.rows.map(
     (r) => `    [${r.no},'${r.optionId}',${jsString(r.itemName)},${jsString(r.optionName)},${r.qty}],`,
   )
   return fillTemplate(inputQuantitiesTemplate.replace(/\r\n/g, '\n').split(dataLinesToken('EXCEL_ROWS')).join('@@EXCEL_ROWS@@'), {
     FILE_NAME: safeCommentText(excel.fileName),
+    COUNT: String(excel.rows.length),
+    EXCEL_ROWS: lines.join('\n'),
+  })
+}
+
+// ══════════════════════════════════════════════════════════════════
+// 3단계 — 사이즈 분류 리포트
+// ══════════════════════════════════════════════════════════════════
+
+/**
+ * 3단계 "사이즈 분류 리포트" — 2. 입고 정보 입력 화면 (2단계 수량 입력 뒤)
+ * 화면에 표시된 윙 사이즈(극소형·소형·중형…)·규격·무게를 읽어 엑셀과 합치고,
+ * 사이즈별 시트로 나눈 .xlsx 를 내려받는다 (요약 · 전체 · 사이즈별 · 측정전 · 누락 · 엑셀외).
+ */
+export function buildSizeReportScript(excel: InboundExcel): string {
+  assertNoDuplicateIds(excel)
+  const lines = excel.rows.map(
+    (r) => `    [${r.no},'${r.optionId}',${jsString(r.itemName)},${jsString(r.optionName)},${r.qty},${jsString(r.barcode)},${jsString(r.sizeLabel)}],`,
+  )
+  return fillTemplate(sizeReportTemplate.replace(/\r\n/g, '\n').split(dataLinesToken('EXCEL_ROWS')).join('@@EXCEL_ROWS@@'), {
+    FILE_NAME: safeCommentText(excel.fileName),
+    FILE_TAG: jsString(fileTagOf(excel.fileName)),
     COUNT: String(excel.rows.length),
     EXCEL_ROWS: lines.join('\n'),
   })

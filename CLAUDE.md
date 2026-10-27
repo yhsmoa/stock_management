@@ -111,10 +111,10 @@ Electron is built separately via `scripts/build-electron.mjs` (called manually; 
 
 ### 로켓그로스 콘솔 (2026-10-27)
 `/rocket-console`(물류 › 출고관리 › 로켓그로스 콘솔)은 쿠팡윙 로켓그로스 **입고 생성** 화면에 F12 › Console 로 붙여넣을 자동화 스크립트를 만든다. 쿠팡 API 나 DB 는 쓰지 않는다 — 엑셀을 읽어 문자열을 만들고 복사만 한다.
-- **화면**: 맨 위 엑셀 드롭 영역(`components/rocket-console/InboundExcelDrop.tsx`)에서 한 번만 받고, 아래 보드(`ConsoleBoard.tsx`)들이 같은 엑셀로 각자 스크립트를 만든다. 보드는 `pages/useRocketConsole.ts` 의 `BOARD_DEFS` 배열 — 단계를 늘릴 때는 항목 하나 + 서비스 build 함수 하나 + 템플릿 하나. 예정 5단계 중 1·2단계가 있다.
-- **엑셀 해석**: `parseInboundExcel` (`services/rocketConsoleService.ts`) — 시트 '로켓그로스 입고', '옵션 ID' 머리글 아래 · '예시 및 설명' 행 제외. 옵션 ID 가 숫자가 아니거나 입고 수량이 양의 정수가 아닌 행은 **모든 단계에서 함께 뺀다**(2단계가 화면 ↔ 엑셀을 대조하므로 단계마다 목록이 다르면 안 된다). 같은 옵션 ID 가 다시 나오면 첫 행만 쓰고 경고, 2단계는 수량을 정할 수 없어 만들지 않는다.
+- **화면**: 맨 위 엑셀 드롭 영역(`components/rocket-console/InboundExcelDrop.tsx`)에서 한 번만 받고, 아래 보드(`ConsoleBoard.tsx`)들이 같은 엑셀로 각자 스크립트를 만든다. 보드는 `pages/useRocketConsole.ts` 의 `BOARD_DEFS` 배열 — 단계를 늘릴 때는 항목 하나 + 서비스 build 함수 하나 + 템플릿 하나. 예정 5단계 중 1~3단계가 있다.
+- **엑셀 해석**: `parseInboundExcel` (`services/rocketConsoleService.ts`) — 시트 '로켓그로스 입고', '옵션 ID' 머리글 아래 · '예시 및 설명' 행 제외. 옵션 ID 가 숫자가 아니거나 입고 수량이 양의 정수가 아닌 행은 **모든 단계에서 함께 뺀다**(2단계가 화면 ↔ 엑셀을 대조하므로 단계마다 목록이 다르면 안 된다). 같은 옵션 ID 가 다시 나오면 첫 행만 쓰고 경고, 수량을 화면과 대조하는 2·3단계는 수량을 정할 수 없어 만들지 않는다. 바코드('상품바코드')·엑셀 사이즈('상품 사이즈') 열은 없어도 된다(빈 값).
 - **스크립트 = 템플릿 원문**: `services/rocketConsoleScripts/*.console.js` 를 `?raw` 로 읽어 `@@FILE_NAME@@`·`@@COUNT@@`·데이터 줄(`    /*@@이름@@*/`)만 바꾼다. 운영자가 쓰던 콘솔과 글자 단위로 같다(첨부 엑셀로 대조 확인). 쿠팡윙 화면 선택자가 바뀌면 템플릿만 고치고 자리표시는 남긴다 — 빠진 자리표시가 있으면 서비스가 오류를 낸다. 템플릿은 tsc 대상이 아니다(allowJs 없음).
-  - 1단계 상품 선택 = `selectProducts.console.js` (옵션 ID 20개씩 검색 → 체크) · 2단계 상품 확인·수량 입력 = `inputQuantities.console.js` (화면 상품 ↔ 엑셀 대조, 다르면 아무것도 입력하지 않고 정지 → 수량 입력 → 재검증).
+  - 1단계 상품 선택 = `selectProducts.console.js` (옵션 ID 20개씩 검색 → 체크) · 2단계 상품 확인·수량 입력 = `inputQuantities.console.js` (화면 상품 ↔ 엑셀 대조, 다르면 아무것도 입력하지 않고 정지 → 수량 입력 → 재검증) · 3단계 사이즈 분류 리포트 = `sizeReport.console.js` (2단계 화면의 윙 사이즈·규격·무게를 읽어 사이즈별 시트 .xlsx 다운로드 — 스크립트 안에서 zip 을 직접 만든다, `@@FILE_TAG@@` = 확장자 뗀 파일명).
   - 상품명 · 옵션명은 `jsString` 으로 이스케이프한다(`'` · `\` · 줄바꿈 · U+2028/2029).
 - 클립보드 복사는 `utils/clipboard.ts`(`copyTextToClipboard`) — 다른 화면의 인라인 execCommand 복사는 아직 이걸로 안 옮겼다.
 

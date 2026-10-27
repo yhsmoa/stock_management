@@ -10,6 +10,7 @@ import {
   parseInboundExcel,
   buildSelectProductsScript,
   buildInputQuantitiesScript,
+  buildSizeReportScript,
   type InboundExcel,
 } from '../services/rocketConsoleService'
 import { copyTextToClipboard } from '../utils/clipboard'
@@ -53,6 +54,17 @@ const BOARD_DEFS: ConsoleBoardDef[] = [
     notes: (x) => [
       `화면 상품이 엑셀 ${x.rows.length.toLocaleString()}개와 같은지 먼저 검사합니다. 다르면 아무것도 입력하지 않고 멈춥니다.`,
       `같으면 수량을 입력하고 다시 검증합니다. 총 ${x.totalQty.toLocaleString()}개`,
+    ],
+  },
+  {
+    key: 'size-report',
+    step: 3,
+    title: '사이즈 분류 리포트',
+    usage: '입고 생성하기 › 2. 입고 정보 입력 화면 (수량 입력 뒤)',
+    build: buildSizeReportScript,
+    notes: (x) => [
+      '화면의 윙 사이즈(극소형·소형·중형…)·규격·무게를 읽어 사이즈별 시트로 나눈 엑셀을 내려받습니다.',
+      `시트: 요약 · 전체(${x.rows.length.toLocaleString()}개) · 사이즈별 · 측정전 · 누락 · 엑셀외. 수량·바코드가 다르면 비고에 적힙니다.`,
     ],
   },
 ]
