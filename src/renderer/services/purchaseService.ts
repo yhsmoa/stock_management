@@ -613,7 +613,12 @@ export async function saveItemStatus(
 
 // ── si_rg_item_data 사용자별 전체 조회 ───────────────────────────────
 
-/** si_rg_item_data에서 사용자별 전체 조회 (1000건 배치 패턴) */
+/**
+ * si_rg_item_data에서 사용자별 전체 조회 (1000건 배치 패턴)
+ * - range 페이지마다 같은 순서가 보장되도록 id 로 정렬한다.
+ *   정렬이 없으면 Postgres 가 페이지마다 다른 순서로 돌려줘 행이 겹치거나 빠지고,
+ *   빠진 옵션의 C.in · C.재고 · 판매량 열이 비어 보인다 (2026-10-30 수정).
+ */
 export async function fetchRgItemData(userId: string): Promise<RgItemData[]> {
   const batches: RgItemData[][] = []
   let from = 0
@@ -625,6 +630,7 @@ export async function fetchRgItemData(userId: string): Promise<RgItemData[]> {
       .from('si_rg_item_data')
       .select('*')
       .eq('user_id', userId)
+      .order('id')
       .range(from, from + batchSize - 1)
 
     if (error) {
@@ -667,6 +673,7 @@ export async function fetchNonNewRgItemData(userId: string): Promise<RgItemData[
       .eq('user_id', userId)
       .or('offer_condition.is.null,offer_condition.neq.NEW')
       .gt('orderable_qty', 0)
+      .order('id')  // 페이지 간 순서 고정 (fetchRgItemData 와 같은 이유)
       .range(from, from + batchSize - 1)
 
     if (error) {
@@ -1081,8 +1088,11 @@ export async function saveRgItemData(
     .delete()
     .eq('user_id', userId)
 
+  // 삭제가 실패한 채로 넣으면 이전 행과 새 행이 섞여 옵션마다 어느 값이 보일지 정해지지 않는다
+  // → 넣지 않고 멈춘다 (기존 데이터는 그대로 남는다)
   if (deleteError) {
     console.error('si_rg_item_data 삭제 오류:', deleteError)
+    throw new Error(`기존 재고 SKU 데이터 삭제 실패: ${deleteError.message}`)
   }
 
   // STEP 2: 배치 분할
