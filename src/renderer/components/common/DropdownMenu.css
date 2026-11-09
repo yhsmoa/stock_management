@@ -32,12 +32,13 @@
   cursor: not-allowed;
 }
 
-/* ── 펼침 메뉴 ───────────────────────────────────────────────── */
+/* ── 펼침 메뉴 ─────────────────────────────────────────────────
+   트리거 바로 아래에 딱 붙인다. 메뉴는 .dropdown:hover 로만 열려 있으므로
+   둘 사이에 틈(margin 등)을 두면 마우스가 내려가는 도중 hover 가 끊겨 닫힌다. */
 .dropdown-menu {
   display: none;
   position: absolute;
   top: 100%;
-  margin-top: 2px;
   min-width: 100%;
   background: #fff;
   border: 1px solid #D1D5DB;
