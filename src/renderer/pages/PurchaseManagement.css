@@ -112,12 +112,12 @@
   position: relative;
 }
 
+/* 트리거에 딱 붙인다 — 틈이 있으면 마우스가 내려가는 도중 hover 가 끊겨 닫힌다 */
 .purchase-dropdown-menu {
   display: none;
   position: absolute;
   top: 100%;
   left: 0;
-  margin-top: 2px;
   min-width: 100%;
   background: #fff;
   border: 1px solid #D1D5DB;
