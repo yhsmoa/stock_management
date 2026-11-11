@@ -61,6 +61,7 @@ import {
   type CartTarget,
 } from '../services/orderSendService'
 import { StockService } from '../services/stockService'
+import type { DeliveryInstructedRow } from '../services/deliveryInstructService'
 import type { ProgressStep } from '../components/common/ProgressModal'
 import type { AuthUser } from '../types/auth'
 
@@ -80,20 +81,22 @@ export const ORDER_STATUS_TABS = [
 
 export type OrderStatusTab = (typeof ORDER_STATUS_TABS)[number]
 
-/** 테이블 컬럼 정의 */
+/**
+ * 테이블 컬럼 정의
+ * - 2026-11-11: '상태'(fulfillment 점·🛒) 는 상품정보 칸 오른쪽 끝으로, '합배송' 배지는 수취인 칸으로 옮겼다.
+ *   두 열이 비운 폭(36px + 56px)은 상품정보(268→336px) · 수취인(80→104px)에 나눠 줬다.
+ */
 export const COLUMNS = [
   { key: 'order_id',       label: '주문번호',   width: '70px'  },
   { key: 'barcode',        label: '바코드',    width: '70px'  },
-  { key: 'combined_shipping', label: '합배송',  width: '56px'  },
   { key: 'invoice_no',     label: '운송장번호', width: '100px' },
-  { key: 'product_info',   label: '상품정보',  width: '268px' },
-  { key: 'receiver_name',  label: '수취인',    width: '80px'  },
+  { key: 'product_info',   label: '상품정보',  width: '336px' },
+  { key: 'receiver_name',  label: '수취인',    width: '104px' },
   { key: 'shipping_count', label: '수량',      width: '50px'  },
   { key: 'status_label',   label: '주문상태',  width: '82px'  },
   { key: 'estimated_shipping_date', label: '출고예정', width: '60px' },
   { key: 'ordered_at_label', label: '주문일', width: '60px' },
   { key: 'stock',          label: '재고',      width: '44px'  },
-  { key: 'ff_status',      label: '상태',      width: '36px'  },
   { key: 'ff_arrival',     label: '입고',      width: '36px'  },
   { key: 'ff_packed',      label: '포장',      width: '36px'  },
   { key: 'ff_cancel',      label: '취소',      width: '36px'  },
@@ -250,6 +253,19 @@ export function getRowKey(r: PersonalOrderRow): string {
   return r.id ?? `${r.shipment_box_id}|${r.vendor_item_id ?? ''}`
 }
 
+// ── 입고준비 할당 (rowKey → 값) ─────────────────────────────────────
+//   boxStr    : '[HI-P-01 - 1, HI-P-02 - 1]' — 입고엑셀 등록상품명 접두(boxPrefixOf). 형식을 바꾸면 엑셀이 바뀐다.
+//   displayStr: 'SHHI261107 [HI-P-01 - 1] SHHI261108 [HI-P-03 - 2]' — 화면 표시 전용(shipment 번호별 묶음).
+//   matched   : 재고가 1개 이상 할당됨 — 입고엑셀 대상 판정
+export interface InboundAlloc {
+  boxStr: string
+  displayStr: string
+  matched: boolean
+}
+
+/** 재고 부족 표시 — boxStr 끝 · displayStr 마지막 묶음 괄호 안 끝에 붙는다 */
+const INBOUND_SHORTAGE_MARK = '추가★'
+
 // ── 드로어 선택 아이템 타입 ─────────────────────────────────────────
 export interface DrawerItemState {
   ids: string[]                 // ft_order_items.id 배열 (재주문 등 복수)
@@ -328,8 +344,8 @@ export function usePersonalOrder() {
   const [inboundLoading, setInboundLoading] = useState(false)
   const [inboundModalOpen, setInboundModalOpen] = useState(false)
   const [shipmentOptions, setShipmentOptions] = useState<ShipmentPickerOption[]>([])
-  // rowKey → { boxStr, matched }
-  const [inboundAllocMap, setInboundAllocMap] = useState<Map<string, { boxStr: string; matched: boolean }>>(new Map())
+  // rowKey → { boxStr, displayStr, matched } (InboundAlloc 참고)
+  const [inboundAllocMap, setInboundAllocMap] = useState<Map<string, InboundAlloc>>(new Map())
   // 엑셀 shipment_list 시트용: 상세 + 출고(allocated)
   const [inboundDetails, setInboundDetails] = useState<Array<ShipmentDetailRow & { allocated: number }>>([])
 
@@ -662,6 +678,24 @@ export function usePersonalOrder() {
       setAcknowledging(false)
     }
   }, [selectedIds, items, getUserInfo])
+
+  // ── [배송준비] 송장 등록 성공 줄 → 화면 행 반영 ──
+  //   줄(묶음배송번호 + 옵션ID)마다 서비스가 정한 값(patch)을 그대로 덮는다:
+  //   송장이 나간 줄은 배송지시 + 운송장, 분리배송에서 나중에 보낼 줄은 분리배송 표시 + 출고예정일.
+  //   상태·화면 흐름은 components/personal-order/useDeliveryInstruct.ts 가 맡고,
+  //   이 훅은 items 갱신만 한다 (DB 는 deliveryInstructService.saveDeliveryInstructed 가 같은 값으로 고친다).
+  const applyDeliveryInstructed = useCallback((instructed: DeliveryInstructedRow[]) => {
+    if (instructed.length === 0) return
+    const patchByKey = new Map(
+      instructed.map((r) => [`${r.shipmentBoxId}|${r.vendorItemId}`, r.patch]),
+    )
+    setItems((prev) =>
+      prev.map((row) => {
+        const patch = patchByKey.get(`${row.shipment_box_id}|${row.vendor_item_id}`)
+        return patch ? { ...row, ...patch } : row
+      }),
+    )
+  }, [])
 
   // ── 탭 전환 (다중 선택) ───────────────────────────────────────
   //   '전체' 선택 → 비움(= 모든 상태). 그 외 → 토글. 모두 해제 시 = 전체.
@@ -1110,15 +1144,21 @@ export function usePersonalOrder() {
       )
       const details = detailLists.flat()
 
-      // ── 재고: barcode → [{idx, box_code, remaining}] (box_code 오름차순) ──
+      // ── 재고: barcode → [{idx, box_code, shipment_no, remaining}] (box_code 오름차순) ──
       //   매칭 대상은 shipment_type='PERSONAL' 입고분만 (DIRECT/COUPANG 제외)
+      //   shipment_no 는 화면 표시(displayStr) 묶음용 — 비어 있으면 null
       const allocated = new Array<number>(details.length).fill(0)
-      const stock = new Map<string, Array<{ idx: number; box_code: string; remaining: number }>>()
+      const stock = new Map<string, Array<{ idx: number; box_code: string; shipment_no: string | null; remaining: number }>>()
       details.forEach((d, idx) => {
         if (d.shipment_type !== 'PERSONAL') return
         if (!d.barcode || !d.quantity || d.quantity <= 0) return
         const arr = stock.get(d.barcode) ?? []
-        arr.push({ idx, box_code: d.box_code ?? '', remaining: d.quantity })
+        arr.push({
+          idx,
+          box_code: d.box_code ?? '',
+          shipment_no: (d.shipment_no ?? '').trim() || null,
+          remaining: d.quantity,
+        })
         stock.set(d.barcode, arr)
       })
       for (const arr of stock.values()) arr.sort((a, b) => a.box_code.localeCompare(b.box_code))
@@ -1136,7 +1176,7 @@ export function usePersonalOrder() {
           return da - db
         })
 
-      const allocMap = new Map<string, { boxStr: string; matched: boolean }>()
+      const allocMap = new Map<string, InboundAlloc>()
       for (const row of pool) {
         const bc = row.barcode
         let need = row.shipping_count ?? 0
@@ -1144,6 +1184,8 @@ export function usePersonalOrder() {
         const units = stock.get(bc)
         if (!units || units.length === 0) continue
         const parts: string[] = []
+        // 화면 표시용: shipment 번호별 묶음 (처음 나온 순서 유지, null = 번호 없음)
+        const groups = new Map<string | null, string[]>()
         for (const u of units) {
           if (need <= 0) break
           if (u.remaining <= 0) continue
@@ -1151,11 +1193,23 @@ export function usePersonalOrder() {
           u.remaining -= take
           need -= take
           allocated[u.idx] += take
-          parts.push(`${u.box_code} - ${take}`)
+          const part = `${u.box_code} - ${take}`
+          parts.push(part)
+          const groupParts = groups.get(u.shipment_no) ?? []
+          groupParts.push(part)
+          groups.set(u.shipment_no, groupParts)
         }
         if (parts.length === 0) continue
-        if (need > 0) parts.push('추가★')
-        allocMap.set(getRowKey(row), { boxStr: `[${parts.join(', ')}]`, matched: true })
+        if (need > 0) {
+          parts.push(INBOUND_SHORTAGE_MARK)
+          // 마지막 묶음 괄호 안 끝에 붙인다 (Map 은 삽입 순서 — 마지막 값이 마지막 묶음)
+          Array.from(groups.values()).pop()?.push(INBOUND_SHORTAGE_MARK)
+        }
+        const displayStr = Array.from(groups.entries())
+          .map(([shipmentNo, groupParts]) =>
+            (shipmentNo ? `${shipmentNo} ` : '') + `[${groupParts.join(', ')}]`)
+          .join(' ')
+        allocMap.set(getRowKey(row), { boxStr: `[${parts.join(', ')}]`, displayStr, matched: true })
       }
 
       setInboundAllocMap(allocMap)
@@ -1866,6 +1920,11 @@ export function usePersonalOrder() {
     setSelectedDrawerItem,
     noteMap,
     handleSaveNote,
+
+    // [배송준비] 송장 등록 — useDeliveryInstruct 에 넘길 원천 데이터 + 반영 콜백
+    items,
+    getUserInfo,
+    applyDeliveryInstructed,
 
     // 입고준비 / 입고엑셀
     inboundActive,

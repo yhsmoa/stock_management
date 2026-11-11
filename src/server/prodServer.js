@@ -60,7 +60,12 @@ function generateAuth(method, apiPath, queryString, accessKey, secretKey) {
 // 쿠팡 API Gateway 호출
 // ══════════════════════════════════════════════════════════════════
 
-async function callCoupangAPI(method, apiPath, queryParams, accessKey, secretKey, body, vendorCode) {
+/**
+ * 쿠팡 호출 → { status, body } (HTTP 상태 포함).
+ * 본문이 같은 모양이어도 HTTP 상태로만 원인을 가를 수 있는 라우트(송장 업로드)가 쓴다.
+ * 빈 응답 · 비JSON 응답은 callCoupangAPI 와 같이 throw (err.status = HTTP 상태).
+ */
+async function callCoupangAPIWithStatus(method, apiPath, queryParams, accessKey, secretKey, body, vendorCode) {
   const baseUrl = 'https://api-gateway.coupang.com'
   const queryString = queryParams
     ? new URLSearchParams(queryParams).toString()
@@ -91,14 +96,22 @@ async function callCoupangAPI(method, apiPath, queryParams, accessKey, secretKey
     err.status = response.status
     throw err
   }
+  let parsed
   try {
-    return JSON.parse(text)
+    parsed = JSON.parse(text)
   } catch {
     const preview = text.slice(0, 200).replace(/\s+/g, ' ')
     const err = new Error(`Coupang 비JSON 응답 (status=${response.status}): ${preview}`)
     err.status = response.status
     throw err
   }
+  return { status: response.status, body: parsed }
+}
+
+/** 쿠팡 호출 → 본문만 (기존 라우트 공용 — HTTP 상태와 무관하게 쿠팡 JSON 을 그대로 돌려준다) */
+async function callCoupangAPI(method, apiPath, queryParams, accessKey, secretKey, body, vendorCode) {
+  const { body: result } = await callCoupangAPIWithStatus(method, apiPath, queryParams, accessKey, secretKey, body, vendorCode)
+  return result
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -216,6 +229,112 @@ app.put('/api/coupang/ordersheets-acknowledge', async (req, res) => {
     res.json({ success: true, data: result })
   } catch (error) {
     console.error('[prod-server] ordersheets-acknowledge 오류:', error.message)
+    res.status(500).json({ success: false, error: error.message })
+  }
+})
+
+// ── 송장 업로드 (상품준비중 → 배송지시) 상수 · 검증 — coupangProxy.ts 와 같은 값 · 같은 규칙 ──
+/** 1회 요청 최대 item 수 — 렌더러 deliveryInstructService.INVOICE_UPLOAD_MAX_DTOS 와 같은 값 (쿠팡 문서엔 최대값 없음) */
+const INVOICE_UPLOAD_MAX_ITEMS = 50
+
+/** 숫자 문자열 ID + JS 안전 정수 범위 (쿠팡 body 는 숫자 타입이라 Number 로 바꿔 보낸다) */
+function isSafeIdString(v) {
+  return typeof v === 'string' && /^\d+$/.test(v) && Number.isSafeInteger(Number(v))
+}
+
+/** 비어 있지 않은 문자열 */
+function isNonEmptyString(v) {
+  return typeof v === 'string' && v.trim() !== ''
+}
+
+/** YYYY-MM-DD 이고 달력에 있는 날짜 */
+function isValidYmd(v) {
+  if (typeof v !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(v)) return false
+  const d = new Date(`${v}T00:00:00Z`)
+  return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === v
+}
+
+/**
+ * 한 줄의 송장 · 분리배송 값 검증 (쿠팡 송장업로드 규칙)
+ *   일반(splitShipping=false): 송장 필수 · preSplitShipped=false · 출고예정일 없음
+ *   분리(splitShipping=true) : 송장과 출고예정일 중 하나만 · 이어 보내기(preSplitShipped=true)는 송장 필수
+ * @returns {string|null} 오류 문구 (맞으면 null)
+ */
+function invoiceLineError(it) {
+  if (typeof it.splitShipping !== 'boolean' || typeof it.preSplitShipped !== 'boolean') {
+    return 'splitShipping · preSplitShipped 는 boolean 이어야 합니다'
+  }
+  if (typeof it.invoiceNumber !== 'string' || typeof it.estimatedShippingDate !== 'string') {
+    return 'invoiceNumber · estimatedShippingDate 는 문자열이어야 합니다'
+  }
+  const hasInvoice = it.invoiceNumber.trim() !== ''
+  const hasDate = it.estimatedShippingDate.trim() !== ''
+  if (!it.splitShipping) {
+    return hasInvoice && !hasDate && !it.preSplitShipped
+      ? null
+      : '일반 배송은 invoiceNumber 필수 · preSplitShipped=false · estimatedShippingDate 빈 값이어야 합니다'
+  }
+  if (hasInvoice === hasDate) return '분리배송은 invoiceNumber 와 estimatedShippingDate 중 하나만 넣어야 합니다'
+  if (hasDate && !isValidYmd(it.estimatedShippingDate.trim())) return 'estimatedShippingDate 는 YYYY-MM-DD 여야 합니다'
+  if (it.preSplitShipped && !hasInvoice) return '분리배송 이어 보내기(preSplitShipped=true)는 invoiceNumber 필수입니다'
+  return null
+}
+
+/**
+ * body.items → 쿠팡 orderSheetInvoiceApplyDtos
+ * @returns {{ dtos: object[] } | { error: string }}
+ */
+function buildInvoiceApplyDtos(items) {
+  if (!Array.isArray(items) || items.length === 0) return { error: 'items 배열(1개 이상) 필수' }
+  if (items.length > INVOICE_UPLOAD_MAX_ITEMS) return { error: `items 는 최대 ${INVOICE_UPLOAD_MAX_ITEMS}개` }
+  const dtos = []
+  for (let i = 0; i < items.length; i++) {
+    const it = items[i] || {}
+    if (!isSafeIdString(it.shipmentBoxId) || !isSafeIdString(it.orderId) || !isSafeIdString(it.vendorItemId)) {
+      return { error: `items[${i}]: shipmentBoxId · orderId · vendorItemId 는 숫자 문자열이어야 합니다` }
+    }
+    if (!isNonEmptyString(it.deliveryCompanyCode)) {
+      return { error: `items[${i}]: deliveryCompanyCode 필수` }
+    }
+    const lineError = invoiceLineError(it)
+    if (lineError) return { error: `items[${i}]: ${lineError}` }
+    dtos.push({
+      shipmentBoxId: Number(it.shipmentBoxId),
+      orderId: Number(it.orderId),
+      vendorItemId: Number(it.vendorItemId),
+      deliveryCompanyCode: it.deliveryCompanyCode.trim(),
+      invoiceNumber: it.invoiceNumber.trim(),
+      splitShipping: it.splitShipping,
+      preSplitShipped: it.preSplitShipped,
+      estimatedShippingDate: it.estimatedShippingDate.trim(),
+    })
+  }
+  return { dtos }
+}
+
+// ── POST /api/coupang/orders-invoices — 송장 업로드 (상품준비중 → 배송지시 · 분리배송 포함) ──
+// body: { items: [{ shipmentBoxId, orderId, vendorItemId, deliveryCompanyCode, invoiceNumber,
+//                   splitShipping, preSplitShipped, estimatedShippingDate }] } (ID 는 숫자 문자열)
+// 응답: { success: true, data: 쿠팡 본문, coupangStatus: 쿠팡 HTTP 상태 } — 쿠팡 오류 본문은 인증 오류(401)와
+//   송장 형식 거절(400)이 같은 모양({ code:'ERROR', message })이라 HTTP 상태를 같이 넘긴다. 판정은 렌더러(deliveryInstructService).
+app.post('/api/coupang/orders-invoices', async (req, res) => {
+  try {
+    const keys = extractCoupangKeys(req)
+    if (!keys) return res.status(401).json({ success: false, error: '쿠팡 API 키가 요청에 포함되지 않았습니다.' })
+
+    const built = buildInvoiceApplyDtos(req.body && req.body.items)
+    if (built.error) return res.status(400).json({ success: false, error: built.error })
+
+    const apiPath = `/v2/providers/openapi/apis/api/v4/vendors/${keys.vendorCode}/orders/invoices`
+    const { status, body } = await callCoupangAPIWithStatus(
+      'POST', apiPath, null,
+      keys.accessKey, keys.secretKey,
+      { vendorId: keys.vendorCode, orderSheetInvoiceApplyDtos: built.dtos },
+      keys.vendorCode,
+    )
+    res.json({ success: true, data: body, coupangStatus: status })
+  } catch (error) {
+    console.error('[prod-server] orders-invoices 오류:', error.message)
     res.status(500).json({ success: false, error: error.message })
   }
 })

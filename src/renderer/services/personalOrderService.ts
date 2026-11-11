@@ -68,6 +68,17 @@ export const STATUS_REVERSE_MAP: Record<string, string> = Object.fromEntries(
   Object.entries(STATUS_MAP).map(([k, v]) => [v, k])
 )
 
+// ── 분리배송 표기 (coupang_personal_orders.split_shipping — DeliveryList 'F열' 값) ──
+//   쿠팡 발주서의 두 필드로 정한다 (mapOrderToRows). 송장 등록(deliveryInstructService)이 같은 값으로 판정한다.
+export const SPLIT_SHIPPING = {
+  /** splitShipping=true — 이미 분리배송을 시작한 주문 */
+  IN_PROGRESS: 'Y',
+  /** ableSplitShipping=false — 분리배송할 수 없는 주문 (대개 상품 1종) */
+  UNAVAILABLE: '분리배송불가',
+  /** 분리배송할 수 있지만 아직 하지 않은 주문 */
+  AVAILABLE: 'N',
+} as const
+
 // ── 개인주문 행 타입 ──────────────────────────────────────────────
 export interface PersonalOrderRow {
   id?: string
@@ -136,7 +147,8 @@ function getCoupangCredentials() {
   }
 }
 
-function getCoupangHeaders(): Record<string, string> {
+/** 쿠팡 프록시 요청 헤더 (사용자별 키) — deliveryInstructService(송장 업로드)도 같이 쓴다 */
+export function getCoupangHeaders(): Record<string, string> {
   const { accessKey, secretKey, vendorCode } = getCoupangCredentials()
   return {
     'X-Coupang-Access-Key': accessKey,
@@ -522,14 +534,14 @@ export function mapOrderToRows(
         paid_at: order.paidAt || null,
         delivered_date: order.deliveredDate || null,
         parcel_print_message: order.parcelPrintMessage ?? '',
-        // 분리배송 표기(쿠팡 DeliveryList 'F열')는 두 API 필드로 결정:
+        // 분리배송 표기(쿠팡 DeliveryList 'F열')는 두 API 필드로 결정 (값은 SPLIT_SHIPPING):
         //   splitShipping=true          → 'Y'          (실제 분리배송 처리)
         //   ableSplitShipping=false     → '분리배송불가'  (분리배송 불가 = 대개 단일상품)
         //   그 외                        → 'N'          (가능하나 미처리)
         // ※ 상품 개수 등으로 임의 계산하지 않고 API 값을 그대로 사용.
         split_shipping: order.splitShipping
-          ? 'Y'
-          : (order.ableSplitShipping === false ? '분리배송불가' : 'N'),
+          ? SPLIT_SHIPPING.IN_PROGRESS
+          : (order.ableSplitShipping === false ? SPLIT_SHIPPING.UNAVAILABLE : SPLIT_SHIPPING.AVAILABLE),
         shipment_type: order.shipmentType ?? '',
         refer: order.refer ?? '',
         canceled: item.canceled ?? false,

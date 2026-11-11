@@ -505,6 +505,41 @@
 .po-status-dot.gray    { background-color: #D1D5DB; }
 .po-status-dot.multi   { background-color: #A855F7; }
 
+/* ── 상품정보 칸: 왼쪽 글자(길면 '…') | 오른쪽 끝 상태 표시 ─────────
+   2026-11-11 '상태' 열을 상품정보 칸에 합침. 상태 표시(점 · 🛒)는 칸 오른쪽 끝에 고정해
+   긴 상품명이 잘려도 항상 보이고, 행마다 같은 자리에 세로로 정렬된다. */
+.po-product-cell {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.po-product-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.po-status-inline {
+  flex: none;
+}
+
+/* ── 합배송 배지 (수취인 칸, 한 주문에 상품 2개↑일 때만) ─────────── */
+.po-combined-badge {
+  display: inline-block;
+  min-width: 18px;
+  margin-left: 4px;
+  padding: 1px 6px;
+  border-radius: 9999px;
+  background: #FED7AA;
+  color: #9A3412;
+  font-size: 11px;
+  font-weight: 600;
+  text-align: center;
+  vertical-align: middle;
+}
+
 /* ── 주문상태 배지 ─────────────────────────────────────────────── */
 .po-status-badge {
   display: inline-block;

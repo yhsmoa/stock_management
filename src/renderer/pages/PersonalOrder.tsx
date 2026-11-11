@@ -3,7 +3,7 @@
    - 로직은 usePersonalOrder 훅에서 관리
    ================================================================ */
 
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useCallback } from 'react'
 import './PersonalOrder.css'
 import FulfillmentDrawer from './FulfillmentDrawer'
 import ProgressModal from '../components/common/ProgressModal'
@@ -20,6 +20,8 @@ import { makeFulfillmentKey } from '../services/orderFulfillmentService'
 import CartSelectModal from '../components/common/CartSelectModal'
 import InboundShipmentModal from '../components/personal-order/InboundShipmentModal'
 import InvoiceUploadModal from '../components/personal-order/InvoiceUploadModal'
+import DeliveryInstructModal from '../components/personal-order/DeliveryInstructModal'
+import { useDeliveryInstruct } from '../components/personal-order/useDeliveryInstruct'
 import DropdownMenu, { DropdownItem } from '../components/common/DropdownMenu'
 import SearchBar from '../components/common/SearchBar'
 
@@ -106,7 +108,16 @@ const PersonalOrder: React.FC = () => {
     getRowStatus,
     reorderCountMap,
     orderItemCountMap,
+    // [배송준비] 송장 등록
+    items,
+    getUserInfo,
+    applyDeliveryInstructed,
   } = usePersonalOrder()
+
+  // ── [배송준비] 송장 엑셀 → 쿠팡 배송지시 (상태·흐름은 별도 훅) ──
+  //   분리배송 뒤에는 묶음배송번호가 바뀌므로 결과 화면에서 [주문 업데이트](handleUpdate)로 이어진다
+  const getUserId = useCallback(() => getUserInfo().userId, [getUserInfo])
+  const deliveryInstruct = useDeliveryInstruct(items, getUserId, applyDeliveryInstructed, handleUpdate)
 
   // ── 셀 선택(엑셀 UX): 1클릭 → 셀 활성, Ctrl+C → 텍스트 복사 ─────
   const [focusedCell, setFocusedCell] = useState<{ rowKey: string; colKey: string } | null>(null)
@@ -133,7 +144,11 @@ const PersonalOrder: React.FC = () => {
         const cellEl = document.querySelector<HTMLElement>(
           `td[data-row-key="${focusedCell.rowKey}"][data-col-key="${focusedCell.colKey}"]`,
         )
-        const text = (cellEl?.textContent ?? '').trim()
+        if (!cellEl) return
+        // 장식(상태 점·🛒·합배송 배지)은 data-no-copy — 복제본에서 지운 뒤 글자만 복사한다
+        const clone = cellEl.cloneNode(true) as HTMLElement
+        clone.querySelectorAll('[data-no-copy]').forEach((el) => el.remove())
+        const text = (clone.textContent ?? '').trim()
         if (!text) return
 
         // navigator.clipboard 우선, 미지원(insecure context) 시 execCommand fallback
@@ -330,6 +345,16 @@ const PersonalOrder: React.FC = () => {
             </button>
           )}
 
+          {/* ── 배송준비 (송장 엑셀 → 쿠팡 배송지시 등록) ── */}
+          <button
+            className="po-btn"
+            onClick={deliveryInstruct.openModal}
+            disabled={deliveryInstruct.busy}
+            title="택배사·운송장번호를 채운 DeliveryList 엑셀로 상품준비중 주문을 배송지시로 등록"
+          >
+            배송준비
+          </button>
+
           {selectedTabs.has('결제완료') && (
             <button
               className="po-btn po-acknowledge-btn"
@@ -457,36 +482,6 @@ const PersonalOrder: React.FC = () => {
                           )
                         }
 
-                        // ── 합배송 (배지 숫자: 1개면 회색, 2개↑면 주황) ──
-                        if (col.key === 'combined_shipping') {
-                          const cnt = row.order_id ? (orderItemCountMap.get(row.order_id) ?? 1) : 1
-                          const combined = cnt > 1
-                          return (
-                            <td
-                              key={col.key}
-                              {...cellDataAttrs}
-                              className={focusedClass.trim() || undefined}
-                              onClick={onCellClick}
-                            >
-                              <span
-                                title={combined ? `합배송 ${cnt}건` : '단일 주문'}
-                                style={{
-                                  display: 'inline-block',
-                                  minWidth: 18,
-                                  padding: '1px 6px',
-                                  borderRadius: 9999,
-                                  background: combined ? '#FED7AA' : '#E5E7EB',
-                                  color: combined ? '#9A3412' : '#6B7280',
-                                  fontSize: 11,
-                                  fontWeight: 600,
-                                }}
-                              >
-                                {cnt}
-                              </span>
-                            </td>
-                          )
-                        }
-
                         // ── 주문상태 (색상 배지) ──
                         if (col.key === 'status_label') {
                           const label = getCellValue(row, col.key)
@@ -526,31 +521,7 @@ const PersonalOrder: React.FC = () => {
                           )
                         }
 
-                        // ── fulfillment 컬럼 ──
-                        if (col.key === 'ff_status') {
-                          return (
-                            <td
-                              key={col.key}
-                              {...cellDataAttrs}
-                              className={focusedClass.trim() || undefined}
-                              onClick={onCellClick}
-                            >
-                              {status === 'cart' ? (
-                                <span
-                                  title={STATUS_DOT_LABELS.cart}
-                                  aria-label={STATUS_DOT_LABELS.cart}
-                                >
-                                  🛒
-                                </span>
-                              ) : status !== 'none' ? (
-                                <span
-                                  className={`po-status-dot ${status}`}
-                                  title={STATUS_DOT_LABELS[status]}
-                                />
-                              ) : null}
-                            </td>
-                          )
-                        }
+                        // ── fulfillment 컬럼 (상태 점은 상품정보 칸 오른쪽 끝) ──
                         if (col.key === 'ff_arrival') {
                           return (
                             <td
@@ -601,6 +572,9 @@ const PersonalOrder: React.FC = () => {
                         }
 
                         // ── 상품정보 (클릭 → 드로어) ──
+                        //   [입고 위치(shipment 번호별)] [📌] [⚠️] 상품명 [N차] ………… [상태 점·🛒]
+                        //   상태 표시는 칸 오른쪽 끝에 고정 — 긴 상품명이 '…' 로 잘려도 항상 보인다 (po-product-cell)
+                        //   상태 표시는 장식(data-no-copy) — 셀 복사에 들어가지 않는다
                         if (col.key === 'product_info') {
                           const ffKey = row.order_id
                             ? makeFulfillmentKey(row.order_id, row.vendor_item_id)
@@ -610,7 +584,7 @@ const PersonalOrder: React.FC = () => {
                           const alloc = inboundActive ? inboundAllocMap.get(rowKey) : undefined
                           const baseTitle = getCellValue(row, col.key)
                           const titleParts: string[] = []
-                          if (alloc?.boxStr) titleParts.push(alloc.boxStr)
+                          if (alloc?.displayStr) titleParts.push(alloc.displayStr)
                           if (hasNote) titleParts.push('[비고]')
                           if (row.release_stop) titleParts.push('[출고중지요청]')
                           if (reorderCount >= 2) titleParts.push(`[${reorderCount}차]`)
@@ -627,66 +601,92 @@ const PersonalOrder: React.FC = () => {
                                 handleRowClick(row)
                               }}
                             >
-                              {alloc?.boxStr && (
-                                <span
-                                  style={{ marginRight: 4, color: '#2563EB', fontWeight: 600 }}
-                                  title="입고 위치/수량"
-                                >
-                                  {alloc.boxStr}
+                              <div className="po-product-cell">
+                                <span className="po-product-text">
+                                  {alloc?.displayStr && (
+                                    <span
+                                      style={{ marginRight: 4, color: '#2563EB', fontWeight: 600 }}
+                                      title="입고 shipment / 위치 / 수량"
+                                    >
+                                      {alloc.displayStr}
+                                    </span>
+                                  )}
+                                  {hasNote && (
+                                    <span
+                                      style={{ marginRight: 4 }}
+                                      title="비고 있음"
+                                      aria-label="비고 있음"
+                                    >
+                                      📌
+                                    </span>
+                                  )}
+                                  {row.release_stop && (
+                                    <span
+                                      style={{ marginRight: 4 }}
+                                      title="출고중지요청"
+                                      aria-label="출고중지요청"
+                                    >
+                                      ⚠️
+                                    </span>
+                                  )}
+                                  {baseTitle}
+                                  {reorderCount >= 2 && (
+                                    <span
+                                      style={{
+                                        marginLeft: 4,
+                                        padding: '1px 5px',
+                                        borderRadius: 4,
+                                        fontSize: 11,
+                                        fontWeight: 600,
+                                        background: '#F97316',
+                                        color: '#fff',
+                                      }}
+                                      title={`${reorderCount}차 주문`}
+                                    >
+                                      {reorderCount}차
+                                    </span>
+                                  )}
                                 </span>
-                              )}
-                              {hasNote && (
-                                <span
-                                  style={{ marginRight: 4 }}
-                                  title="비고 있음"
-                                  aria-label="비고 있음"
-                                >
-                                  📌
-                                </span>
-                              )}
-                              {row.release_stop && (
-                                <span
-                                  style={{ marginRight: 4 }}
-                                  title="출고중지요청"
-                                  aria-label="출고중지요청"
-                                >
-                                  ⚠️
-                                </span>
-                              )}
-                              {baseTitle}
-                              {reorderCount >= 2 && (
-                                <span
-                                  style={{
-                                    marginLeft: 4,
-                                    padding: '1px 5px',
-                                    borderRadius: 4,
-                                    fontSize: 11,
-                                    fontWeight: 600,
-                                    background: '#F97316',
-                                    color: '#fff',
-                                  }}
-                                  title={`${reorderCount}차 주문`}
-                                >
-                                  {reorderCount}차
-                                </span>
-                              )}
-                              {alloc?.matched && (
-                                <span style={{ marginLeft: 4 }} title="입고준비 매칭">✔️</span>
-                              )}
+                                {status === 'cart' ? (
+                                  <span
+                                    className="po-status-inline"
+                                    data-no-copy
+                                    title={STATUS_DOT_LABELS.cart}
+                                    aria-label={STATUS_DOT_LABELS.cart}
+                                  >
+                                    🛒
+                                  </span>
+                                ) : status !== 'none' ? (
+                                  <span
+                                    className={`po-status-dot po-status-inline ${status}`}
+                                    data-no-copy
+                                    role="img"
+                                    title={STATUS_DOT_LABELS[status]}
+                                    aria-label={STATUS_DOT_LABELS[status]}
+                                  />
+                                ) : null}
+                              </div>
                             </td>
                           )
                         }
 
-                        // ── 수취인 (split_shipping = 'Y' 시 🛍️ 접두) ──
+                        // ── 수취인 (split_shipping = 'Y' 시 🛍️ 접두 · 합배송 2건↑이면 주황 배지) ──
+                        //   합배송 배지는 장식(data-no-copy) — 복사하면 이름만 들어간다
                         if (col.key === 'receiver_name') {
                           const flagged = row.split_shipping === 'Y'
                           const baseValue = getCellValue(row, col.key)
+                          const combinedCount = row.order_id ? (orderItemCountMap.get(row.order_id) ?? 1) : 1
+                          const combined = combinedCount >= 2
+                          const combinedTitle = `합배송 ${combinedCount}건`
                           return (
                             <td
                               key={col.key}
                               {...cellDataAttrs}
                               className={focusedClass.trim() || undefined}
-                              title={(flagged ? '[분리배송] ' : '') + baseValue}
+                              title={
+                                (flagged ? '[분리배송] ' : '') + baseValue
+                                + (combined ? ` [${combinedTitle}]` : '')
+                              }
                               onClick={onCellClick}
                             >
                               {flagged && (
@@ -699,6 +699,11 @@ const PersonalOrder: React.FC = () => {
                                 </span>
                               )}
                               {baseValue}
+                              {combined && (
+                                <span className="po-combined-badge" data-no-copy title={combinedTitle}>
+                                  {combinedCount}
+                                </span>
+                              )}
                             </td>
                           )
                         }
@@ -819,6 +824,9 @@ const PersonalOrder: React.FC = () => {
         onAnalyze={analyzeInvoiceFiles}
         onSubmit={handleInvoiceUpload}
       />
+
+      {/* ── 배송준비 — 송장 엑셀 → 쿠팡 배송지시 등록 ───────────── */}
+      <DeliveryInstructModal state={deliveryInstruct} />
     </div>
   )
 }
