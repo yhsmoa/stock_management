@@ -521,7 +521,7 @@ const PersonalOrder: React.FC = () => {
                           )
                         }
 
-                        // ── fulfillment 컬럼 (상태 점은 상품정보 칸 오른쪽 끝) ──
+                        // ── fulfillment 컬럼 (상태 점은 상품정보 칸의 상품명 바로 뒤) ──
                         if (col.key === 'ff_arrival') {
                           return (
                             <td
@@ -572,8 +572,8 @@ const PersonalOrder: React.FC = () => {
                         }
 
                         // ── 상품정보 (클릭 → 드로어) ──
-                        //   [입고 위치(shipment 번호별)] [📌] [⚠️] 상품명 [N차] ………… [상태 점·🛒]
-                        //   상태 표시는 칸 오른쪽 끝에 고정 — 긴 상품명이 '…' 로 잘려도 항상 보인다 (po-product-cell)
+                        //   [입고 위치(shipment 번호별)] [📌] [⚠️] 상품명 [N차] [상태 점·🛒]
+                        //   상태 표시는 상품명 바로 뒤 — 긴 상품명이 '…' 로 잘려도 그 뒤에 남는다 (po-product-cell)
                         //   상태 표시는 장식(data-no-copy) — 셀 복사에 들어가지 않는다
                         if (col.key === 'product_info') {
                           const ffKey = row.order_id

@@ -83,7 +83,7 @@ export type OrderStatusTab = (typeof ORDER_STATUS_TABS)[number]
 
 /**
  * 테이블 컬럼 정의
- * - 2026-11-11: '상태'(fulfillment 점·🛒) 는 상품정보 칸 오른쪽 끝으로, '합배송' 배지는 수취인 칸으로 옮겼다.
+ * - 2026-11-11: '상태'(fulfillment 점·🛒) 는 상품정보 칸의 상품명 바로 뒤로, '합배송' 배지는 수취인 칸으로 옮겼다.
  *   두 열이 비운 폭(36px + 56px)은 상품정보(268→336px) · 수취인(80→104px)에 나눠 줬다.
  */
 export const COLUMNS = [

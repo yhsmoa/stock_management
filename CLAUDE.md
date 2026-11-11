@@ -144,7 +144,7 @@ Electron is built separately via `scripts/build-electron.mjs` (called manually; 
 
 ### 개인주문 — 표 정리 · [배송준비] 송장 등록 · 분리배송 (2026-11-11)
 `/personal-order` 표에서 '상태'·'합배송' 열을 없애고 각각 상품정보·수취인 칸에 합쳤다. 표 위 [배송준비] 는 송장 엑셀로 상품준비중 주문을 쿠팡 배송지시로 바꾼다(WING 엑셀 송장등록과 같은 일).
-- **표**: 상품정보 칸 오른쪽 끝 = fulfillment 상태 점/🛒(`.po-product-cell` flex — 상품명만 '…' 로 잘리고 상태는 항상 보인다), 수취인 칸 = 이름 + 합배송 배지(같은 주문번호 2줄 이상일 때만). 둘 다 `data-no-copy` 장식이라 셀 복사(Ctrl+C)는 복제본에서 지운 글자만 들어간다. 장식을 새로 넣으면 같은 속성을 단다.
+- **표**: 상품정보 칸의 상품명 바로 뒤 = fulfillment 상태 점/🛒(`.po-product-cell` flex — 칸 끝에 고정하지 않는다. 상품명만 '…' 로 잘리고 상태는 그 뒤에 남는다), 수취인 칸 = 이름 + 합배송 배지(같은 주문번호 2줄 이상일 때만). 둘 다 `data-no-copy` 장식이라 셀 복사(Ctrl+C)는 복제본에서 지운 글자만 들어간다. 장식을 새로 넣으면 같은 속성을 단다.
 - **입고준비 표시**: `InboundAlloc` 의 `displayStr`(`SHHI261107 [HI-P-01 - 1] SHHI261108 [..]`, shipment 번호별 묶음 · `추가★` 는 마지막 묶음 안)은 화면 전용이고, `boxStr`(`[HI-P-01 - 1, ..]`)은 입고엑셀 등록상품명 접두라 형식을 바꾸지 않는다.
 - **구조**: 택배사표 `services/coupangCarriers.ts`(코드·표시 이름·별칭·운송장 자릿수, 업체직송 미지원) · 서비스 `services/deliveryInstructService.ts`(엑셀 파싱 → `buildDeliveryInstructPlan` 순수 함수 → 순차 전송 → DB 반영) · 훅 `components/personal-order/useDeliveryInstruct.ts` · 모달 `DeliveryInstructModal.tsx`. `usePersonalOrder` 는 `items` · `applyDeliveryInstructed`(성공 줄에 서비스가 정한 값 덮기) · `handleUpdate` 만 내준다.
 - **엑셀**: DeliveryList 머리글(묶음배송번호·주문번호·택배사·운송장번호·옵션ID, 선택 '분리배송 Y/N'·'분리배송 출고예정일')을 이름으로 찾고 그 머리글이 있는 시트를 모두 읽는다(입고엑셀은 Delivery·합배송). 숫자 셀이 안전한 정수·15자리를 넘으면 행 오류(자릿수 손실 — 틀린 ID 로 보내지 않음). 운송장은 공백·하이픈 제거. 날짜 칸은 글자(2026-11-20 등)·숫자 20261120·Excel 일련번호를 YYYY-MM-DD 로 읽는다.
