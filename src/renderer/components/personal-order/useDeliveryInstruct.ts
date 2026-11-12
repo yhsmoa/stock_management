@@ -6,7 +6,7 @@
    - 분리배송(부분출고)은 되돌릴 수 없어 등록 전에 확인(splitAcknowledged)을 받는다.
      등록 뒤에는 먼저 보낸 상품의 묶음배송번호가 쿠팡에서 바뀌므로 [주문 업데이트] 로 이어 준다.
    - usePersonalOrder 와 분리 — 그 훅이 주는 items(계정 전체 주문, 모든 상태) · 사용자 ID ·
-     화면 반영 콜백(applyDeliveryInstructed) · 주문 업데이트(handleUpdate)만 쓴다.
+     화면 반영 콜백(applyRowPatches) · 주문 업데이트(handleUpdate)만 쓴다.
    ================================================================ */
 
 import { useCallback, useMemo, useRef, useState } from 'react'

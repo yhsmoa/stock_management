@@ -352,6 +352,16 @@
   cursor: not-allowed;
 }
 
+/* ── 출고중지 버튼 (되돌릴 수 없는 작업 — 빨간 글자 · 테두리) ───── */
+.po-stop-btn {
+  color: #B91C1C;
+  border-color: #FCA5A5;
+}
+
+.po-stop-btn:hover:not(:disabled) {
+  border-color: #F87171;
+}
+
 /* ── 테이블 섹션 ─────────────────────────────────────────────── */
 .po-table-section {
   flex: 1;
@@ -524,6 +534,19 @@
 }
 .po-status-inline {
   flex: none;
+}
+
+/* ── 취소 표시 (상품정보 칸 상품명 앞 — 쿠팡에서 취소된 줄 · [출고중지] 한 줄) ── */
+.po-canceled-chip {
+  display: inline-block;
+  margin-right: 4px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: #FEE2E2;
+  color: #B91C1C;
+  font-size: 11px;
+  font-weight: 600;
+  vertical-align: middle;
 }
 
 /* ── 합배송 배지 (수취인 칸, 한 주문에 상품 2개↑일 때만) ─────────── */

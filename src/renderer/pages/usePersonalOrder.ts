@@ -22,6 +22,7 @@ import {
   saveOrderNote,
   STATUS_MAP,
   STATUS_REVERSE_MAP,
+  type OrderRowPatch,
   type PersonalOrderRow,
 } from '../services/personalOrderService'
 import {
@@ -61,7 +62,6 @@ import {
   type CartTarget,
 } from '../services/orderSendService'
 import { StockService } from '../services/stockService'
-import type { DeliveryInstructedRow } from '../services/deliveryInstructService'
 import type { ProgressStep } from '../components/common/ProgressModal'
 import type { AuthUser } from '../types/auth'
 
@@ -679,15 +679,16 @@ export function usePersonalOrder() {
     }
   }, [selectedIds, items, getUserInfo])
 
-  // ── [배송준비] 송장 등록 성공 줄 → 화면 행 반영 ──
+  // ── 쿠팡에서 처리가 끝난 줄 → 화면 행 반영 ([배송준비] · [출고중지] 공용) ──
   //   줄(묶음배송번호 + 옵션ID)마다 서비스가 정한 값(patch)을 그대로 덮는다:
-  //   송장이 나간 줄은 배송지시 + 운송장, 분리배송에서 나중에 보낼 줄은 분리배송 표시 + 출고예정일.
-  //   상태·화면 흐름은 components/personal-order/useDeliveryInstruct.ts 가 맡고,
-  //   이 훅은 items 갱신만 한다 (DB 는 deliveryInstructService.saveDeliveryInstructed 가 같은 값으로 고친다).
-  const applyDeliveryInstructed = useCallback((instructed: DeliveryInstructedRow[]) => {
-    if (instructed.length === 0) return
+  //   · 배송준비 — 송장이 나간 줄은 배송지시 + 운송장, 분리배송에서 나중에 보낼 줄은 분리배송 표시 + 출고예정일
+  //   · 출고중지 — 취소 접수된 줄은 canceled + 취소 수량
+  //   상태·화면 흐름은 components/personal-order 의 useDeliveryInstruct · useShipmentStop 이 맡고,
+  //   이 훅은 items 갱신만 한다 (DB 는 personalOrderService.saveOrderRowPatches 가 같은 값으로 고친다).
+  const applyRowPatches = useCallback((patches: OrderRowPatch[]) => {
+    if (patches.length === 0) return
     const patchByKey = new Map(
-      instructed.map((r) => [`${r.shipmentBoxId}|${r.vendorItemId}`, r.patch]),
+      patches.map((r) => [`${r.shipmentBoxId}|${r.vendorItemId}`, r.patch]),
     )
     setItems((prev) =>
       prev.map((row) => {
@@ -1164,11 +1165,12 @@ export function usePersonalOrder() {
       for (const arr of stock.values()) arr.sort((a, b) => a.box_code.localeCompare(b.box_code))
 
       // ── 매칭 풀: 선택 탭 주문, 주문일 오름차순(선착순) ──
+      //   취소된 줄(canceled — 쿠팡 발주서 값 · [출고중지] 반영값)은 나갈 물량이 아니므로 재고를 할당하지 않는다
       const codes = selectedTabs.size > 0
         ? new Set(Array.from(selectedTabs).map((t) => STATUS_REVERSE_MAP[t]).filter(Boolean))
         : null
       const pool = items
-        .filter((r) => !codes || codes.has(r.status))
+        .filter((r) => !r.canceled && (!codes || codes.has(r.status)))
         .slice()
         .sort((a, b) => {
           const da = a.ordered_at ? new Date(a.ordered_at).getTime() : 0
@@ -1921,10 +1923,10 @@ export function usePersonalOrder() {
     noteMap,
     handleSaveNote,
 
-    // [배송준비] 송장 등록 — useDeliveryInstruct 에 넘길 원천 데이터 + 반영 콜백
+    // [배송준비] · [출고중지] — useDeliveryInstruct · useShipmentStop 에 넘길 원천 데이터 + 반영 콜백
     items,
     getUserInfo,
-    applyDeliveryInstructed,
+    applyRowPatches,
 
     // 입고준비 / 입고엑셀
     inboundActive,

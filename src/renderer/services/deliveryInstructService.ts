@@ -18,9 +18,9 @@
    ================================================================ */
 
 import * as XLSX from 'xlsx'
-import { supabase } from './supabase'
 import {
   getCoupangHeaders,
+  saveOrderRowPatches,
   STATUS_MAP,
   SPLIT_SHIPPING,
   type PersonalOrderRow,
@@ -60,8 +60,6 @@ const SPLIT_MIN_OPTIONS = 2
 const HEADER_SCAN_ROWS = 10
 /** 엑셀 숫자 셀이 정확히 담을 수 있는 최대 자릿수 (Excel 유효숫자 15자리) */
 const EXCEL_EXACT_DIGITS = 15
-/** DB 반영(update) 동시 실행 수 — updatePendingInvoiceNumbers 와 같은 값 */
-const DB_UPDATE_CONCURRENCY = 10
 
 /** 쿠팡 응답 성공 코드 (최상위 code) */
 const COUPANG_OK_CODE = '200'
@@ -1001,28 +999,9 @@ export function toInstructedRows(box: ReadyBox): DeliveryInstructedRow[] {
 }
 
 /** 성공 줄을 DB 에 반영 — 실패한 묶음배송번호를 돌려준다 (쿠팡에는 등록됨 → [주문 업데이트] 로 맞춰진다) */
-export async function saveDeliveryInstructed(
+export function saveDeliveryInstructed(
   userId: string,
   rows: readonly DeliveryInstructedRow[],
 ): Promise<{ failedBoxIds: string[] }> {
-  const failed = new Set<string>()
-
-  for (let i = 0; i < rows.length; i += DB_UPDATE_CONCURRENCY) {
-    const chunk = rows.slice(i, i + DB_UPDATE_CONCURRENCY)
-    const results = await Promise.all(
-      chunk.map(async (row) => {
-        const { error } = await supabase
-          .from('coupang_personal_orders')
-          .update(row.patch)
-          .eq('user_id', userId)
-          .eq('shipment_box_id', row.shipmentBoxId)
-          .eq('vendor_item_id', row.vendorItemId)
-        if (error) console.error('[배송준비] DB 반영 오류:', row.shipmentBoxId, row.vendorItemId, error.message)
-        return { boxId: row.shipmentBoxId, ok: !error }
-      }),
-    )
-    for (const r of results) if (!r.ok) failed.add(r.boxId)
-  }
-
-  return { failedBoxIds: Array.from(failed) }
+  return saveOrderRowPatches(userId, rows, '배송준비')
 }

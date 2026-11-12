@@ -22,6 +22,9 @@ import InboundShipmentModal from '../components/personal-order/InboundShipmentMo
 import InvoiceUploadModal from '../components/personal-order/InvoiceUploadModal'
 import DeliveryInstructModal from '../components/personal-order/DeliveryInstructModal'
 import { useDeliveryInstruct } from '../components/personal-order/useDeliveryInstruct'
+import ShipmentStopModal from '../components/personal-order/ShipmentStopModal'
+import { useShipmentStop } from '../components/personal-order/useShipmentStop'
+import type { OrderRowPatch } from '../services/personalOrderService'
 import DropdownMenu, { DropdownItem } from '../components/common/DropdownMenu'
 import SearchBar from '../components/common/SearchBar'
 
@@ -108,16 +111,30 @@ const PersonalOrder: React.FC = () => {
     getRowStatus,
     reorderCountMap,
     orderItemCountMap,
-    // [배송준비] 송장 등록
+    // [배송준비] · [출고중지]
     items,
     getUserInfo,
-    applyDeliveryInstructed,
+    applyRowPatches,
   } = usePersonalOrder()
 
   // ── [배송준비] 송장 엑셀 → 쿠팡 배송지시 (상태·흐름은 별도 훅) ──
   //   분리배송 뒤에는 묶음배송번호가 바뀌므로 결과 화면에서 [주문 업데이트](handleUpdate)로 이어진다
   const getUserId = useCallback(() => getUserInfo().userId, [getUserInfo])
-  const deliveryInstruct = useDeliveryInstruct(items, getUserId, applyDeliveryInstructed, handleUpdate)
+  const deliveryInstruct = useDeliveryInstruct(items, getUserId, applyRowPatches, handleUpdate)
+
+  // ── [출고중지] 선택한 상품준비중 주문 → 쿠팡 취소 (상태·흐름은 별도 훅) ──
+  //   대상은 체크한 줄. 취소가 접수된 줄이 있으면 화면에 반영하고 선택을 푼다
+  //   (취소된 줄이 선택된 채 남아 다른 작업에 섞이지 않게).
+  const getSelectedRows = useCallback(
+    () => items.filter((row) => selectedIds.has(getRowKey(row))),
+    [items, selectedIds],
+  )
+  const applyShipmentStopped = useCallback((patches: OrderRowPatch[]) => {
+    if (patches.length === 0) return
+    applyRowPatches(patches)
+    handleSelectAll(false)
+  }, [applyRowPatches, handleSelectAll])
+  const shipmentStop = useShipmentStop(items, getSelectedRows, getUserId, applyShipmentStopped, handleUpdate)
 
   // ── 셀 선택(엑셀 UX): 1클릭 → 셀 활성, Ctrl+C → 텍스트 복사 ─────
   const [focusedCell, setFocusedCell] = useState<{ rowKey: string; colKey: string } | null>(null)
@@ -355,6 +372,18 @@ const PersonalOrder: React.FC = () => {
             배송준비
           </button>
 
+          {/* ── 출고중지 (선택한 상품준비중 주문을 쿠팡에서 취소 — 상품준비중 탭에서만) ── */}
+          {selectedTabs.has('상품준비중') && (
+            <button
+              className="po-btn po-stop-btn"
+              onClick={shipmentStop.openModal}
+              disabled={shipmentStop.busy || selectedIds.size === 0}
+              title="선택한 상품준비중 주문을 쿠팡에서 취소(출고중지)합니다 — 확인 창에서 대상을 본 뒤 실행"
+            >
+              {`출고중지${selectedIds.size > 0 ? ` (${selectedIds.size})` : ''}`}
+            </button>
+          )}
+
           {selectedTabs.has('결제완료') && (
             <button
               className="po-btn po-acknowledge-btn"
@@ -587,6 +616,7 @@ const PersonalOrder: React.FC = () => {
                           if (alloc?.displayStr) titleParts.push(alloc.displayStr)
                           if (hasNote) titleParts.push('[비고]')
                           if (row.release_stop) titleParts.push('[출고중지요청]')
+                          if (row.canceled) titleParts.push('[취소]')
                           if (reorderCount >= 2) titleParts.push(`[${reorderCount}차]`)
                           titleParts.push(baseTitle)
 
@@ -627,6 +657,15 @@ const PersonalOrder: React.FC = () => {
                                       aria-label="출고중지요청"
                                     >
                                       ⚠️
+                                    </span>
+                                  )}
+                                  {row.canceled && (
+                                    <span
+                                      className="po-canceled-chip"
+                                      data-no-copy
+                                      title="취소된 상품 — 출고하지 않습니다"
+                                    >
+                                      취소
                                     </span>
                                   )}
                                   {baseTitle}
@@ -827,6 +866,9 @@ const PersonalOrder: React.FC = () => {
 
       {/* ── 배송준비 — 송장 엑셀 → 쿠팡 배송지시 등록 ───────────── */}
       <DeliveryInstructModal state={deliveryInstruct} />
+
+      {/* ── 출고중지 — 선택한 상품준비중 주문을 쿠팡에서 취소 ───── */}
+      <ShipmentStopModal state={shipmentStop} />
     </div>
   )
 }

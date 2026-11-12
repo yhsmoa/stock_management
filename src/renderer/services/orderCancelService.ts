@@ -34,6 +34,11 @@ function getCoupangHeaders(): Record<string, string> {
 //       쿠팡이 거부하면 취소가 안 될 뿐(잘못 취소되진 않음) → 응답 오류로 코드 보정.
 // ══════════════════════════════════════════════════════════════════
 
+/** 취소 대분류 코드 — 쿠팡 문서상 CANERR 하나뿐 */
+export const CANCEL_BIG_CODE = 'CANERR'
+/** 중분류: 재고 문제(품절) — 개인주문 [출고중지](shipmentStopService)도 이 값을 쓴다 */
+export const CANCEL_MIDDLE_OUT_OF_STOCK = 'CCTTER'
+
 /** 귀책 구분 */
 export type FaultType = 'VENDOR' | 'CUSTOMER'
 
@@ -52,17 +57,17 @@ export interface CancelReasonOption {
 export const CANCEL_REASONS: Record<FaultType, CancelReasonOption[]> = {
   // ── 판매자사유 (확인된 코드) ──
   VENDOR: [
-    { label: '재고 문제 (품절)',              big: 'CANERR', middle: 'CCTTER' },
-    { label: '배송지 오류 (제휴사이트 주소)', big: 'CANERR', middle: 'CCPNER' },
-    { label: '가격 오류 (양사 가격)',         big: 'CANERR', middle: 'CCPRER' },
+    { label: '재고 문제 (품절)',              big: CANCEL_BIG_CODE, middle: CANCEL_MIDDLE_OUT_OF_STOCK },
+    { label: '배송지 오류 (제휴사이트 주소)', big: CANCEL_BIG_CODE, middle: 'CCPNER' },
+    { label: '가격 오류 (양사 가격)',         big: CANCEL_BIG_CODE, middle: 'CCPRER' },
   ],
   // ── 고객사유 (VOC reasonCode 기반 추정 — 실테스트로 검증) ──
   CUSTOMER: [
-    { label: '단순 변심',     big: 'CANERR', middle: 'CHANGEMIND' },
-    { label: '잘못 주문',     big: 'CANERR', middle: 'WRONGOPT' },
-    { label: '배송일정 불만', big: 'CANERR', middle: 'DELIVERYLATER' },
-    { label: '상품 불만',     big: 'CANERR', middle: 'DONTLIKESIZECOLOR' },
-    { label: '가격 불만',     big: 'CANERR', middle: 'CHEAPER' },
+    { label: '단순 변심',     big: CANCEL_BIG_CODE, middle: 'CHANGEMIND' },
+    { label: '잘못 주문',     big: CANCEL_BIG_CODE, middle: 'WRONGOPT' },
+    { label: '배송일정 불만', big: CANCEL_BIG_CODE, middle: 'DELIVERYLATER' },
+    { label: '상품 불만',     big: CANCEL_BIG_CODE, middle: 'DONTLIKESIZECOLOR' },
+    { label: '가격 불만',     big: CANCEL_BIG_CODE, middle: 'CHEAPER' },
   ],
 }
 

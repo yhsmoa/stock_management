@@ -24,17 +24,14 @@ import {
   type ReadyLine,
 } from '../../services/deliveryInstructService'
 import { SUPPORTED_CARRIER_NAMES } from '../../services/coupangCarriers'
+import { Stat, ListSection, ProgressBar, listTh as th, listTd as td, WARNING_BG, WARNING_BORDER } from './modalParts'
 
 // ── 화면 상수 ─────────────────────────────────────────────────────
 const MODAL_WIDTH = 820
-const LIST_MAX_HEIGHT = 220
 const ACCEPT_EXT = '.xlsx,.xls'
 
 /** 결과 성공 배경 (InvoiceUploadModal 의 선택 완료 배경과 같은 값) */
 const SUCCESS_BG = '#F0FDF4'
-/** 주의 안내 배경 · 테두리 (앰버) */
-const WARNING_BG = '#FFFBEB'
-const WARNING_BORDER = '#FCD34D'
 
 const MODE_LABELS: Record<DeliveryMode, string> = {
   normal: '일반',
@@ -48,37 +45,8 @@ const DATE_SOURCE_LABELS: Record<NonNullable<ReadyLine['dateSource']>, string> =
 }
 
 // ══════════════════════════════════════════════════════════════════
-// 작은 부품
+// 작은 부품 (요약 칸 · 스크롤 표 · 진행 막대는 modalParts — [출고중지] 모달과 공용)
 // ══════════════════════════════════════════════════════════════════
-
-/** 요약 칸 (라벨 + 큰 숫자) */
-const Stat: React.FC<{ label: string; value: React.ReactNode; color?: string }> = ({ label, value, color }) => (
-  <div style={{ flex: 1, minWidth: 0, padding: '8px 10px', border: `1px solid ${theme.colors.border}`, borderRadius: theme.radius.md, background: theme.colors.bgCard }}>
-    <div style={{ fontSize: 11.5, color: theme.colors.textSecondary }}>{label}</div>
-    <div style={{ fontSize: 16, fontWeight: 600, color: color ?? theme.colors.textPrimary, marginTop: 2 }}>{value}</div>
-  </div>
-)
-
-/** 목록 표 머리글 · 칸 공통 스타일 */
-const th: React.CSSProperties = {
-  position: 'sticky', top: 0, background: theme.colors.bgTableHeader, textAlign: 'left',
-  fontSize: 11.5, fontWeight: 600, color: theme.colors.textSecondary, padding: '5px 8px',
-  borderBottom: `1px solid ${theme.colors.border}`, whiteSpace: 'nowrap',
-}
-const td: React.CSSProperties = {
-  fontSize: 11.5, color: theme.colors.textPrimary, padding: '4px 8px',
-  borderBottom: `1px solid ${theme.colors.borderLight}`, verticalAlign: 'top',
-}
-
-/** 제목 + 스크롤 표 */
-const ListSection: React.FC<{ title: string; color: string; children: React.ReactNode }> = ({ title, color, children }) => (
-  <div style={{ marginTop: 12 }}>
-    <div style={{ fontSize: 12.5, fontWeight: 600, color, marginBottom: 4 }}>{title}</div>
-    <div style={{ maxHeight: LIST_MAX_HEIGHT, overflowY: 'auto', border: `1px solid ${theme.colors.border}`, borderRadius: theme.radius.sm }}>
-      <table style={{ width: '100%', borderCollapse: 'collapse' }}>{children}</table>
-    </div>
-  </div>
-)
 
 /** 줄 하나의 처리 내용 — '지금 출고: 택배사 송장' / '나중 출고: 출고예정일' */
 const LineAction: React.FC<{ line: ReadyLine }> = ({ line }) => {
@@ -291,7 +259,6 @@ const DeliveryInstructModal: React.FC<{ state: DeliveryInstruct }> = ({ state })
   const boxCount = plan?.boxes.length ?? 0
   const lineCount = plan?.boxes.reduce((n, b) => n + b.lines.length, 0) ?? 0
   const splitBoxes = plan?.boxes.filter(isSplitBox) ?? []
-  const percent = progress.total > 0 ? Math.round((progress.done / progress.total) * 100) : 0
   // 바깥 클릭 닫기: 전송·반영 중에는 막고, 결과 화면(done)도 실패 목록을 잃지 않도록 [닫기] 버튼으로만 닫는다
   const overlayClosable = !busy && phase !== 'done'
 
@@ -408,15 +375,7 @@ const DeliveryInstructModal: React.FC<{ state: DeliveryInstruct }> = ({ state })
                 ? `쿠팡에 등록 중... ${progress.done} / ${progress.total} 묶음`
                 : '화면·DB 반영 중...'}
             </div>
-            <div
-              role="progressbar"
-              aria-valuemin={0}
-              aria-valuemax={progress.total}
-              aria-valuenow={progress.done}
-              style={{ height: 8, borderRadius: theme.radius.full, background: theme.colors.borderLight, overflow: 'hidden' }}
-            >
-              <div style={{ width: `${percent}%`, height: '100%', background: theme.colors.primary, transition: 'width 0.2s' }} />
-            </div>
+            <ProgressBar done={progress.done} total={progress.total} />
             <div style={{ fontSize: 11.5, color: theme.colors.textMuted, marginTop: 6 }}>
               중단하면 지금 보내는 요청까지만 처리하고 나머지는 보내지 않습니다. 이미 등록된 송장은 되돌리지 않습니다.
             </div>

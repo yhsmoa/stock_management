@@ -258,6 +258,62 @@ function buildInvoiceApplyDtos(items: unknown): { dtos: InvoiceApplyDto[] } | { 
   return { dtos }
 }
 
+// ══════════════════════════════════════════════════════════════════
+// 주문 취소 · 출고중지완료 — prodServer.js 와 같은 값 · 같은 규칙
+//   쿠팡 body 의 ID · 수량은 숫자 타입이고 경로에도 그대로 들어가므로 여기서 숫자로 확정한다.
+// ══════════════════════════════════════════════════════════════════
+
+/** 1 이상 안전 정수 (숫자 또는 숫자 문자열) → number. 아니면 null */
+function toPositiveSafeInt(v: unknown): number | null {
+  const text = typeof v === 'number' ? String(v) : v
+  if (typeof text !== 'string' || !/^\d+$/.test(text)) return null
+  const n = Number(text)
+  return Number.isSafeInteger(n) && n > 0 ? n : null
+}
+
+/**
+ * 주문 상품 취소 처리 요청 body 검증 → 쿠팡 body.
+ *   vendorItemIds 와 receiptCounts 는 같은 인덱스끼리 한 쌍 (옵션 + 취소 수량).
+ *   vendorId 는 헤더 값으로 고정한다 (요청 body 의 값을 쓰지 않는다).
+ */
+function buildOrderCancelBody(
+  body: unknown,
+  vendorCode: string,
+): { orderId: number; cancelBody: Record<string, unknown> } | { error: string } {
+  const fields = (body && typeof body === 'object' ? body : {}) as Record<string, unknown>
+  const orderId = toPositiveSafeInt(fields.orderId)
+  if (orderId === null) return { error: 'orderId(숫자) 필수' }
+
+  const { vendorItemIds, receiptCounts, bigCancelCode, middleCancelCode, userId, cancelReason } = fields
+  if (!Array.isArray(vendorItemIds) || vendorItemIds.length === 0) {
+    return { error: 'vendorItemIds 배열(1개 이상) 필수' }
+  }
+  if (!Array.isArray(receiptCounts) || receiptCounts.length !== vendorItemIds.length) {
+    return { error: 'receiptCounts 는 vendorItemIds 와 길이가 같아야 합니다' }
+  }
+  const itemIds = vendorItemIds.map(toPositiveSafeInt)
+  const counts = receiptCounts.map(toPositiveSafeInt)
+  if (itemIds.includes(null)) return { error: 'vendorItemIds 는 숫자여야 합니다' }
+  if (counts.includes(null)) return { error: 'receiptCounts 는 1 이상 정수여야 합니다' }
+  if (new Set(itemIds).size !== itemIds.length) return { error: 'vendorItemIds 에 같은 옵션이 두 번 있습니다' }
+  if (!isNonEmptyString(bigCancelCode) || !isNonEmptyString(middleCancelCode) || !isNonEmptyString(userId)) {
+    return { error: 'bigCancelCode, middleCancelCode, userId 필수' }
+  }
+
+  const cancelBody: Record<string, unknown> = {
+    orderId,
+    vendorId: vendorCode,
+    vendorItemIds: itemIds,
+    receiptCounts: counts,
+    bigCancelCode: bigCancelCode.trim(),
+    middleCancelCode: middleCancelCode.trim(),
+    userId: userId.trim(),
+  }
+  // 고객 안내용 직접 입력 사유 — 고객문의 취소 드로어(orderCancelService.cancelOrder)만 보낸다
+  if (isNonEmptyString(cancelReason)) cancelBody.cancelReason = cancelReason
+  return { orderId, cancelBody }
+}
+
 // ── JSON 응답 헬퍼 ────────────────────────────────────────────────
 function sendJson(res: any, statusCode: number, body: unknown) {
   res.statusCode = statusCode
@@ -883,46 +939,106 @@ export function coupangProxyPlugin(): Plugin {
         }
       })
 
-      // ── POST /api/coupang/order-cancel — 주문 상품 취소 처리 ──
-      // body: { orderId, vendorItemIds[], receiptCounts[], bigCancelCode, middleCancelCode, userId }
+      // ── POST /api/coupang/order-cancel — 주문 상품 취소 처리 (CANCEL_ORDER_PROCESSING) ──
+      // body: { orderId, vendorItemIds[], receiptCounts[], bigCancelCode, middleCancelCode, userId, cancelReason? }
       //   - vendorItemIds / receiptCounts 는 같은 인덱스끼리 (취소 대상 옵션 + 수량)
-      //   - bigCancelCode/middleCancelCode: 취소 사유 코드 (귀책 대분류/소분류)
+      //   - bigCancelCode/middleCancelCode: 취소 사유 코드 (CANERR + CCTTER/CCPNER/CCPRER)
       //   - userId: 셀러포탈(WING) 로그인 ID
+      //   - 결제완료 = 즉시 취소, 상품준비중 = 출고중지(접수 + 완료). 묶음배송번호가 여러 개인 주문은 묶음별로 따로 호출한다
+      // 응답: { success: true, data: 쿠팡 본문, coupangStatus: 쿠팡 HTTP 상태 } — 거절(400)과 응답 없음(5xx)을
+      //   렌더러(shipmentStopService)가 상태로 가른다. 고객문의 취소 드로어는 data 만 쓴다.
       server.middlewares.use('/api/coupang/order-cancel', async (req: any, res: any) => {
         try {
+          if (req.method !== 'POST') { sendJson(res, 405, { success: false, error: 'POST 만 허용' }); return }
           const keys = extractCoupangKeys(req)
           if (!keys) {
             sendJson(res, 401, { success: false, error: '쿠팡 API 키가 요청에 포함되지 않았습니다.' })
             return
           }
 
-          const body = await parseBody(req)
-          const { orderId, vendorItemIds, receiptCounts, bigCancelCode, middleCancelCode, cancelReason, userId } = body
-          if (
-            !orderId ||
-            !Array.isArray(vendorItemIds) || vendorItemIds.length === 0 ||
-            !Array.isArray(receiptCounts) || receiptCounts.length !== vendorItemIds.length ||
-            !bigCancelCode || !middleCancelCode || !userId
-          ) {
-            sendJson(res, 400, { success: false, error: 'orderId, vendorItemIds[], receiptCounts[](길이일치), bigCancelCode, middleCancelCode, userId 필수' })
+          const built = buildOrderCancelBody(await parseBody(req), keys.vendorCode)
+          if ('error' in built) {
+            sendJson(res, 400, { success: false, error: built.error })
             return
           }
 
-          const apiPath = `/v2/providers/openapi/apis/api/v5/vendors/${keys.vendorCode}/orders/${orderId}/cancel`
-          const cancelBody: Record<string, unknown> = {
-            orderId, vendorId: keys.vendorCode, vendorItemIds, receiptCounts, bigCancelCode, middleCancelCode, userId,
-          }
-          if (cancelReason) cancelBody.cancelReason = cancelReason // 고객 안내용 직접 입력 사유
-          const result = await callCoupangAPI(
+          const apiPath = `/v2/providers/openapi/apis/api/v5/vendors/${keys.vendorCode}/orders/${built.orderId}/cancel`
+          const { status, body: result } = await callCoupangAPIWithStatus(
             'POST', apiPath, null,
             keys.accessKey, keys.secretKey,
-            cancelBody,
+            built.cancelBody,
             keys.vendorCode,
           )
 
-          sendJson(res, 200, { success: true, data: result })
+          sendJson(res, 200, { success: true, data: result, coupangStatus: status })
         } catch (error: any) {
           console.error('[coupang-proxy] order-cancel 오류:', error.message)
+          sendJson(res, 500, { success: false, error: error.message })
+        }
+      })
+
+      // ── GET /api/coupang/return-request-detail?receiptId= — 반품요청 단건 조회 (GET_RETURN_REQUEST_BY_RECEIPT) ──
+      // 출고중지 접수 건이 완료됐는지(returnItems[].releaseStatus) 확인하는 데 쓴다.
+      // 응답: { success: true, data: 쿠팡 본문, coupangStatus }
+      server.middlewares.use('/api/coupang/return-request-detail', async (req: any, res: any) => {
+        try {
+          if (req.method !== 'GET') { sendJson(res, 405, { success: false, error: 'GET 만 허용' }); return }
+          const keys = extractCoupangKeys(req)
+          if (!keys) {
+            sendJson(res, 401, { success: false, error: '쿠팡 API 키가 요청에 포함되지 않았습니다.' })
+            return
+          }
+
+          const url = new URL(req.url || '/', `http://${req.headers.host}`)
+          const receiptId = toPositiveSafeInt(url.searchParams.get('receiptId'))
+          if (receiptId === null) {
+            sendJson(res, 400, { success: false, error: 'receiptId(숫자) 파라미터 필수' })
+            return
+          }
+
+          const apiPath = `/v2/providers/openapi/apis/api/v6/vendors/${keys.vendorCode}/returnRequests/${receiptId}`
+          const { status, body: result } = await callCoupangAPIWithStatus(
+            'GET', apiPath, null, keys.accessKey, keys.secretKey, undefined, keys.vendorCode,
+          )
+
+          sendJson(res, 200, { success: true, data: result, coupangStatus: status })
+        } catch (error: any) {
+          console.error('[coupang-proxy] return-request-detail 오류:', error.message)
+          sendJson(res, 500, { success: false, error: error.message })
+        }
+      })
+
+      // ── PATCH /api/coupang/return-request-stop — 출고중지완료 처리 (STOP_RETURN_REQUEST_SHIPMENT) ──
+      // body: { receiptId, cancelCount } — cancelCount 는 접수 건의 총 취소수량(cancelCountSum)과 같아야 한다
+      // 응답: { success: true, data: 쿠팡 본문, coupangStatus }
+      server.middlewares.use('/api/coupang/return-request-stop', async (req: any, res: any) => {
+        try {
+          if (req.method !== 'PATCH') { sendJson(res, 405, { success: false, error: 'PATCH 만 허용' }); return }
+          const keys = extractCoupangKeys(req)
+          if (!keys) {
+            sendJson(res, 401, { success: false, error: '쿠팡 API 키가 요청에 포함되지 않았습니다.' })
+            return
+          }
+
+          const body = (await parseBody(req)) ?? {}
+          const receiptId = toPositiveSafeInt(body.receiptId)
+          const cancelCount = toPositiveSafeInt(body.cancelCount)
+          if (receiptId === null || cancelCount === null) {
+            sendJson(res, 400, { success: false, error: 'receiptId(숫자), cancelCount(1 이상 정수) 필수' })
+            return
+          }
+
+          const apiPath = `/v2/providers/openapi/apis/api/v4/vendors/${keys.vendorCode}/returnRequests/${receiptId}/stoppedShipment`
+          const { status, body: result } = await callCoupangAPIWithStatus(
+            'PATCH', apiPath, null,
+            keys.accessKey, keys.secretKey,
+            { vendorId: keys.vendorCode, receiptId, cancelCount },
+            keys.vendorCode,
+          )
+
+          sendJson(res, 200, { success: true, data: result, coupangStatus: status })
+        } catch (error: any) {
+          console.error('[coupang-proxy] return-request-stop 오류:', error.message)
           sendJson(res, 500, { success: false, error: error.message })
         }
       })

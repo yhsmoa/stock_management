@@ -765,6 +765,61 @@ export async function savePersonalOrders(
   }
 }
 
+// ══════════════════════════════════════════════════════════════════
+// 행 단위 반영 — 쿠팡에서 처리가 끝난 줄(묶음배송번호 + 옵션ID)의 값만 고친다
+//   [배송준비](deliveryInstructService) · [출고중지](shipmentStopService)가 같이 쓴다.
+//   화면(usePersonalOrder.applyRowPatches)과 DB 가 같은 patch 를 받는다.
+//   다음 [주문 업데이트] 가 쿠팡 값으로 다시 덮으므로, 그때까지 화면·DB 를 맞춰 두는 용도다.
+// ══════════════════════════════════════════════════════════════════
+
+/** DB 반영(update) 동시 실행 수 — updatePendingInvoiceNumbers 와 같은 값 */
+const ROW_PATCH_CONCURRENCY = 10
+
+/** 행을 찾는 키(묶음배송번호 + 옵션ID)와 식별 칼럼은 patch 로 바꿀 수 없다 */
+export type OrderRowPatchFields = Partial<Omit<
+  PersonalOrderRow,
+  'id' | 'user_id' | 'vendor_id' | 'shipment_box_id' | 'vendor_item_id' | 'order_id'
+>>
+
+/** 한 줄의 반영값 */
+export interface OrderRowPatch {
+  shipmentBoxId: string
+  vendorItemId: string
+  patch: OrderRowPatchFields
+}
+
+/**
+ * 줄별 patch 를 coupang_personal_orders 에 반영한다 (선택한 줄만 — 키 지정 update 라 1000행 제한과 무관).
+ * @param label 오류 로그 머리말 (예: '배송준비')
+ * @returns 반영에 실패한 묶음배송번호 — 쿠팡에는 이미 처리됐으므로 [주문 업데이트] 로 맞춘다
+ */
+export async function saveOrderRowPatches(
+  userId: string,
+  rows: readonly OrderRowPatch[],
+  label: string,
+): Promise<{ failedBoxIds: string[] }> {
+  const failed = new Set<string>()
+
+  for (let i = 0; i < rows.length; i += ROW_PATCH_CONCURRENCY) {
+    const chunk = rows.slice(i, i + ROW_PATCH_CONCURRENCY)
+    const results = await Promise.all(
+      chunk.map(async (row) => {
+        const { error } = await supabase
+          .from('coupang_personal_orders')
+          .update(row.patch)
+          .eq('user_id', userId)
+          .eq('shipment_box_id', row.shipmentBoxId)
+          .eq('vendor_item_id', row.vendorItemId)
+        if (error) console.error(`[${label}] DB 반영 오류:`, row.shipmentBoxId, row.vendorItemId, error.message)
+        return { boxId: row.shipmentBoxId, ok: !error }
+      }),
+    )
+    for (const r of results) if (!r.ok) failed.add(r.boxId)
+  }
+
+  return { failedBoxIds: Array.from(failed) }
+}
+
 /** Supabase에서 전체 개인주문 데이터 조회 (user_id 기준, 페이지네이션) */
 export async function fetchPersonalOrders(
   userId: string,
