@@ -1,5 +1,31 @@
 import { supabase } from './supabase'
 import type { Stock, StockSearchFilters } from '../types/stock'
+import {
+  collectNewBarcodes,
+  compareIdText,
+  type CoupangStockName,
+  type StockImportContext,
+  type StockImportMode,
+  type StockImportOps,
+  type StockImportRow,
+} from './stockImportService'
+
+// ── 조회 · 일괄 작업 상수 (선택 삭제 · [엑셀 추가]) ─────────────────
+const STOCK_PAGE_SIZE = 1000         // PostgREST 기본 반환 상한 — 조회 루프 단위
+const IN_FILTER_CHUNK = 200          // .in() 한 번에 보낼 값 수 (1000건이면 URL 길이 초과로 요청이 멈춤)
+const INSERT_BATCH_SIZE = 500        // 신규 삽입 배치
+const UPDATE_BATCH_SIZE = 500        // 수량 갱신 병렬 배치
+
+/** (로케이션 + 바코드) 재고 키 — 규칙은 stockImportService 한 곳 */
+export { stockKeyOf } from './stockImportService'
+
+/** [엑셀 추가] 실행 결과 — 배치마다 저장하므로 실패가 있어도 앞 배치는 이미 저장돼 있다 */
+export interface StockImportApplyResult {
+  created: number
+  updated: number
+  failedInserts: number
+  failedUpdates: number
+}
 
 /**
  * 재고 관련 Supabase 서비스
@@ -16,10 +42,12 @@ export class StockService {
       let hasMore = true
 
       while (hasMore) {
+        // 정렬: 로케이션 → id. 로케이션만으로는 순서가 고정되지 않아 페이지 경계에서 행이 빠지거나 겹칠 수 있다
         let query = supabase
           .from('si_stocks')
           .select('*')
           .order('location', { ascending: true })
+          .order('id', { ascending: true })
         if (userId) query = query.eq('user_id', userId)
         const { data, error } = await query.range(from, from + batchSize - 1)
 
@@ -84,7 +112,9 @@ export class StockService {
           query = query.ilike('note', `%${filters.note}%`)
         }
 
+        // 정렬: 로케이션 → id (페이지 경계에서 행이 빠지거나 겹치지 않도록 순서를 고정)
         query = query.order('location', { ascending: true })
+          .order('id', { ascending: true })
           .range(from, from + batchSize - 1)
 
         const { data, error } = await query
@@ -244,14 +274,17 @@ export class StockService {
    */
   static async deleteMultipleStocks(ids: string[]): Promise<boolean> {
     try {
-      const { error } = await supabase
-        .from('si_stocks')
-        .delete()
-        .in('id', ids)
+      // .in() 은 IN_FILTER_CHUNK 개씩 — UUID 수백 개를 한 URL 에 실으면 길이 초과로 요청이 멈춘다
+      for (let i = 0; i < ids.length; i += IN_FILTER_CHUNK) {
+        const { error } = await supabase
+          .from('si_stocks')
+          .delete()
+          .in('id', ids.slice(i, i + IN_FILTER_CHUNK))
 
-      if (error) {
-        console.error('재고 일괄 삭제 오류:', error)
-        throw error
+        if (error) {
+          console.error('재고 일괄 삭제 오류:', error)
+          throw error
+        }
       }
 
       return true
@@ -259,6 +292,18 @@ export class StockService {
       console.error('재고 일괄 삭제 실패:', error)
       return false
     }
+  }
+
+  /**
+   * 사용자 재고 행 수 (검색 필터와 무관한 전체) — [전체 삭제] 확인 문구용
+   */
+  static async countStocksByUser(userId: string): Promise<number> {
+    const { count, error } = await supabase
+      .from('si_stocks')
+      .select('id', { count: 'exact', head: true })
+      .eq('user_id', userId)
+    if (error) throw error
+    return count ?? 0
   }
 
   /**
@@ -356,100 +401,6 @@ export class StockService {
   }
 
   /**
-   * 바코드 배열로 si_coupang_items에서 상품 정보 조회
-   */
-  static async getCoupangItemsByBarcodes(barcodes: string[]): Promise<Map<string, {
-    item_name: string
-    option_name: string
-  }>> {
-    try {
-      const barcodeMap = new Map<string, { item_name: string; option_name: string }>()
-
-      // 바코드가 없으면 빈 Map 반환
-      if (!barcodes || barcodes.length === 0) {
-        return barcodeMap
-      }
-
-      // 중복 제거
-      const uniqueBarcodes = Array.from(new Set(barcodes))
-
-      // .in() 배치는 200건씩 — 1000건 이상이면 URL 길이 초과로 요청이 멈춤
-      const batchSize = 200
-
-      for (let i = 0; i < uniqueBarcodes.length; i += batchSize) {
-        const batch = uniqueBarcodes.slice(i, i + batchSize)
-
-        const { data, error } = await supabase
-          .from('si_coupang_items')
-          .select('barcode, item_name, option_name')
-          .in('barcode', batch)
-          .not('barcode', 'is', null)
-
-        if (error) {
-          console.error('쿠팡 아이템 조회 오류:', error)
-          continue
-        }
-
-        // Map에 저장
-        if (data) {
-          data.forEach(item => {
-            if (item.barcode && item.item_name && item.option_name) {
-              barcodeMap.set(item.barcode, {
-                item_name: item.item_name,
-                option_name: item.option_name
-              })
-            }
-          })
-        }
-      }
-
-      console.log(`바코드 매칭: ${barcodeMap.size}/${uniqueBarcodes.length}개 매칭됨`)
-      return barcodeMap
-    } catch (error) {
-      console.error('쿠팡 아이템 조회 실패:', error)
-      return new Map()
-    }
-  }
-
-  /**
-   * 사용자별 전체 재고 조회 (페이지네이션 루프)
-   */
-  static async getAllStocksByUser(userId: string): Promise<Stock[]> {
-    try {
-      let allData: Stock[] = []
-      let from = 0
-      const batchSize = 1000
-      let hasMore = true
-
-      while (hasMore) {
-        const { data, error } = await supabase
-          .from('si_stocks')
-          .select('*')
-          .eq('user_id', userId)
-          .range(from, from + batchSize - 1)
-
-        if (error) {
-          console.error('사용자별 재고 조회 오류:', error)
-          throw error
-        }
-
-        if (data && data.length > 0) {
-          allData = [...allData, ...data]
-          from += batchSize
-          if (data.length < batchSize) hasMore = false
-        } else {
-          hasMore = false
-        }
-      }
-
-      return allData
-    } catch (error) {
-      console.error('사용자별 재고 조회 실패:', error)
-      return []
-    }
-  }
-
-  /**
    * 바코드 기준 총재고 Map 조회 (barcode → 모든 로케이션 qty 합산)
    * - 같은 barcode 가 (location + barcode) 단위로 여러 행에 흩어져 있으므로 합산 필요
    * - barcode, qty 만 select 하고 1000행 배치 페이지네이션으로 전체 처리
@@ -492,59 +443,153 @@ export class StockService {
     }
   }
 
-  /**
-   * 재고 일괄 삽입 (500건씩 배치)
-   */
-  static async batchCreateStocks(stocks: Omit<Stock, 'id'>[]): Promise<{ created: number; errors: number }> {
-    let created = 0
-    let errors = 0
-    const batchSize = 500
+  // ═══════════════════════════════════════════════════════════════
+  // 엑셀 추가 (재고관리 [엑셀 추가] — 추가 · 차감)
+  //   - 검사·계획은 services/stockImportService.ts (순수 로직), 여기는 DB 조회·쓰기만
+  //   - 기존 재고 조회가 실패하면 반드시 throw — 빈 목록으로 진행하면
+  //     추가가 기존 행을 모두 '신규'로 보고 중복 삽입한다
+  // ═══════════════════════════════════════════════════════════════
 
-    for (let i = 0; i < stocks.length; i += batchSize) {
-      const batch = stocks.slice(i, i + batchSize)
-      const { error } = await supabase
+  // ── 사용자 재고 전체 (실패 시 throw) ──────────────────────────────
+  private static async fetchUserStocksStrict(userId: string): Promise<Stock[]> {
+    const all: Stock[] = []
+    for (let from = 0; ; from += STOCK_PAGE_SIZE) {
+      const { data, error } = await supabase
         .from('si_stocks')
-        .insert(batch)
+        .select('*')
+        .eq('user_id', userId)
+        .order('id', { ascending: true })
+        .range(from, from + STOCK_PAGE_SIZE - 1)
+      if (error) throw error
+      const rows = (data ?? []) as Stock[]
+      all.push(...rows)
+      if (rows.length < STOCK_PAGE_SIZE) break
+    }
+    return all
+  }
 
-      if (error) {
-        console.error(`재고 일괄 삽입 오류 (batch ${i / batchSize + 1}):`, error)
-        errors += batch.length
-      } else {
-        created += batch.length
+  // ── 바코드 → 쿠팡 상품명·옵션명 (이 계정 것만 · 실패 시 throw) ──────
+  //    같은 바코드가 여러 옵션에 있으면 option_id 가 가장 작은 행 (늘 같은 결과)
+  private static async fetchCoupangNamesByBarcode(
+    userId: string,
+    barcodes: string[],
+  ): Promise<Map<string, CoupangStockName>> {
+    const best = new Map<string, CoupangStockName & { option_id: string }>()
+    for (let i = 0; i < barcodes.length; i += IN_FILTER_CHUNK) {
+      const chunk = barcodes.slice(i, i + IN_FILTER_CHUNK)
+      // 바코드 200개라도 한 바코드에 여러 행이 있을 수 있어 1000행 루프로 받는다
+      for (let from = 0; ; from += STOCK_PAGE_SIZE) {
+        const { data, error } = await supabase
+          .from('si_coupang_items')
+          .select('barcode, item_name, option_name, option_id')
+          .eq('user_id', userId)
+          .in('barcode', chunk)
+          .order('option_id', { ascending: true })
+          .range(from, from + STOCK_PAGE_SIZE - 1)
+        if (error) throw error
+        const rows = (data ?? []) as { barcode: string | null; item_name: string | null; option_name: string | null; option_id: string | number }[]
+        for (const item of rows) {
+          const barcode = (item.barcode ?? '').trim()
+          if (!barcode || !(item.item_name ?? '').trim()) continue
+          const optionId = String(item.option_id)
+          const prev = best.get(barcode)
+          if (prev && compareIdText(prev.option_id, optionId) <= 0) continue
+          best.set(barcode, { item_name: item.item_name as string, option_name: item.option_name ?? null, option_id: optionId })
+        }
+        if (rows.length < STOCK_PAGE_SIZE) break
       }
     }
-
-    return { created, errors }
+    const map = new Map<string, CoupangStockName>()
+    for (const [barcode, { item_name, option_name }] of best) map.set(barcode, { item_name, option_name })
+    return map
   }
 
   /**
-   * 재고 수량 일괄 업데이트 (개별 update를 500건 단위로 병렬 처리)
+   * [엑셀 추가] 계획에 필요한 DB 값 — 재고 전체 + (추가 모드) 신규 행 바코드의 쿠팡 이름
+   *   - nameCache: 같은 창에서 검사를 다시 돌릴 때 이미 물어본 바코드를 다시 묻지 않도록
+   *     (찾지 못한 바코드는 null 로 기억). 재고는 매번 새로 읽는다.
    */
-  static async batchUpdateStockQtys(
-    updates: { id: string; qty: number }[]
-  ): Promise<{ updated: number; errors: number }> {
-    let updated = 0
-    let errors = 0
-    const batchSize = 500
+  static async loadStockImportContext(
+    userId: string,
+    rows: readonly StockImportRow[],
+    mode: StockImportMode,
+    nameCache?: Map<string, CoupangStockName | null>,
+  ): Promise<StockImportContext> {
+    const stocks = await this.fetchUserStocksStrict(userId)
+    const coupangNames = new Map<string, CoupangStockName>()
+    if (mode !== 'add') return { stocks, coupangNames }
 
-    for (let i = 0; i < updates.length; i += batchSize) {
-      const batch = updates.slice(i, i + batchSize)
-      const results = await Promise.all(
-        batch.map(({ id, qty }) =>
-          supabase.from('si_stocks').update({ qty }).eq('id', id)
-        )
-      )
+    const barcodes = collectNewBarcodes(rows, stocks)
+    const missing = nameCache ? barcodes.filter(b => !nameCache.has(b)) : barcodes
+    const fetched = await this.fetchCoupangNamesByBarcode(userId, missing)
+    for (const barcode of missing) nameCache?.set(barcode, fetched.get(barcode) ?? null)
+    for (const barcode of barcodes) {
+      const name = fetched.get(barcode) ?? nameCache?.get(barcode)
+      if (name) coupangNames.set(barcode, name)
+    }
+    return { stocks, coupangNames }
+  }
 
-      for (const { error } of results) {
-        if (error) {
-          console.error('재고 수량 업데이트 오류:', error)
-          errors++
-        } else {
-          updated++
-        }
+  /**
+   * [엑셀 추가] 계획 실행 — 신규 INSERT_BATCH_SIZE 개씩, 수량 수정 UPDATE_BATCH_SIZE 개씩 병렬
+   *   - 원자적이지 않다: 배치가 실패해도 앞 배치는 이미 저장돼 있다 (결과에 실패 건수)
+   *   - 수정은 user_id 로 한 번 더 거르고, 0행이 바뀌면(그사이 삭제) 실패로 센다
+   *   - onProgress(처리한 작업 수, 전체 작업 수)
+   */
+  static async applyStockImport(
+    userId: string,
+    ops: StockImportOps,
+    onProgress?: (done: number, total: number) => void,
+  ): Promise<StockImportApplyResult> {
+    const result: StockImportApplyResult = { created: 0, updated: 0, failedInserts: 0, failedUpdates: 0 }
+    const total = ops.inserts.length + ops.updates.length
+    let done = 0
+    onProgress?.(done, total)
+
+    // ── 신규 ──
+    const newRows: Omit<Stock, 'id'>[] = ops.inserts.map(op => ({
+      location: op.location,
+      barcode: op.barcode,
+      item_name: op.item_name,
+      option_name: op.option_name,
+      qty: op.qty,
+      season: null,
+      note: null,
+      user_id: userId,
+    }))
+    for (let i = 0; i < newRows.length; i += INSERT_BATCH_SIZE) {
+      const batch = newRows.slice(i, i + INSERT_BATCH_SIZE)
+      const { error } = await supabase.from('si_stocks').insert(batch)
+      if (error) {
+        console.error('재고 일괄 삽입 오류:', error)
+        result.failedInserts += batch.length
+      } else {
+        result.created += batch.length
       }
+      done += batch.length
+      onProgress?.(done, total)
     }
 
-    return { updated, errors }
+    // ── 수량 수정 ──
+    for (let i = 0; i < ops.updates.length; i += UPDATE_BATCH_SIZE) {
+      const batch = ops.updates.slice(i, i + UPDATE_BATCH_SIZE)
+      const responses = await Promise.all(
+        batch.map(op =>
+          supabase.from('si_stocks').update({ qty: op.nextQty }).eq('id', op.id).eq('user_id', userId).select('id'),
+        ),
+      )
+      for (const { data, error } of responses) {
+        if (error || !data || data.length === 0) {
+          if (error) console.error('재고 수량 업데이트 오류:', error)
+          result.failedUpdates++
+        } else {
+          result.updated++
+        }
+      }
+      done += batch.length
+      onProgress?.(done, total)
+    }
+
+    return result
   }
 }

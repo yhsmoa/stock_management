@@ -1,0 +1,654 @@
+/* ================================================================
+   재고관리 [엑셀 추가] 모달 — 접두어 .sxi-
+   - 버튼은 PurchaseManagement.css 의 .purchase-btn (회색 입체 알약)
+   - 파랑 #4A8CF7 하나 + 차감은 붉은 톤, 테두리 #dde2ec
+   ================================================================ */
+
+/* ── 오버레이 · 창 ──────────────────────────────────────────── */
+.sxi-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 2000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(17, 24, 39, 0.4);
+}
+
+.sxi-modal {
+  display: flex;
+  flex-direction: column;
+  width: min(960px, calc(100vw - 32px));
+  max-height: 90vh;
+  box-sizing: border-box;
+  border-radius: 14px;
+  background: #fff;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.15);
+  font-size: 13px;
+  color: #111827;
+}
+
+/* ── 머리 ──────────────────────────────────────────────────── */
+.sxi-head {
+  flex-shrink: 0;
+  padding: 18px 22px 12px;
+  border-bottom: 1px solid #eef0f4;
+}
+
+.sxi-head-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.sxi-title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.sxi-desc {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: #6B7280;
+}
+
+.sxi-close {
+  margin-left: auto;
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  font-size: 20px;
+  line-height: 1;
+  color: #6B7280;
+  cursor: pointer;
+}
+.sxi-close:hover:not(:disabled) { background: #F3F4F6; color: #111827; }
+.sxi-close:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* ── 모드 전환 (추가 / 차감) ── */
+.sxi-segment {
+  display: inline-flex;
+  padding: 3px;
+  border: 1px solid #dde2ec;
+  border-radius: 9999px;
+  background: #f4f5f7;
+}
+
+.sxi-segment-btn {
+  min-width: 64px;
+  padding: 4px 14px;
+  border: none;
+  border-radius: 9999px;
+  background: transparent;
+  font-size: 12px;
+  font-weight: 600;
+  color: #6B7280;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, box-shadow 0.15s;
+}
+.sxi-segment-btn:hover:not(:disabled):not(.is-active) { color: #111827; }
+.sxi-segment-btn.is-active {
+  background: #fff;
+  color: #2563EB;
+  box-shadow: 0 1px 3px rgba(17, 24, 39, 0.12);
+}
+.sxi-segment-btn.is-active.is-deduct { color: #DC2626; }
+.sxi-segment-btn:disabled { cursor: not-allowed; }
+
+/* ── 본문 (내부 스크롤) ─────────────────────────────────────── */
+.sxi-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 14px 22px 6px;
+}
+
+/* ── 단계 ── */
+.sxi-section {
+  margin-bottom: 16px;
+  transition: opacity 0.15s;
+}
+.sxi-section.is-disabled {
+  opacity: 0.45;
+  pointer-events: none;
+}
+
+.sxi-section-head {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.sxi-step {
+  font-size: 14px;
+  font-weight: 700;
+  color: #4A8CF7;
+}
+
+.sxi-section-title {
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.sxi-section-hint {
+  font-size: 11.5px;
+  color: #9CA3AF;
+}
+
+.sxi-placeholder {
+  padding: 14px;
+  border: 1px dashed #dde2ec;
+  border-radius: 10px;
+  font-size: 12px;
+  color: #9CA3AF;
+  text-align: center;
+}
+
+.sxi-inline-error {
+  margin-top: 6px;
+  font-size: 12px;
+  color: #B91C1C;
+}
+
+.sxi-muted { color: #9CA3AF; font-weight: 400; }
+.sxi-strong { font-weight: 700; }
+.sxi-nowrap { white-space: nowrap; }
+.sxi-num { text-align: right; white-space: nowrap; }
+
+/* ── ① 파일 끌어놓기 ───────────────────────────────────────── */
+.sxi-drop {
+  position: relative;
+  display: block;
+  padding: 16px 14px;
+  border: 2px dashed #dde2ec;
+  border-radius: 12px;
+  background: #f9fafb;
+  text-align: center;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+.sxi-drop:hover:not(.is-disabled),
+.sxi-drop.is-over {
+  border-color: #4A8CF7;
+  background: #eef4fe;
+}
+.sxi-drop.has-file {
+  border-style: solid;
+  border-color: #b9d1fb;
+  background: #f5f9ff;
+}
+.sxi-drop.is-disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+.sxi-drop:focus-within {
+  box-shadow: 0 0 0 3px rgba(74, 140, 247, 0.18);
+}
+
+.sxi-drop-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  overflow: hidden;
+}
+
+.sxi-drop-title {
+  font-size: 13px;
+  font-weight: 600;
+  word-break: break-all;
+}
+
+.sxi-drop-size {
+  margin-left: 8px;
+  font-size: 11.5px;
+  font-weight: 400;
+  color: #6B7280;
+}
+
+.sxi-drop-hint {
+  margin-top: 4px;
+  font-size: 12px;
+  color: #6B7280;
+}
+
+/* ── ② 시트 · 머리글 행 ────────────────────────────────────── */
+.sxi-sheet-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.sxi-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1 1 220px;
+  min-width: 0;
+}
+
+.sxi-field-label {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: #6B7280;
+}
+
+.sxi-select {
+  width: 100%;
+  min-width: 0;
+  padding: 6px 10px;
+  border: 1px solid #dde2ec;
+  border-radius: 10px;
+  background: #fff;
+  font-size: 12.5px;
+  color: #111827;
+  outline: none;
+}
+.sxi-select:focus {
+  border-color: #4A8CF7;
+  box-shadow: 0 0 0 3px rgba(74, 140, 247, 0.14);
+}
+.sxi-select:disabled { background: #f9fafb; color: #9CA3AF; }
+
+/* ── ③ 열 선택 ─────────────────────────────────────────────── */
+.sxi-map-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+  gap: 10px;
+}
+
+.sxi-map-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+/* 미리 보기에서 열을 누르면 채워질 역할 */
+.sxi-map-field.is-next .sxi-select {
+  border-color: #4A8CF7;
+  box-shadow: 0 0 0 3px rgba(74, 140, 247, 0.14);
+}
+
+.sxi-map-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #374151;
+}
+
+.sxi-role-kind {
+  font-size: 10.5px;
+  font-style: normal;
+  font-weight: 500;
+  color: #9CA3AF;
+}
+
+.sxi-next-tag {
+  font-size: 10.5px;
+  font-style: normal;
+  font-weight: 600;
+  color: #2563EB;
+}
+
+/* ── 안내 줄 (다음에 누를 열 | 선택 초기화) ── */
+.sxi-map-guide {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 12px;
+  font-size: 12px;
+  color: #374151;
+}
+.sxi-map-guide-text { flex: 1; min-width: 0; }
+.sxi-map-guide-text b { color: #2563EB; }
+
+.sxi-link-btn {
+  flex-shrink: 0;
+  padding: 2px 4px;
+  border: none;
+  background: none;
+  font-size: 12px;
+  color: #6B7280;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+.sxi-link-btn:hover:not(:disabled) { color: #111827; }
+.sxi-link-btn:disabled { color: #D1D5DB; text-decoration: none; cursor: default; }
+
+.sxi-map-errors {
+  margin: 8px 0 0;
+  padding: 8px 12px 8px 26px;
+  border-radius: 10px;
+  background: #FEF2F2;
+  font-size: 12px;
+  color: #B91C1C;
+}
+
+/* ── 미리 보기 표 ── */
+/* 끌어서 스크롤 (hooks/useDragScroll) — 바탕은 손바닥, 누를 수 있는 머리는 손가락 */
+.sxi-preview-wrap {
+  cursor: grab;
+  margin-top: 6px;
+  overflow-x: auto;
+  border: 1px solid #dde2ec;
+  border-radius: 10px;
+}
+
+.sxi-preview {
+  border-collapse: collapse;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.sxi-preview th,
+.sxi-preview td {
+  max-width: 180px;
+  padding: 4px 8px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  border-bottom: 1px solid #eef0f4;
+  border-right: 1px solid #eef0f4;
+  text-align: left;
+}
+
+.sxi-preview thead th {
+  background: #f8f9fb;
+  font-weight: 600;
+  color: #6B7280;
+  vertical-align: bottom;
+}
+
+.sxi-preview .is-mapped { background: #f2f7ff; }
+.sxi-preview thead th.is-mapped { background: #e6effe; }
+
+/* 누를 수 있는 열 머리 (열 문자 칸 · 머리글 칸) */
+.sxi-preview .is-clickable {
+  cursor: pointer;
+  user-select: none;
+}
+.sxi-preview .is-clickable:hover { background: #e6effe; }
+/* 끄는 동안에는 어디서든 쥔 손 */
+.sxi-preview-wrap.is-dragging,
+.sxi-preview-wrap.is-dragging .is-clickable { cursor: grabbing; }
+.sxi-preview .is-clickable:focus-visible {
+  outline: 2px solid #4A8CF7;
+  outline-offset: -2px;
+}
+
+.sxi-preview-header-row td {
+  font-weight: 700;
+  color: #374151;
+}
+
+.sxi-preview .sxi-row-num,
+.sxi-preview .sxi-preview-corner {
+  min-width: 34px;
+  background: #f8f9fb;
+  color: #9CA3AF;
+  text-align: right;
+  font-weight: 400;
+}
+
+.sxi-preview-empty {
+  color: #9CA3AF;
+  text-align: center !important;
+}
+
+.sxi-col-letter {
+  display: block;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+/* ── 역할 배지 — 역할마다 색을 나누지 않고 파랑 한 톤 ── */
+.sxi-role-badge {
+  display: inline-block;
+  margin: 2px 3px 0 0;
+  padding: 0 6px;
+  border-radius: 4px;
+  background: #4A8CF7;
+  color: #fff;
+  font-size: 10.5px;
+  font-weight: 600;
+  line-height: 1.6;
+}
+
+/* ── ④ 검사 결과 ───────────────────────────────────────────── */
+.sxi-check {
+  position: relative;
+  transition: opacity 0.15s;
+}
+.sxi-check.is-checking > :not(.sxi-checking-badge) { opacity: 0.5; }
+
+.sxi-checking-badge {
+  position: absolute;
+  top: -30px;
+  right: 0;
+  padding: 2px 10px;
+  border-radius: 9999px;
+  background: #eef4fe;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: #2563EB;
+}
+
+.sxi-stale {
+  margin-bottom: 10px;
+  padding: 8px 12px;
+  border: 1px solid #FCD34D;
+  border-radius: 10px;
+  background: #FFFBEB;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: #92400E;
+}
+
+.sxi-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.sxi-stat {
+  flex: 1 1 110px;
+  min-width: 0;
+  padding: 8px 12px;
+  border: 1px solid #dde2ec;
+  border-radius: 10px;
+  background: #fff;
+}
+.sxi-stat-label { font-size: 11.5px; color: #6B7280; }
+.sxi-stat-value { margin-top: 2px; font-size: 16px; font-weight: 700; }
+.sxi-stat.is-blue .sxi-stat-value { color: #2563EB; }
+.sxi-stat.is-red { border-color: #FCA5A5; background: #FEF2F2; }
+.sxi-stat.is-red .sxi-stat-value { color: #DC2626; }
+.sxi-stat.is-muted .sxi-stat-value { color: #9CA3AF; }
+
+.sxi-sources {
+  margin-top: 8px;
+  font-size: 12px;
+  color: #6B7280;
+}
+.sxi-sources strong { color: #111827; }
+
+/* ── 묶음 (오류 · 안내 · 미리 보기) ── */
+.sxi-block {
+  margin-top: 12px;
+}
+.sxi-block.is-danger,
+.sxi-block.is-notice {
+  padding: 10px 12px;
+  border-radius: 10px;
+}
+.sxi-block.is-danger { border: 1px solid #FCA5A5; background: #FEF2F2; }
+.sxi-block.is-notice { border: 1px solid #dde2ec; background: #f9fafb; }
+
+.sxi-block-title {
+  margin-bottom: 6px;
+  font-size: 12.5px;
+  font-weight: 700;
+}
+.sxi-block.is-danger .sxi-block-title { color: #B91C1C; }
+
+.sxi-notice-list {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 12px;
+  color: #374151;
+  line-height: 1.7;
+}
+
+.sxi-list-wrap {
+  max-height: 240px;
+  overflow: auto;
+  border: 1px solid #dde2ec;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.sxi-list {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.sxi-list th {
+  position: sticky;
+  top: 0;
+  padding: 5px 8px;
+  background: #f8f9fb;
+  border-bottom: 1px solid #dde2ec;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: #6B7280;
+  text-align: left;
+  white-space: nowrap;
+}
+.sxi-list td {
+  padding: 4px 8px;
+  border-bottom: 1px solid #eef0f4;
+  vertical-align: top;
+}
+.sxi-list th.sxi-num { text-align: right; }
+
+.sxi-cell-value {
+  max-width: 280px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sxi-more {
+  margin-top: 6px;
+  font-size: 11.5px;
+  color: #6B7280;
+}
+
+.sxi-kind {
+  padding: 0 7px;
+  border: 1px solid currentColor;
+  border-radius: 9999px;
+  font-size: 10.5px;
+  font-weight: 600;
+}
+.sxi-kind.is-insert { color: #2563EB; }
+.sxi-kind.is-add { color: #374151; }
+.sxi-kind.is-deduct { color: #DC2626; }
+
+/* ── 진행 · 실행 오류 ──────────────────────────────────────── */
+.sxi-progress {
+  flex-shrink: 0;
+  padding: 10px 22px 0;
+}
+.sxi-progress-text {
+  margin-bottom: 6px;
+  font-size: 12px;
+  color: #374151;
+}
+.sxi-progress-track {
+  height: 8px;
+  border-radius: 9999px;
+  background: #eef0f4;
+  overflow: hidden;
+}
+.sxi-progress-bar {
+  height: 100%;
+  border-radius: 9999px;
+  background: linear-gradient(to right, #5A97F8, #4A8CF7);
+  transition: width 0.2s;
+}
+
+.sxi-run-error {
+  flex-shrink: 0;
+  margin: 10px 22px 0;
+  padding: 8px 12px;
+  border: 1px solid #FCA5A5;
+  border-radius: 10px;
+  background: #FEF2F2;
+  font-size: 12px;
+  color: #B91C1C;
+}
+
+/* ── 결과 ──────────────────────────────────────────────────── */
+.sxi-result {
+  padding: 6px 0 10px;
+}
+.sxi-result-title {
+  margin-bottom: 12px;
+  font-size: 15px;
+  font-weight: 700;
+  color: #2563EB;
+}
+.sxi-result-title.is-warn { color: #B91C1C; }
+.sxi-result-note {
+  margin-top: 10px;
+  font-size: 12px;
+  color: #6B7280;
+  line-height: 1.6;
+}
+
+/* ── 바닥 ──────────────────────────────────────────────────── */
+.sxi-foot {
+  flex-shrink: 0;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 22px 16px;
+  border-top: 1px solid #eef0f4;
+  margin-top: 10px;
+}
+
+/* 실행 — 회색 알약 위에 파란 그라데이션 (사입관리 저장 버튼과 같은 톤), 차감은 붉은 톤 */
+.purchase-btn.sxi-btn-primary {
+  padding-left: 20px;
+  padding-right: 20px;
+  border-color: transparent;
+  background-image: linear-gradient(to bottom, #5A97F8, #4A8CF7);
+  color: #fff;
+  font-weight: 600;
+}
+.purchase-btn.sxi-btn-primary:hover:not(:disabled) {
+  background-image: linear-gradient(to bottom, #4A87ED, #3B7DE6);
+  border-color: transparent;
+}
+.purchase-btn.sxi-btn-primary.is-deduct {
+  background-image: linear-gradient(to bottom, #F26B6B, #E14C4C);
+}
+.purchase-btn.sxi-btn-primary.is-deduct:hover:not(:disabled) {
+  background-image: linear-gradient(to bottom, #E85A5A, #D13D3D);
+}
+
+/* ── 좁은 화면 ─────────────────────────────────────────────── */
+@media (max-width: 600px) {
+  .sxi-head,
+  .sxi-body,
+  .sxi-foot { padding-left: 14px; padding-right: 14px; }
+  .sxi-head-row { flex-wrap: wrap; gap: 8px; }
+  .sxi-progress { padding-left: 14px; padding-right: 14px; }
+}

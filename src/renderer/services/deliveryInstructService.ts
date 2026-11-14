@@ -32,6 +32,7 @@ import {
   type CoupangCarrier,
 } from './coupangCarriers'
 import { COUPANG_RATE_LIMIT } from '../utils/rateLimitQueue'
+import { readExcelIdCell } from '../utils/excelCell'
 
 // ══════════════════════════════════════════════════════════════════
 // 상수
@@ -58,8 +59,6 @@ const SPLIT_MIN_OPTIONS = 2
 
 /** 머리글 행을 찾을 범위 — 시트 맨 위에서 이 행 수 안에 있어야 한다 */
 const HEADER_SCAN_ROWS = 10
-/** 엑셀 숫자 셀이 정확히 담을 수 있는 최대 자릿수 (Excel 유효숫자 15자리) */
-const EXCEL_EXACT_DIGITS = 15
 
 /** 쿠팡 응답 성공 코드 (최상위 code) */
 const COUPANG_OK_CODE = '200'
@@ -265,26 +264,7 @@ export function todayYmd(now: Date = new Date()): string {
 /** 머리글 비교용 — 공백 제거 */
 const normalizeHeader = (v: unknown) => String(v ?? '').replace(/\s+/g, '')
 
-/** 숫자 셀 자릿수 손실 안내 */
-const NUMERIC_PRECISION_ERROR = '숫자 형식 셀의 자릿수가 손실되었습니다 — 텍스트 형식으로 저장해 주세요'
 const DATE_CELL_ERROR = '날짜로 읽을 수 없습니다 — YYYY-MM-DD 로 넣어 주세요'
-
-/**
- * ID·운송장 셀 → 문자열.
- * 숫자 셀은 안전한 정수이고 Excel 이 정확히 담는 15자리 이내일 때만 받는다 —
- * 그 밖의 값은 이미 자릿수가 깎였을 수 있어 조용히 틀린 ID 로 보내지 않도록 오류로 돌린다.
- */
-function readIdCell(v: unknown): { value: string; error: string | null } {
-  if (v == null) return { value: '', error: null }
-  if (typeof v === 'number') {
-    if (!Number.isSafeInteger(v) || v < 0 || String(v).length > EXCEL_EXACT_DIGITS) {
-      return { value: '', error: NUMERIC_PRECISION_ERROR }
-    }
-    return { value: String(v), error: null }
-  }
-  if (typeof v === 'string') return { value: v.trim(), error: null }
-  return { value: '', error: `읽을 수 없는 셀 값입니다 (${typeof v})` }
-}
 
 /**
  * 날짜 셀 → YYYY-MM-DD.
@@ -359,7 +339,7 @@ export async function parseDeliveryExcel(file: File): Promise<ParsedDeliveryExce
       const line = aoa[r] ?? []
       const cellErrors: string[] = []
       const readField = (field: HeaderField) => {
-        const { value, error } = readIdCell(cellAt(line, field))
+        const { value, error } = readExcelIdCell(cellAt(line, field))
         if (error) cellErrors.push(`${HEADER_NAMES[field]}: ${error}`)
         return { value, error }
       }

@@ -1,170 +1,100 @@
-import React, { useState } from 'react'
-import { theme } from '../../styles/theme'
-import type { Stock } from '../../types/stock'
-import { STOCK_TABLE_HEADERS } from '../../types/stock'
+// ═══════════════════════════════════════════════════════════════════
+// InventoryTable — 재고관리 표 (사입관리 · 반출관리와 같은 purchase-table 모양)
+//   - 표시 전용: 선택 상태는 useInventory 가 가진다
+//   - 머리글 체크 = 지금 페이지 행만
+// ═══════════════════════════════════════════════════════════════════
+
+import React from 'react'
+import { STOCK_TABLE_COLUMNS, type Stock, type StockTableColumn } from '../../types/stock'
 
 interface InventoryTableProps {
-  data: Stock[]
-  loading?: boolean
-  onSelectionChange?: (ids: string[]) => void
+  rows: Stock[]
+  selectedIds: Set<string>
+  isPageAllSelected: boolean
+  onToggleRow: (id: string, checked: boolean) => void
+  onTogglePage: (checked: boolean) => void
 }
 
-const InventoryTable: React.FC<InventoryTableProps> = ({ data, loading, onSelectionChange }) => {
-  const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set())
+// ── 셀 값 ─────────────────────────────────────────────────────────
+const cellText = (col: StockTableColumn, row: Stock): string => {
+  const value = row[col.key]
+  if (value === null || value === undefined || value === '') return col.key === 'qty' ? '0' : ''
+  return col.key === 'qty' ? Number(value).toLocaleString() : String(value)
+}
 
-  // 전체 선택/해제
-  const handleSelectAll = (checked: boolean) => {
-    let newSelected: Set<string>
-    if (checked) {
-      const allIds = new Set(data.map((item, index) => item.id || `index-${index}`))
-      newSelected = allIds
-    } else {
-      newSelected = new Set()
-    }
-    setSelectedItems(newSelected)
-    onSelectionChange?.(Array.from(newSelected))
-  }
+const InventoryTable: React.FC<InventoryTableProps> = ({
+  rows, selectedIds, isPageAllSelected, onToggleRow, onTogglePage,
+}) => (
+  <div className="purchase-table-wrapper">
+    <table className="purchase-table inv-table">
+      {/* ── colgroup ──────────────────────────────────── */}
+      <colgroup>
+        <col style={{ width: '30px' }} />
+        {STOCK_TABLE_COLUMNS.map(c => (
+          <col key={c.key} style={c.width ? { width: c.width } : undefined} />
+        ))}
+      </colgroup>
 
-  // 개별 선택/해제
-  const handleSelectItem = (itemId: string, checked: boolean) => {
-    const newSelected = new Set(selectedItems)
-    if (checked) {
-      newSelected.add(itemId)
-    } else {
-      newSelected.delete(itemId)
-    }
-    setSelectedItems(newSelected)
-    onSelectionChange?.(Array.from(newSelected))
-  }
-  // 테이블 스타일 정의
-  const tableStyles = {
-    container: {
-      ...theme.table.container,
-    },
-    tableWrapper: {
-      overflowX: 'auto' as const,
-    },
-    table: {
-      width: '100%',
-      borderCollapse: 'collapse' as const,
-      fontSize: '14px',
-    },
-    thead: {
-      ...theme.table.thead,
-    },
-    th: {
-      ...theme.table.th,
-    },
-    tbody: {
-      backgroundColor: theme.colors.bgCard,
-    },
-    tr: {
-      ...theme.table.tr,
-    },
-    trHover: {
-      backgroundColor: theme.colors.bgHover,
-    },
-    td: {
-      ...theme.table.td,
-    },
-    emptyMessage: {
-      padding: '40px',
-      textAlign: 'center' as const,
-      color: theme.colors.textSecondary,
-      fontSize: '16px',
-    },
-    loadingMessage: {
-      padding: '40px',
-      textAlign: 'center' as const,
-      color: theme.colors.textSecondary,
-      fontSize: '16px',
-    }
-  }
+      {/* ── thead ─────────────────────────────────────── */}
+      <thead>
+        <tr>
+          <th className="col-checkbox">
+            <input
+              type="checkbox"
+              className="purchase-checkbox"
+              checked={isPageAllSelected}
+              disabled={rows.length === 0}
+              onChange={e => onTogglePage(e.target.checked)}
+              aria-label="이 페이지 전체 선택"
+            />
+          </th>
+          {STOCK_TABLE_COLUMNS.map(c => (
+            <th key={c.key} className={c.isText ? 'col-product' : undefined}>{c.label}</th>
+          ))}
+        </tr>
+      </thead>
 
-  if (loading) {
-    return (
-      <div style={tableStyles.container}>
-        <div style={tableStyles.loadingMessage}>
-          데이터를 불러오는 중...
-        </div>
-      </div>
-    )
-  }
-
-  return (
-    <div style={tableStyles.container}>
-      <div style={tableStyles.tableWrapper}>
-        <table style={tableStyles.table}>
-          <thead style={tableStyles.thead}>
-            <tr>
-              {STOCK_TABLE_HEADERS.map(header => (
-                <th
-                  key={header.key}
-                  style={{
-                    ...tableStyles.th,
-                    width: header.width,
-                    textAlign: header.key === 'checkbox' || header.key === 'qty' ? 'center' : 'left'
-                  }}
-                >
-                  {header.key === 'checkbox' ? (
-                    <input
-                      type="checkbox"
-                      checked={data.length > 0 && selectedItems.size === data.length}
-                      onChange={(e) => handleSelectAll(e.target.checked)}
-                      style={{ cursor: 'pointer' }}
-                    />
-                  ) : (
-                    header.label
-                  )}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody style={tableStyles.tbody}>
-            {data.length > 0 ? (
-              data.map((item, index) => {
-                const itemId = item.id || `index-${index}`
-                return (
-                  <tr
-                    key={itemId}
-                    style={tableStyles.tr}
-                    onMouseEnter={(e) => {
-                      e.currentTarget.style.backgroundColor = tableStyles.trHover.backgroundColor
-                    }}
-                    onMouseLeave={(e) => {
-                      e.currentTarget.style.backgroundColor = 'transparent'
-                    }}
-                  >
-                    <td style={{ ...tableStyles.td, textAlign: 'center' }}>
-                      <input
-                        type="checkbox"
-                        checked={selectedItems.has(itemId)}
-                        onChange={(e) => handleSelectItem(itemId, e.target.checked)}
-                        style={{ cursor: 'pointer' }}
-                      />
-                    </td>
-                    <td style={tableStyles.td}>{item.location || '-'}</td>
-                    <td style={tableStyles.td}>{item.barcode}</td>
-                    <td style={tableStyles.td}>{item.item_name || '-'}</td>
-                    <td style={tableStyles.td}>{item.option_name || '-'}</td>
-                    <td style={{ ...tableStyles.td, textAlign: 'center' }}>{item.qty || 0}</td>
-                    <td style={tableStyles.td}>{item.season || '-'}</td>
-                    <td style={tableStyles.td}>{item.note || '-'}</td>
-                  </tr>
-                )
-              })
-            ) : (
-              <tr>
-                <td colSpan={STOCK_TABLE_HEADERS.length} style={tableStyles.emptyMessage}>
-                  검색 결과가 없습니다.
+      {/* ── tbody ─────────────────────────────────────── */}
+      <tbody>
+        {rows.length === 0 ? (
+          <tr>
+            <td colSpan={STOCK_TABLE_COLUMNS.length + 1} className="purchase-table-empty">
+              데이터가 없습니다
+            </td>
+          </tr>
+        ) : (
+          rows.map(row => {
+            const checked = selectedIds.has(row.id)
+            return (
+              <tr key={row.id} className={checked ? 'inv-row-selected' : undefined}>
+                <td>
+                  <input
+                    type="checkbox"
+                    className="purchase-checkbox"
+                    checked={checked}
+                    onChange={e => onToggleRow(row.id, e.target.checked)}
+                  />
                 </td>
+                {STOCK_TABLE_COLUMNS.map(c => {
+                  const text = cellText(c, row)
+                  return (
+                    <td
+                      key={c.key}
+                      className={[c.isText ? 'col-product' : '', c.key === 'qty' ? 'inv-col-qty' : '']
+                        .filter(Boolean).join(' ') || undefined}
+                      title={c.isText ? text : undefined}
+                    >
+                      {text}
+                    </td>
+                  )
+                })}
               </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  )
-}
+            )
+          })
+        )}
+      </tbody>
+    </table>
+  </div>
+)
 
 export default InventoryTable

@@ -21,14 +21,22 @@ export interface StockSearchFilters {
   note: string
 }
 
-// 테이블 헤더 정의
-export const STOCK_TABLE_HEADERS = [
-  { key: 'checkbox', label: '', width: '3%' },
-  { key: 'location', label: '로케이션', width: '10%' },
-  { key: 'barcode', label: '바코드', width: '10%' },
-  { key: 'item_name', label: '상품명', width: '25%' },
-  { key: 'option_name', label: '옵션명', width: '12.5%' },
-  { key: 'qty', label: '개수', width: '5%' },
-  { key: 'season', label: '시즌', width: '10%' },
-  { key: 'note', label: '비고', width: '24.5%' },
-] as const
+// ── 재고관리 표 열 정의 ─────────────────────────────────────────
+//   width 를 비운 열(상품명)이 남는 폭을 가진다 (table-layout: fixed)
+//   isText = 왼쪽 정렬 + 마우스를 올리면 전체 글자(title)
+export interface StockTableColumn {
+  key: 'location' | 'barcode' | 'item_name' | 'option_name' | 'qty' | 'season' | 'note'
+  label: string
+  width?: string
+  isText?: boolean
+}
+
+export const STOCK_TABLE_COLUMNS: readonly StockTableColumn[] = [
+  { key: 'location',    label: '로케이션', width: '120px' },
+  { key: 'barcode',     label: '바코드',   width: '140px' },
+  { key: 'item_name',   label: '상품명',   isText: true },
+  { key: 'option_name', label: '옵션명',   width: '180px', isText: true },
+  { key: 'qty',         label: '개수',     width: '70px' },
+  { key: 'season',      label: '시즌',     width: '100px' },
+  { key: 'note',        label: '비고',     width: '220px', isText: true },
+]

@@ -42,7 +42,7 @@ When adding or changing a Coupang endpoint, update **both** files. Per-user keys
 - **Pages** (`src/renderer/pages/`) — one file per route, typically 300–800 lines. Some pages ship a companion `use*.ts` hook (`usePersonalOrder.ts`, `usePurchaseManagement.ts`) and a colocated `.css` file when inline styles aren't enough.
 - **Services** (`src/renderer/services/`) — all Supabase reads/writes and Excel/PDF/barcode helpers live here. Pages should not call `supabase` directly; they call a service function. `supabase.ts` is the exception (it owns auth + shared lookup helpers like `getOrderUserId`, `fetchCoupangItems`).
 - **Components** (`src/renderer/components/`) — `common/`, `inventory/`, `purchase/`, `shipment/`, `export/` folders group feature-specific pieces. `Layout.tsx` + `Sidebar.tsx` + `ProtectedRoute.tsx` are the app shell.
-- **Styling** — design tokens in `src/renderer/styles/theme.ts` (import as `import { theme } from '.../styles/theme'`). Shared page chrome in `page-common.css`. Most component styling is inline `style={{}}` using `theme.*` tokens — follow that pattern rather than introducing a CSS framework.
+- **Styling** — design tokens in `src/renderer/styles/theme.ts` (import as `import { theme } from '.../styles/theme'`). Shared list-page chrome (title · search bar · toolbar · table · pagination) is the `purchase-*` classes in `pages/PurchaseManagement.css` — 사입관리 · 반출관리 · 재고관리 import it. Most component styling is inline `style={{}}` using `theme.*` tokens — follow that pattern rather than introducing a CSS framework.
 
 ### Supabase data model
 All tables share the `si_` prefix and are queried via `@supabase/supabase-js` with anon key from `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY`. Tables actually used by the code:
@@ -108,6 +108,14 @@ Electron is built separately via `scripts/build-electron.mjs` (called manually; 
   바꿀 수 없는 값: 카테고리 · 상품상태 · 묶음정보 · 승인된 옵션 삭제. 이미지·상세 콘텐츠·고시정보·출고지/반품지 코드는 아직 안 만들었다(편집기 규모).
 - **규모 주의**: immong 계정 옵션 78,012 · 상품 16,290 (하이브리드 5,387). 한 화면에서 count 쿼리를 동시에 10개 넘게 보내면 Supabase statement timeout 이 난다 → 페이지 → 요약 → 건수 **순서대로** 받는다. 쿠팡은 **등록 IP(Railway)만** 받으므로 로컬 dev 에서 쿠팡 호출은 403 — 새 프록시 경로는 배포 후에만 확인할 수 있다.
 - 사입관리 [바코드 동기화]와 같은 상세 응답을 쓰므로, 하이브리드 상품은 한 호출로 `si_rg_items` 와 `si_coupang_items` 를 같이 채울 수 있다 — 아직 합치지 않았다(각자 호출).
+
+### 재고관리 (2026-11-14)
+`/inventory`(`si_stocks`, 계정당 ~1.4천 행)는 쿠팡관리 하위 화면과 같은 틀이다 — `pages/PurchaseManagement.css` 의 `purchase-*` 를 그대로 쓰고 전용 규칙만 `pages/Inventory.css`(.inv-). 상태·동작 `pages/useInventory.ts`, 표 `components/inventory/InventoryTable.tsx`(열 정의 `types/stock.ts` 의 `STOCK_TABLE_COLUMNS`). 예전 `styles/page-common.css`·`SearchForm` 은 지웠다.
+- **[엑셀 추가]** (예전 [엑셀 +]·[엑셀 −] 를 합침) = 모달 하나에서 모드(추가 / 차감) → ① 파일 → ② 시트 · 머리글 행(앞쪽 10개 비어 있지 않은 행 중 열 자동 추측이 가장 많이 맞는 행 — 쿠팡 양식처럼 '상품기본정보' 묶음 머리글 아래에 실제 머리글이 있어도 아래 행을 고른다. 하나도 안 맞으면 글자 칸 2개 이상인 첫 행) → ③ 열 선택(위치·바코드·수량 필수, 상품명·옵션명은 추가만 · 머리글 별칭으로 추측 — 2글자 한글 별칭은 머리글 끝에 올 때만, 영문은 같은 글자만(`headerContainsAlias`), **실행한** 선택은 localStorage `inventory_excel_mapping_v1` 에 머리글 글자로 기억) + 미리 보기(실제 엑셀 열 문자·행 번호). 미리 보기의 열 머리를 누르면 위치 → 바코드 → 수량 → 상품명 → 옵션명 순으로 다음 빈 역할에 들어가고 다시 누르면 해제(`toggleColumnInMapping`), 목록 선택도 그대로. 색은 파랑 한 톤(역할마다 색을 나누지 않는다) → ④ 자동 검사 → 실행. 화면 `components/inventory/StockExcelImportModal.tsx`(+ `ExcelDropZone` · `ImportColumnMapper` · `ImportCheckResult`, 스타일 `StockExcelImport.css` .sxi-), 상태 `useStockExcelImport.ts`.
+  - 검사·계획은 순수 함수 `services/stockImportService.ts`(`parseStockImportRows` → `planStockImport`, 키 `stockKeyOf` 도 여기). 셀은 raw 로 읽는다 — 바코드 숫자 셀은 15자리 이내 정수만(`utils/excelCell.ts` `readExcelIdCell`, [배송준비] 와 공용), 수량은 0 이상 정수(글자는 쉼표·공백 제거). 오류(빈 위치·바코드·수량, 자릿수 손실, 소수·음수, 차감의 재고 없음 · 같은 키 누적 부족, 열 중복)가 **하나라도 있으면 실행 불가**. 수량 0 행은 제외, 같은 (위치 + 바코드) 여러 행은 합산.
+  - 추가의 기존 행은 수량만 더하고 이름은 그대로. 신규 행 이름은 ① 이 계정 `si_coupang_items`(바코드, option_id 가 가장 작은 행) ② 다른 위치의 기존 재고 ③ 엑셀 ④ 없음.
+  - DB 는 `StockService.loadStockImportContext`(재고 전체 + 신규 바코드의 쿠팡 이름, 조회 실패 시 throw — 빈 목록으로 진행하면 추가가 전부 신규로 중복 삽입) · `applyStockImport`(신규 500건 배치 · 수량 수정 500건 병렬, `user_id` 로 한 번 더 거르고 0행 수정은 실패로 셈). **실행 직전에 재고를 다시 읽어 계획을 다시 만들고**, 검사 때와 작업 목록(`stockImportOpsSignature`)이 다르면 아무것도 쓰지 않고 "그사이 재고가 바뀌었습니다" 로 멈춘다. 쓰기는 원자적이지 않다 — 실패 배치가 있으면 결과 화면이 건수와 함께 알린다. 닫으면(쓴 것이 있을 때) 마지막 검색 조건으로 다시 읽는다.
+- [전체 삭제] 는 검색 조건과 무관하게 계정 전체 — 확인 문구의 건수는 `countStocksByUser`. 작업 뒤 다시 읽기는 마지막으로 조회한 검색 조건으로.
 
 ### 로켓그로스 콘솔 (2026-10-27)
 `/rocket-console`(물류 › 출고관리 › 로켓그로스 콘솔)은 쿠팡윙 로켓그로스 **입고 생성** 화면에 F12 › Console 로 붙여넣을 자동화 스크립트를 만든다. 쿠팡 API 나 DB 는 쓰지 않는다 — 엑셀을 읽어 문자열을 만들고 복사만 한다.
