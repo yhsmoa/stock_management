@@ -32,6 +32,7 @@ import {
   fetchShipmentsWithin,
   fetchShipmentDetails,
   makeFulfillmentKey,
+  deriveFulfillmentState,
   deriveFulfillmentStatus,
   EMPTY_AGG,
   type FulfillmentAgg,
@@ -62,6 +63,14 @@ import {
   type CartTarget,
 } from '../services/orderSendService'
 import { StockService } from '../services/stockService'
+import {
+  allocateOutbound,
+  OUTBOUND_SHIPMENT_DAYS,
+  type OutboundAlloc,
+  type OutboundDemand,
+  type OutboundPrepSelection,
+  type OutboundStockRow,
+} from '../services/outboundPrepService'
 import type { ProgressStep } from '../components/common/ProgressModal'
 import type { AuthUser } from '../types/auth'
 
@@ -172,8 +181,8 @@ const DELIVERY_HEADERS = [
 /** 대기 운송장(pending_invoice_number) 글자색 — 화면 표(주황 #C2410C)와 동일 */
 const PENDING_INVOICE_ARGB = 'FFC2410C'
 
-/** 입고엑셀 Delivery/합배송 시트의 택배사 고정값 */
-const INBOUND_CARRIER_NAME = 'CJ 대한통운'
+/** 출고엑셀 Delivery/합배송 시트의 택배사 고정값 */
+const OUTBOUND_CARRIER_NAME = 'CJ 대한통운'
 
 /**
  * 운송장번호 셀 — 화면 표(PersonalOrder invoice_no 열)와 동일한 규칙.
@@ -203,7 +212,7 @@ interface DeliveryAoAOptions {
 
 /**
  * DeliveryList aoa 생성 (헤더 + 행).
- * - 기존 [엑셀] 과 입고엑셀 Delivery/합배송 시트가 공유.
+ * - 기존 [엑셀] 과 출고엑셀 Delivery/합배송 시트가 공유.
  */
 function buildDeliveryAoA(
   rows: PersonalOrderRow[],
@@ -253,18 +262,15 @@ export function getRowKey(r: PersonalOrderRow): string {
   return r.id ?? `${r.shipment_box_id}|${r.vendor_item_id ?? ''}`
 }
 
-// ── 입고준비 할당 (rowKey → 값) ─────────────────────────────────────
-//   boxStr    : '[HI-P-01 - 1, HI-P-02 - 1]' — 입고엑셀 등록상품명 접두(boxPrefixOf). 형식을 바꾸면 엑셀이 바뀐다.
-//   displayStr: 'SHHI261107 [HI-P-01 - 1] SHHI261108 [HI-P-03 - 2]' — 화면 표시 전용(shipment 번호별 묶음).
-//   matched   : 재고가 1개 이상 할당됨 — 입고엑셀 대상 판정
-export interface InboundAlloc {
-  boxStr: string
-  displayStr: string
-  matched: boolean
+/** 주문일 → ms (선착순 정렬용). 없거나 읽을 수 없으면 0 */
+function orderedAtMs(r: PersonalOrderRow): number {
+  const t = r.ordered_at ? new Date(r.ordered_at).getTime() : 0
+  return Number.isFinite(t) ? t : 0
 }
 
-/** 재고 부족 표시 — boxStr 끝 · displayStr 마지막 묶음 괄호 안 끝에 붙는다 */
-const INBOUND_SHORTAGE_MARK = '추가★'
+// ── 출고준비 배정 (rowKey → 값) ─────────────────────────────────────
+//   형식 · 규칙은 services/outboundPrepService.ts (OutboundAlloc)
+//   boxStr 은 출고엑셀 등록상품명 접두(boxPrefixOf) — 형식을 바꾸면 엑셀이 바뀐다
 
 // ── 드로어 선택 아이템 타입 ─────────────────────────────────────────
 export interface DrawerItemState {
@@ -332,6 +338,9 @@ export function usePersonalOrder() {
   const [reorderCountMap, setReorderCountMap] = useState<Map<string, number>>(new Map())
   // ORDER 카트 매칭 키 집합 (복합 키: order_id|vendor_item_id) — '카트(🛒)' 판정용
   const [cartKeySet, setCartKeySet] = useState<Set<string>>(new Set())
+  // 위 fulfillment 값을 지금 주문 목록 기준으로 다 받았는가 — 조회 중 · 실패면 false.
+  //   false 면 모든 줄이 '미주문'으로 보이므로 [출고준비] '재고 — 미주문건만' 을 막는다
+  const [fulfillmentReady, setFulfillmentReady] = useState(false)
 
   // ── 드로어 선택 상태 ──────────────────────────────────────────
   const [selectedDrawerItem, setSelectedDrawerItem] = useState<DrawerItemState | null>(null)
@@ -339,15 +348,17 @@ export function usePersonalOrder() {
   // ── 고객주문 비고(note) Map<`${order_id}|${vendor_item_id}`, note> ──
   const [noteMap, setNoteMap] = useState<Map<string, string>>(new Map())
 
-  // ── 입고준비 (shipment 재고 → 주문 바코드 할당) ──────────────
-  const [inboundActive, setInboundActive] = useState(false)        // 매칭 적용 상태
-  const [inboundLoading, setInboundLoading] = useState(false)
-  const [inboundModalOpen, setInboundModalOpen] = useState(false)
+  // ── 출고준비 (쉽먼트 입고분 → 재고 순서로 주문 바코드에 배정) ──────────
+  const [outboundActive, setOutboundActive] = useState(false)        // 배정 적용 상태
+  const [outboundLoading, setOutboundLoading] = useState(false)
+  const [outboundModalOpen, setOutboundModalOpen] = useState(false)
   const [shipmentOptions, setShipmentOptions] = useState<ShipmentPickerOption[]>([])
-  // rowKey → { boxStr, displayStr, matched } (InboundAlloc 참고)
-  const [inboundAllocMap, setInboundAllocMap] = useState<Map<string, InboundAlloc>>(new Map())
+  // rowKey → { boxStr, displayStr, matched } (OutboundAlloc 참고)
+  const [outboundAllocMap, setOutboundAllocMap] = useState<Map<string, OutboundAlloc>>(new Map())
   // 엑셀 shipment_list 시트용: 상세 + 출고(allocated)
-  const [inboundDetails, setInboundDetails] = useState<Array<ShipmentDetailRow & { allocated: number }>>([])
+  const [outboundShipmentRows, setOutboundShipmentRows] = useState<Array<ShipmentDetailRow & { allocated: number }>>([])
+  // 엑셀 재고출고 시트용: 배정된 재고 행 + 출고(allocated)
+  const [outboundStockRows, setOutboundStockRows] = useState<Array<OutboundStockRow & { allocated: number }>>([])
 
   // ── 진행 모달 상태 (업데이트/바코드연결/송장연결 공용) ─────
   const [progressOpen, setProgressOpen] = useState(false)
@@ -419,9 +430,11 @@ export function usePersonalOrder() {
       setOrderItemsMap(new Map())
       setReorderCountMap(new Map())
       setCartKeySet(new Set())
+      setFulfillmentReady(true)    // 주문 계정이 없거나 주문이 없음 — 비어 있는 것이 맞는 값
       return
     }
 
+    setFulfillmentReady(false)
     try {
       const orderIds = Array.from(new Set(orderRows.map((r) => r.order_id).filter(Boolean)))
       // fulfillment 집계 + ORDER 카트 매칭 키 병렬 조회
@@ -434,6 +447,7 @@ export function usePersonalOrder() {
       setOrderItemsMap(result.orderItemsMap)
       setReorderCountMap(result.reorderCountMap)
       setCartKeySet(cartKeys)
+      setFulfillmentReady(true)
     } catch (err) {
       console.error('[PersonalOrder] fulfillment 조회 실패:', err)
     }
@@ -1111,138 +1125,120 @@ export function usePersonalOrder() {
     }
   }, [getUserInfo])
 
-  // ── 입고준비 토글: 활성→해제 / 비활성→shipment 선택 모달 오픈 ──
-  const handleInboundToggle = useCallback(async () => {
-    if (inboundActive) {
-      setInboundActive(false)
-      setInboundAllocMap(new Map())
-      setInboundDetails([])
+  // ── 출고준비 토글: 활성→해제 / 비활성→배정 원천(쉽먼트 · 재고) 선택 모달 ──
+  //   주문 계정(order_user_id)이 없으면 쉽먼트 목록은 비우고 재고만 고를 수 있다
+  const handleOutboundToggle = useCallback(async () => {
+    if (outboundActive) {
+      setOutboundActive(false)
+      setOutboundAllocMap(new Map())
+      setOutboundShipmentRows([])
+      setOutboundStockRows([])
       return
     }
     const { orderUserId } = getUserInfo()
-    if (!orderUserId) { alert('주문 계정(order_user_id)이 없습니다.'); return }
-    setInboundLoading(true)
+    setOutboundLoading(true)
     try {
-      const opts = await fetchShipmentsWithin(orderUserId, 31)
-      setShipmentOptions(opts)
-      setInboundModalOpen(true)
+      setShipmentOptions(orderUserId ? await fetchShipmentsWithin(orderUserId, OUTBOUND_SHIPMENT_DAYS) : [])
+      setOutboundModalOpen(true)
     } catch (e: any) {
-      alert('shipment 목록 조회 실패: ' + (e?.message ?? ''))
+      alert('쉽먼트 목록 조회 실패: ' + (e?.message ?? ''))
     } finally {
-      setInboundLoading(false)
+      setOutboundLoading(false)
     }
-  }, [inboundActive, getUserInfo])
+  }, [outboundActive, getUserInfo])
 
-  // ── 모달 [준비] → 상세 조회 + 바코드 할당(선착순·분할·부분충당) ──
-  //   여러 shipment 를 동시에 선택 가능 → 재고를 합쳐 매칭
-  const handleInboundConfirm = useCallback(async (shipmentIds: string[]) => {
-    const { orderUserId } = getUserInfo()
-    if (!orderUserId || shipmentIds.length === 0) return
-    setInboundLoading(true)
+  // ── 모달 [준비] → 쉽먼트 상세 · 재고 조회 → 배정 (규칙: outboundPrepService) ──
+  //   배정 대상: 선택 탭의 주문 중 취소 안 된 줄 (취소 = 쿠팡 발주서 값 · [출고중지] 반영값)
+  //   '재고 — 미주문건만' 의 줄별 상한 = 수량 − 중국 주문으로 채워지는 수량 (deriveFulfillmentState)
+  const handleOutboundConfirm = useCallback(async ({ shipmentIds, stockMode }: OutboundPrepSelection) => {
+    if (shipmentIds.length === 0 && !stockMode) return
+    const { userId, orderUserId } = getUserInfo()
+    if (shipmentIds.length > 0 && !orderUserId) { alert('주문 계정(order_user_id)이 없습니다.'); return }
+    if (stockMode && !userId) { alert('로그인 정보를 확인해 주세요.'); return }
+    if (stockMode === 'uncoveredOnly' && !fulfillmentReady) {
+      // 주문 진행 상태를 못 받은 채 배정하면 모든 줄이 '미주문'으로 보여 재고를 잘못 쓴다
+      alert('주문 진행 상태(입고·취소)를 아직 받지 못했습니다.\n잠시 뒤 다시 시도하거나 [주문 업데이트] 후 다시 해 주세요.')
+      return
+    }
+
+    setOutboundLoading(true)
     try {
-      const detailLists = await Promise.all(
-        shipmentIds.map((sid) => fetchShipmentDetails(sid, orderUserId)),
-      )
+      const [detailLists, stockRows] = await Promise.all([
+        Promise.all(shipmentIds.map((sid) => fetchShipmentDetails(sid, orderUserId))),
+        stockMode ? StockService.getAllocatableStocks(userId) : Promise.resolve<OutboundStockRow[]>([]),
+      ])
       const details = detailLists.flat()
 
-      // ── 재고: barcode → [{idx, box_code, shipment_no, remaining}] (box_code 오름차순) ──
-      //   매칭 대상은 shipment_type='PERSONAL' 입고분만 (DIRECT/COUPANG 제외)
-      //   shipment_no 는 화면 표시(displayStr) 묶음용 — 비어 있으면 null
-      const allocated = new Array<number>(details.length).fill(0)
-      const stock = new Map<string, Array<{ idx: number; box_code: string; shipment_no: string | null; remaining: number }>>()
-      details.forEach((d, idx) => {
-        if (d.shipment_type !== 'PERSONAL') return
-        if (!d.barcode || !d.quantity || d.quantity <= 0) return
-        const arr = stock.get(d.barcode) ?? []
-        arr.push({
-          idx,
-          box_code: d.box_code ?? '',
-          shipment_no: (d.shipment_no ?? '').trim() || null,
-          remaining: d.quantity,
-        })
-        stock.set(d.barcode, arr)
-      })
-      for (const arr of stock.values()) arr.sort((a, b) => a.box_code.localeCompare(b.box_code))
-
-      // ── 매칭 풀: 선택 탭 주문, 주문일 오름차순(선착순) ──
-      //   취소된 줄(canceled — 쿠팡 발주서 값 · [출고중지] 반영값)은 나갈 물량이 아니므로 재고를 할당하지 않는다
+      // ── 배정할 주문 ──
       const codes = selectedTabs.size > 0
         ? new Set(Array.from(selectedTabs).map((t) => STATUS_REVERSE_MAP[t]).filter(Boolean))
         : null
-      const pool = items
+      const fulfillmentMaps = { aggMap, itemAggMap, orderItemsMap, cartKeys: cartKeySet }
+      const demands: OutboundDemand[] = items
         .filter((r) => !r.canceled && (!codes || codes.has(r.status)))
-        .slice()
-        .sort((a, b) => {
-          const da = a.ordered_at ? new Date(a.ordered_at).getTime() : 0
-          const db = b.ordered_at ? new Date(b.ordered_at).getTime() : 0
-          return da - db
+        .map((r) => {
+          const qty = r.shipping_count ?? 0
+          const { coveredUnits } = deriveFulfillmentState(r.order_id, r.vendor_item_id, qty, fulfillmentMaps)
+          return {
+            key: getRowKey(r),
+            barcode: r.barcode ?? '',
+            qty,
+            orderedAt: orderedAtMs(r),
+            uncoveredUnits: qty - coveredUnits,
+          }
         })
 
-      const allocMap = new Map<string, InboundAlloc>()
-      for (const row of pool) {
-        const bc = row.barcode
-        let need = row.shipping_count ?? 0
-        if (!bc || need <= 0) continue
-        const units = stock.get(bc)
-        if (!units || units.length === 0) continue
-        const parts: string[] = []
-        // 화면 표시용: shipment 번호별 묶음 (처음 나온 순서 유지, null = 번호 없음)
-        const groups = new Map<string | null, string[]>()
-        for (const u of units) {
-          if (need <= 0) break
-          if (u.remaining <= 0) continue
-          const take = Math.min(need, u.remaining)
-          u.remaining -= take
-          need -= take
-          allocated[u.idx] += take
-          const part = `${u.box_code} - ${take}`
-          parts.push(part)
-          const groupParts = groups.get(u.shipment_no) ?? []
-          groupParts.push(part)
-          groups.set(u.shipment_no, groupParts)
-        }
-        if (parts.length === 0) continue
-        if (need > 0) {
-          parts.push(INBOUND_SHORTAGE_MARK)
-          // 마지막 묶음 괄호 안 끝에 붙인다 (Map 은 삽입 순서 — 마지막 값이 마지막 묶음)
-          Array.from(groups.values()).pop()?.push(INBOUND_SHORTAGE_MARK)
-        }
-        const displayStr = Array.from(groups.entries())
-          .map(([shipmentNo, groupParts]) =>
-            (shipmentNo ? `${shipmentNo} ` : '') + `[${groupParts.join(', ')}]`)
-          .join(' ')
-        allocMap.set(getRowKey(row), { boxStr: `[${parts.join(', ')}]`, displayStr, matched: true })
-      }
-
-      setInboundAllocMap(allocMap)
-      // shipment_list 시트: PERSONAL + DIRECT 만
-      setInboundDetails(
-        details
-          .map((d, idx) => ({ ...d, allocated: allocated[idx] }))
-          .filter((d) => d.shipment_type === 'PERSONAL' || d.shipment_type === 'DIRECT'),
-      )
-      setInboundActive(true)
-      setInboundModalOpen(false)
-    } catch (e: any) {
-      alert('입고준비 매칭 실패: ' + (e?.message ?? ''))
-    } finally {
-      setInboundLoading(false)
-    }
-  }, [getUserInfo, items, selectedTabs])
-
-  // ── 입고엑셀: 시트1 Delivery(매칭 주문) + 시트2 shipment_list ──
-  const handleInboundExcel = useCallback(() => {
-    // 매칭된 주문 (주문일 오름차순)
-    const deliveryRows = items
-      .filter((r) => inboundAllocMap.get(getRowKey(r))?.matched)
-      .slice()
-      .sort((a, b) => {
-        const da = a.ordered_at ? new Date(a.ordered_at).getTime() : 0
-        const db = b.ordered_at ? new Date(b.ordered_at).getTime() : 0
-        return da - db
+      const result = allocateOutbound({
+        demands,
+        shipmentDetails: details,
+        stock: stockMode ? { rows: stockRows, mode: stockMode } : null,
       })
 
-    if (deliveryRows.length === 0 && inboundDetails.length === 0) {
+      setOutboundAllocMap(result.allocMap)
+      // shipment_list 시트: PERSONAL + DIRECT 만
+      setOutboundShipmentRows(
+        details
+          .map((d, idx) => ({ ...d, allocated: result.shipmentAllocated[idx] }))
+          .filter((d) => d.shipment_type === 'PERSONAL' || d.shipment_type === 'DIRECT'),
+      )
+      // 재고출고 시트: 배정된 재고 행만, 위치 → 바코드 순
+      setOutboundStockRows(
+        stockRows
+          .filter((st) => (result.stockAllocated.get(st.id) ?? 0) > 0)
+          .map((st) => ({ ...st, allocated: result.stockAllocated.get(st.id) ?? 0 }))
+          .sort((a, b) =>
+            (a.location ?? '').localeCompare(b.location ?? '') || a.barcode.localeCompare(b.barcode)),
+      )
+      setOutboundActive(true)
+      setOutboundModalOpen(false)
+    } catch (e: any) {
+      alert('출고준비 배정 실패: ' + (e?.message ?? ''))
+    } finally {
+      setOutboundLoading(false)
+    }
+  }, [getUserInfo, items, selectedTabs, aggMap, itemAggMap, orderItemsMap, cartKeySet, fulfillmentReady])
+
+  // ── 출고준비 모달의 재고 요약 (페이지에 읽어 둔 재고 — 바코드 종류 · 수량 합, 수량 > 0 만) ──
+  const stockSummary = useMemo(() => {
+    let barcodes = 0
+    let units = 0
+    for (const qty of stockMap.values()) {
+      if (qty <= 0) continue
+      barcodes += 1
+      units += qty
+    }
+    return { barcodes, units }
+  }, [stockMap])
+
+  // ── 출고엑셀: Delivery · 합배송(배정된 주문) + shipment_list · 남은상품 + 재고출고 ──
+  const handleOutboundExcel = useCallback(() => {
+    // 배정된 주문 (주문일 오름차순)
+    const deliveryRows = items
+      .filter((r) => outboundAllocMap.get(getRowKey(r))?.matched)
+      .slice()
+      .sort((a, b) => orderedAtMs(a) - orderedAtMs(b))
+
+    if (deliveryRows.length === 0 && outboundShipmentRows.length === 0 && outboundStockRows.length === 0) {
       alert('내보낼 데이터가 없습니다.')
       return
     }
@@ -1251,7 +1247,7 @@ export function usePersonalOrder() {
     //   한 주문번호에 주문 라인이 1개면 단품(Delivery),
     //   2개 이상이면 하나의 주문으로 여러 상품이 나가는 건이므로 '합배송' 시트로 보낸다.
     const boxPrefixOf = (r: PersonalOrderRow) => {
-      const a = inboundAllocMap.get(getRowKey(r))
+      const a = outboundAllocMap.get(getRowKey(r))
       return a?.boxStr ? `${a.boxStr} ` : ''
     }
     const isCombinedOrder = (r: PersonalOrderRow) =>
@@ -1259,7 +1255,7 @@ export function usePersonalOrder() {
 
     // 시트1: Delivery (단품만) / 시트2: 합배송 (동일 헤더·서식)
     //   운송장번호: 화면 표와 동일(대기 운송장은 주황) / 택배사: CJ 대한통운 고정
-    const deliveryOpts = { boxPrefixOf, pendingInvoice: true, carrierName: INBOUND_CARRIER_NAME }
+    const deliveryOpts = { boxPrefixOf, pendingInvoice: true, carrierName: OUTBOUND_CARRIER_NAME }
     const aoaDelivery = buildDeliveryAoA(deliveryRows.filter((r) => !isCombinedOrder(r)), deliveryOpts)
     const aoaCombined = buildDeliveryAoA(deliveryRows.filter(isCombinedOrder), deliveryOpts)
 
@@ -1280,8 +1276,18 @@ export function usePersonalOrder() {
       ]),
     ]
 
-    // 시트4: 남은상품 — Delivery/합배송 으로 빠지고 남은 재고(잔여 > 0)
-    const leftover = inboundDetails.filter((d) => (d.quantity ?? 0) - d.allocated > 0)
+    // 시트4: 남은상품 — Delivery/합배송 으로 빠지고 남은 쉽먼트 입고분(잔여 > 0)
+    const leftover = outboundShipmentRows.filter((d) => (d.quantity ?? 0) - d.allocated > 0)
+
+    // 시트5: 재고출고 — 배정에 쓴 재고 행 (위치에서 꺼낼 목록). 재고를 쓰지 않았으면 시트를 만들지 않는다
+    const STOCK_HEADERS = ['로케이션', '바코드', '상품명', '옵션명', '재고', '출고', '잔여']
+    const stockAoa: (string | number)[][] = [
+      STOCK_HEADERS,
+      ...outboundStockRows.map((s) => [
+        s.location ?? '', s.barcode, s.item_name ?? '', s.option_name ?? '',
+        s.qty ?? 0, s.allocated, (s.qty ?? 0) - s.allocated,
+      ]),
+    ]
 
     // 헤더 서식(회색 배경) + 자동 열너비가 필요하므로 exceljs 기반 서비스 사용
     const today = new Date().toISOString().slice(0, 10)
@@ -1289,15 +1295,16 @@ export function usePersonalOrder() {
       [
         { name: 'Delivery',      aoa: aoaDelivery,                    headerFill: true },
         { name: '합배송',         aoa: aoaCombined,                    headerFill: true },
-        { name: 'shipment_list', aoa: buildShipmentAoA(inboundDetails) },
+        { name: 'shipment_list', aoa: buildShipmentAoA(outboundShipmentRows) },
         { name: '남은상품',       aoa: buildShipmentAoA(leftover) },
+        ...(outboundStockRows.length > 0 ? [{ name: '재고출고', aoa: stockAoa, headerFill: true }] : []),
       ],
-      `입고준비(${today}).xlsx`,
+      `출고준비(${today}).xlsx`,
     ).catch((err) => {
-      console.error('[입고엑셀] 생성 실패:', err)
-      alert(`입고엑셀 생성 실패: ${err.message}`)
+      console.error('[출고엑셀] 생성 실패:', err)
+      alert(`출고엑셀 생성 실패: ${err.message}`)
     })
-  }, [items, inboundAllocMap, inboundDetails, orderItemCountMap])
+  }, [items, outboundAllocMap, outboundShipmentRows, outboundStockRows, orderItemCountMap])
 
   // ── [바코드 연결] 핸들러 ──────────────────────────────────────────
   const [barcodeLoading, setBarcodeLoading] = useState(false)
@@ -1928,16 +1935,17 @@ export function usePersonalOrder() {
     getUserInfo,
     applyRowPatches,
 
-    // 입고준비 / 입고엑셀
-    inboundActive,
-    inboundLoading,
-    inboundModalOpen,
-    setInboundModalOpen,
+    // 출고준비 / 출고엑셀
+    outboundActive,
+    outboundLoading,
+    outboundModalOpen,
+    setOutboundModalOpen,
     shipmentOptions,
-    inboundAllocMap,
-    handleInboundToggle,
-    handleInboundConfirm,
-    handleInboundExcel,
+    stockSummary,
+    outboundAllocMap,
+    handleOutboundToggle,
+    handleOutboundConfirm,
+    handleOutboundExcel,
 
     // 진행 모달
     progressOpen,

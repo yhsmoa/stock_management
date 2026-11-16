@@ -9,6 +9,7 @@ import {
   type StockImportOps,
   type StockImportRow,
 } from './stockImportService'
+import type { OutboundStockRow } from './outboundPrepService'
 
 // ── 조회 · 일괄 작업 상수 (선택 삭제 · [엑셀 추가]) ─────────────────
 const STOCK_PAGE_SIZE = 1000         // PostgREST 기본 반환 상한 — 조회 루프 단위
@@ -398,6 +399,29 @@ export class StockService {
       console.error('재고 수량 업데이트 실패:', error)
       return null
     }
+  }
+
+  /**
+   * 개인주문 [출고준비] 재고 배정용 — 수량 > 0 인 행 (위치 · 바코드 · 이름 · 수량)
+   * - 실패하면 throw — 빈 목록으로 진행하면 "재고 없음"으로 배정해 버린다
+   * - 정렬: id (페이지 경계에서 행이 빠지거나 겹치지 않게). 위치 순서는 배정 쪽이 정한다
+   */
+  static async getAllocatableStocks(userId: string): Promise<OutboundStockRow[]> {
+    const all: OutboundStockRow[] = []
+    for (let from = 0; ; from += STOCK_PAGE_SIZE) {
+      const { data, error } = await supabase
+        .from('si_stocks')
+        .select('id, location, barcode, item_name, option_name, qty')
+        .eq('user_id', userId)
+        .gt('qty', 0)
+        .order('id', { ascending: true })
+        .range(from, from + STOCK_PAGE_SIZE - 1)
+      if (error) throw error
+      const rows = (data ?? []) as OutboundStockRow[]
+      all.push(...rows)
+      if (rows.length < STOCK_PAGE_SIZE) break
+    }
+    return all
   }
 
   /**

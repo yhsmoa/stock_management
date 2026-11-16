@@ -18,7 +18,7 @@ import {
 } from './usePersonalOrder'
 import { makeFulfillmentKey } from '../services/orderFulfillmentService'
 import CartSelectModal from '../components/common/CartSelectModal'
-import InboundShipmentModal from '../components/personal-order/InboundShipmentModal'
+import OutboundPrepModal from '../components/personal-order/OutboundPrepModal'
 import InvoiceUploadModal from '../components/personal-order/InvoiceUploadModal'
 import DeliveryInstructModal from '../components/personal-order/DeliveryInstructModal'
 import { useDeliveryInstruct } from '../components/personal-order/useDeliveryInstruct'
@@ -50,15 +50,16 @@ const PersonalOrder: React.FC = () => {
     setSelectedDrawerItem,
     noteMap,
     handleSaveNote,
-    inboundActive,
-    inboundLoading,
-    inboundModalOpen,
-    setInboundModalOpen,
+    outboundActive,
+    outboundLoading,
+    outboundModalOpen,
+    setOutboundModalOpen,
     shipmentOptions,
-    inboundAllocMap,
-    handleInboundToggle,
-    handleInboundConfirm,
-    handleInboundExcel,
+    stockSummary,
+    outboundAllocMap,
+    handleOutboundToggle,
+    handleOutboundConfirm,
+    handleOutboundExcel,
     filteredCount,
     totalPages,
     pagedItems,
@@ -341,24 +342,24 @@ const PersonalOrder: React.FC = () => {
           })()}
         </div>
         <div className="po-toolbar-right">
-          {/* ── 입고준비 (바코드 기준 매칭 토글) ── */}
+          {/* ── 출고준비 (쉽먼트 → 재고 순서로 바코드 기준 배정 토글) ── */}
           <button
-            className={`po-btn${inboundActive ? ' po-acknowledge-btn' : ''}`}
-            onClick={handleInboundToggle}
-            disabled={inboundLoading}
-            title="선택 shipment 의 입고 재고를 주문에 바코드 기준 할당"
+            className={`po-btn${outboundActive ? ' po-acknowledge-btn' : ''}`}
+            onClick={handleOutboundToggle}
+            disabled={outboundLoading}
+            title="선택한 쉽먼트 입고분 → 재고 순서로 주문에 바코드 기준 배정"
           >
-            {inboundLoading ? '매칭 중...' : (inboundActive ? '입고준비 해제' : '입고준비')}
+            {outboundLoading ? '배정 중...' : (outboundActive ? '출고준비 해제' : '출고준비')}
           </button>
 
-          {/* ── 입고엑셀 (입고준비 활성 시에만) ── */}
-          {inboundActive && (
+          {/* ── 출고엑셀 (출고준비 활성 시에만) ── */}
+          {outboundActive && (
             <button
               className="po-btn"
-              onClick={handleInboundExcel}
-              title="Delivery + shipment_list 2개 시트 엑셀 다운로드"
+              onClick={handleOutboundExcel}
+              title="Delivery · 합배송 · shipment_list · 남은상품 (+ 재고를 썼으면 재고출고) 시트 엑셀 다운로드"
             >
-              입고엑셀
+              출고엑셀
             </button>
           )}
 
@@ -601,7 +602,7 @@ const PersonalOrder: React.FC = () => {
                         }
 
                         // ── 상품정보 (클릭 → 드로어) ──
-                        //   [입고 위치(shipment 번호별)] [📌] [⚠️] 상품명 [N차] [상태 점·🛒]
+                        //   [출고준비 배정(쉽먼트 번호별 · 재고)] [📌] [⚠️] 상품명 [N차] [상태 점·🛒]
                         //   상태 표시는 상품명 바로 뒤 — 긴 상품명이 '…' 로 잘려도 그 뒤에 남는다 (po-product-cell)
                         //   상태 표시는 장식(data-no-copy) — 셀 복사에 들어가지 않는다
                         if (col.key === 'product_info') {
@@ -610,7 +611,7 @@ const PersonalOrder: React.FC = () => {
                             : ''
                           const reorderCount = ffKey ? (reorderCountMap.get(ffKey) ?? 1) : 1
                           const hasNote = !!ffKey && noteMap.has(ffKey)
-                          const alloc = inboundActive ? inboundAllocMap.get(rowKey) : undefined
+                          const alloc = outboundActive ? outboundAllocMap.get(rowKey) : undefined
                           const baseTitle = getCellValue(row, col.key)
                           const titleParts: string[] = []
                           if (alloc?.displayStr) titleParts.push(alloc.displayStr)
@@ -636,7 +637,7 @@ const PersonalOrder: React.FC = () => {
                                   {alloc?.displayStr && (
                                     <span
                                       style={{ marginRight: 4, color: '#2563EB', fontWeight: 600 }}
-                                      title="입고 shipment / 위치 / 수량"
+                                      title="출고준비 배정 — 쉽먼트 번호 [박스 - 수량] · 재고 [위치 - 수량]"
                                     >
                                       {alloc.displayStr}
                                     </span>
@@ -835,13 +836,14 @@ const PersonalOrder: React.FC = () => {
         status={progressStatus}
       />
 
-      {/* ── 입고준비 — shipment 선택 모달 ───────────────────── */}
-      <InboundShipmentModal
-        isOpen={inboundModalOpen}
+      {/* ── 출고준비 — 쉽먼트 · 재고 선택 모달 ─────────────────── */}
+      <OutboundPrepModal
+        isOpen={outboundModalOpen}
         options={shipmentOptions}
-        loading={inboundLoading}
-        onClose={() => setInboundModalOpen(false)}
-        onConfirm={handleInboundConfirm}
+        stockSummary={stockSummary}
+        loading={outboundLoading}
+        onClose={() => setOutboundModalOpen(false)}
+        onConfirm={handleOutboundConfirm}
       />
 
       {/* ── 장바구니 추가 — 기존 카트 선택 / 신규 생성 ────────── */}

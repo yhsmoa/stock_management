@@ -94,13 +94,40 @@ export function deriveFulfillmentStatus(
   qty: number,
   maps: FulfillmentMaps,
 ): FulfillmentStatus {
-  if (!orderId) return 'none'
+  return deriveFulfillmentState(orderId, vendorItemId, qty, maps).status
+}
+
+/** deriveFulfillmentState 결과 — 색 점 + 주문으로 채워질 수량 */
+export interface FulfillmentState {
+  status: FulfillmentStatus
+  /**
+   * 중국 주문(ft_order_items)으로 채워지는(이미 들어왔거나 앞으로 들어올) 수량 — 0 ~ qty
+   *   - 미주문(none) · 전량취소(red) = 0
+   *   - 미발송 · 포장완료 · 출고완료 = 유효 수량(구매 − 취소, qty 이내) — 일부 취소면 qty 보다 작다
+   *   - 카트(곧 주문됨) · 확인 필요(multi, 판단 불가) = qty 로 본다 — 모자란 것으로 잘못 보지 않게
+   *   개인주문 [출고준비] '재고 — 미주문건만' 이 qty − coveredUnits 만큼만 재고를 배정한다.
+   */
+  coveredUnits: number
+}
+
+/** deriveFulfillmentStatus 와 같은 판정 + coveredUnits (판정 규칙은 위 설명) */
+export function deriveFulfillmentState(
+  orderId: string | null | undefined,
+  vendorItemId: string | null | undefined,
+  qty: number,
+  maps: FulfillmentMaps,
+): FulfillmentState {
+  const need = Math.max(qty, 0)
+  const result = (status: FulfillmentStatus, coveredUnits: number): FulfillmentState =>
+    ({ status, coveredUnits: Math.min(Math.max(coveredUnits, 0), need) })
+
+  if (!orderId) return result('none', 0)
   const key = makeFulfillmentKey(orderId, vendorItemId)
 
   const itemsForKey = maps.orderItemsMap.get(key)
   // ft_order_items 매칭 없음 → ORDER 카트에 있으면 '카트', 아니면 '미주문'
   if (!itemsForKey || itemsForKey.length === 0) {
-    return maps.cartKeys.has(key) ? 'cart' : 'none'
+    return maps.cartKeys.has(key) ? result('cart', need) : result('none', 0)
   }
 
   // ── 구성품(set_seq)별 합산 ─────────────────────────────────────
@@ -129,17 +156,17 @@ export function deriveFulfillmentStatus(
   const packedLive = seqs.reduce((sum, s) => sum + s.packedLive, 0)
 
   // 1) 세트 구성품 간 유효 수량 불일치 (일부 구성품만 취소) → 확인 필요
-  if (seqs.length > 1 && liveUnits !== maxLive) return 'multi'
+  if (seqs.length > 1 && liveUnits !== maxLive) return result('multi', need)
   // 2) 유효 주문 행 2건 이상 + 유효 수량이 필요 수량 초과 → 중복 주문/중복 출고 확인 필요
   //    (한 행에 여분을 더 주문한 경우는 liveRows=1 이라 걸리지 않음)
-  if (qty > 0 && liveRows >= 2 && liveUnits > qty) return 'multi'
+  if (qty > 0 && liveRows >= 2 && liveUnits > qty) return result('multi', need)
   // 3) 남은 유효 수량 없음 → 전량취소
-  if (liveUnits <= 0) return 'red'
+  if (liveUnits <= 0) return result('red', 0)
   // 4) 필요 수량(또는 남은 유효 수량) 출고 → 출고완료
-  if (qty > 0 && shippedUnits >= Math.min(qty, liveUnits)) return 'shipped'
+  if (qty > 0 && shippedUnits >= Math.min(qty, liveUnits)) return result('shipped', liveUnits)
   // 5) 유효 행 포장 이력 → 포장완료
-  if (packedLive > 0) return 'green'
-  return 'gray'                                           // 미발송
+  if (packedLive > 0) return result('green', liveUnits)
+  return result('gray', liveUnits)                        // 미발송
 }
 
 /** FulfillmentDrawer 이력 행 */
@@ -482,11 +509,11 @@ export async function fetchCartQtyByBarcode(
 }
 
 // ══════════════════════════════════════════════════════════════════
-// 입고준비 — ft_shipments / ft_shipment_details
-//   - 개인주문 '입고준비'에서 shipment 선택 → 상세 재고를 주문에 할당
+// 출고준비 — ft_shipments / ft_shipment_details
+//   - 개인주문 [출고준비]에서 shipment 선택 → 상세 입고분을 주문에 할당 (재고 배정은 outboundPrepService)
 // ══════════════════════════════════════════════════════════════════
 
-/** 입고준비 모달용 shipment 옵션 */
+/** 출고준비 모달용 shipment 옵션 */
 export interface ShipmentPickerOption {
   id: string
   shipment_no: string | null
