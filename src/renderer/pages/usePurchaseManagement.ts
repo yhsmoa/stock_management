@@ -59,7 +59,7 @@ import {
 } from '../services/periodSalesService'
 import { fetchPersonalOrderQtyByBarcode } from '../services/personalOrderService'
 import { useLocation } from 'react-router-dom'
-import type { RgItem, RgItemData, PurchaseManagementLocationState } from '../types/purchase'
+import type { RgItem, RgItemData, PurchaseManagementLocationState, ProductDetailTab } from '../types/purchase'
 
 // ── 상수 ──────────────────────────────────────────────────────
 const DEFAULT_PAGE_SIZE = 100
@@ -83,6 +83,7 @@ export interface Column {
   isInput?: boolean        // 입력 열 전용 (노란 배경)
   editable?: boolean       // 숫자 인라인 편집 (input, in_qty, out_qty)
   editableText?: boolean   // 문자열 인라인 편집 (note)
+  opensOrderStatus?: boolean // 값이 있는 칸 클릭 → 상세 패널 [주문상황] 탭
   borderLeft?: boolean     // 좌측 옅은 border (그룹 구분용)
   colClass?: string        // 추가 CSS 클래스 (배경색 등)
 }
@@ -91,7 +92,7 @@ export const COLUMNS: Column[] = [
   { key: 'product',  label: '상품정보', width: '360px', isProduct: true },
   { key: 'input',    label: '입력',     width: '46px', isInput: true, editable: true },
   { key: 'cart',     label: '🛒',       width: '40px' },
-  { key: 'order',    label: '주문',     width: '35px' },
+  { key: 'order',    label: '주문',     width: '35px', opensOrderStatus: true },
   { key: 'c_in',     label: 'C.in',     width: '37px' },
   { key: 'c_stock',  label: 'C.재고',   width: '38px' },
   { key: 'warehouse',label: '창고',     width: '35px' },
@@ -304,6 +305,7 @@ export function usePurchaseManagement() {
   /* ── 상품 상세 패널 ──────────────────────────────────────── */
   const [detailPanelOpen, setDetailPanelOpen] = useState(false)
   const [detailItem, setDetailItem] = useState<RgItem | null>(null)
+  const [detailTab, setDetailTab] = useState<ProductDetailTab>('detail')   // 열 때 보일 탭
 
   /* ── RG 재고 xlsx 업로드 ─────────────────────────────────── */
   const [isUploading, setIsUploading] = useState(false)
@@ -1788,8 +1790,10 @@ else{console.log('[조회수] 완료! 총 '+results.length+'건 CSV 저장됨');
   // 상품 상세 패널
   // ══════════════════════════════════════════════════════════════
 
-  const handleProductClick = useCallback((item: RgItem) => {
+  // 상품정보 칸 → [상품 상세] 탭, '주문' 열 칸 → [주문상황] 탭으로 연다
+  const handleProductClick = useCallback((item: RgItem, tab: ProductDetailTab = 'detail') => {
     setDetailItem(item)
+    setDetailTab(tab)
     setDetailPanelOpen(true)
   }, [])
 
@@ -2205,6 +2209,7 @@ else{console.log('[조회수] 완료! 총 '+results.length+'건 CSV 저장됨');
     detailPanelOpen,
     setDetailPanelOpen,
     detailItem,
+    detailTab,
     handleProductClick,
 
     // 페이지네이션

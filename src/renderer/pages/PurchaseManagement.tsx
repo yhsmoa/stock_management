@@ -12,7 +12,7 @@ import {
   makeReturnKey,
   type EditableField,
 } from './usePurchaseManagement'
-import type { RgItem } from '../types/purchase'
+import type { RgItem, ProductDetailTab } from '../types/purchase'
 import ProductDetailPanel from '../components/purchase/ProductDetailPanel'
 import OrderModal from '../components/purchase/OrderModal'
 import UploadProgressModal from '../components/UploadProgressModal'
@@ -225,7 +225,7 @@ interface PurchaseRowProps {
   isEditingNote: boolean
   renderCell: (col: typeof COLUMNS[number], item: RgItem) => React.ReactNode
   onSelect: (rowId: string, checked: boolean) => void
-  onProductClick: (item: RgItem) => void
+  onProductClick: (item: RgItem, tab?: ProductDetailTab) => void
   onCellClick: (itemId: string, field: EditableField) => void
   onCellCommit: (
     itemId: string, field: EditableField,
@@ -281,6 +281,9 @@ const PurchaseRow = React.memo<PurchaseRowProps>(({
         content = renderCell(c, item)
       }
 
+      // '주문' 열 — 값이 있을 때만 [주문상황] 탭으로 연다 (빈 칸은 클릭 대상 아님)
+      const opensOrders = !!c.opensOrderStatus && item.order_qty != null && item.order_qty !== 0
+
       return (
         <td
           key={c.key}
@@ -288,13 +291,16 @@ const PurchaseRow = React.memo<PurchaseRowProps>(({
           onClick={
             c.isProduct
               ? () => onProductClick(item)
+              : opensOrders
+                ? () => onProductClick(item, 'orders')
               : c.editable
                 ? () => { if (editingField !== c.key) onCellClick(item.id!, c.key as EditableField) }
                 : c.editableText
                   ? () => { if (!isEditingNote) onNoteClick(item.id!) }
                   : undefined
           }
-          style={c.isProduct || c.editable || c.editableText ? { cursor: 'pointer' } : undefined}
+          style={c.isProduct || opensOrders || c.editable || c.editableText ? { cursor: 'pointer' } : undefined}
+          title={opensOrders ? '주문상황 보기' : undefined}
         >
           {content}
         </td>
@@ -375,6 +381,7 @@ const PurchaseManagement: React.FC = () => {
     detailPanelOpen,
     setDetailPanelOpen,
     detailItem,
+    detailTab,
     handleProductClick,
     handlePageChange,
     getPageNumbers,
@@ -1352,6 +1359,7 @@ const PurchaseManagement: React.FC = () => {
         isOpen={detailPanelOpen}
         onClose={() => setDetailPanelOpen(false)}
         item={detailItem}
+        initialTab={detailTab}
         itemWinner={detailItem ? getItemData(detailItem)?.item_winner : undefined}
         onSaveNote={(note) => { if (detailItem?.id) saveDetailNote(detailItem.id, note) }}
         onPriceChanged={(price) => { if (detailItem?.id) saveDetailPrice(detailItem.id, price) }}

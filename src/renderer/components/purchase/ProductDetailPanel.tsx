@@ -8,7 +8,8 @@ import {
   updateVendorItemPrice,
   setVendorItemSale,
 } from '../../services/purchaseService'
-import type { RgItem, CoupangProductDetail } from '../../types/purchase'
+import type { RgItem, CoupangProductDetail, ProductDetailTab } from '../../types/purchase'
+import ProductOrderStatusTab from './ProductOrderStatusTab'
 
 // ── 가격 비율 제한 (쿠팡: 기존가 대비 최대 50% 인하 ~ 100% 인상) ──
 const PRICE_MIN_RATIO = 0.5   // 하한 = 기존가 × 0.5
@@ -20,7 +21,14 @@ const PRICE_MAX_RATIO = 2     // 상한 = 기존가 × 2 (100% 인상)
    - sellerProductId로 쿠팡 상세 API 1건 호출
    - 이미지·상품명·ID 배지·바코드·가격 표시
    - API 실패 시 DB 데이터(item)로 폴백
+   - 탭 2개: [상품 상세](위 내용) · [주문상황](주문 프로젝트의 구매주문 진행 — ProductOrderStatusTab)
    ================================================================ */
+
+// ── 탭 ──────────────────────────────────────────────────────────────
+const TABS: { key: ProductDetailTab; label: string }[] = [
+  { key: 'detail', label: '상품 상세' },
+  { key: 'orders', label: '주문상황' },
+]
 
 interface ProductDetailPanelProps {
   isOpen: boolean
@@ -30,6 +38,8 @@ interface ProductDetailPanelProps {
   onSaveNote?:(note: string) => void   // 비고 저장 (포커스 아웃 시)
   // 가격 변경이 쿠팡에 반영된 뒤 호출 — 부모가 DB(sale_price·price_updated_at)에 기록한다
   onPriceChanged?: (price: number) => void
+  // 열릴 때 보일 탭 — 상품정보 칸은 'detail', '주문' 열 칸은 'orders'
+  initialTab?: ProductDetailTab
 }
 
 // ── 가격 수정 시각 표기 (YYYY-MM-DD) ────────────────────────────────
@@ -82,11 +92,20 @@ const styles = {
     justifyContent: 'space-between',
     alignItems: 'center',
   },
-  headerTitle: {
-    fontSize: theme.fontSize.xl,
-    fontWeight: '600',
-    color: theme.colors.textPrimary,
+  tabBar: {
+    display: 'flex',
+    gap: '4px',
   },
+  tabBtn: (active: boolean): React.CSSProperties => ({
+    padding: '6px 14px',
+    fontSize: theme.fontSize.lg,
+    fontWeight: 600,
+    background: 'none',
+    border: 'none',
+    borderBottom: `2px solid ${active ? theme.colors.primary : 'transparent'}`,
+    color: active ? theme.colors.textPrimary : theme.colors.textMuted,
+    cursor: 'pointer',
+  }),
   closeBtn: {
     background: 'none',
     border: 'none',
@@ -395,7 +414,12 @@ const ProductDetailPanel: React.FC<ProductDetailPanelProps> = ({
   itemWinner,
   onSaveNote,
   onPriceChanged,
+  initialTab = 'detail',
 }) => {
+  /* ── 탭 (열 때 · 다른 상품을 열 때 initialTab 으로) ───────────── */
+  const [tab, setTab] = useState<ProductDetailTab>(initialTab)
+  useEffect(() => { if (isOpen) setTab(initialTab) }, [isOpen, item?.id, initialTab])
+
   /* ── 상태 ─────────────────────────────────────────────────────── */
   const [detailLoading, setDetailLoading] = useState(false)
   const [detail, setDetail] = useState<CoupangProductDetail | null>(null)
@@ -623,13 +647,23 @@ const ProductDetailPanel: React.FC<ProductDetailPanelProps> = ({
       <div style={styles.panel}>
         {/* ── 헤더 ─────────────────────────────────────────────── */}
         <div style={styles.header}>
-          <span style={styles.headerTitle}>상품 상세</span>
+          <div style={styles.tabBar}>
+            {TABS.map((t) => (
+              <button key={t.key} style={styles.tabBtn(tab === t.key)} onClick={() => setTab(t.key)}>
+                {t.label}
+              </button>
+            ))}
+          </div>
           <button style={styles.closeBtn} onClick={onClose}>✕</button>
         </div>
 
         {/* ── 바디 ─────────────────────────────────────────────── */}
         <div style={styles.body}>
-          {detailLoading ? (
+          {/* ── [주문상황] 탭 — 숨겨도 마운트를 유지해 받은 결과를 재사용 ──
+                 바코드는 DB 값(item.barcode) — 표의 '주문' 열과 같은 키로 찾는다 */}
+          <ProductOrderStatusTab barcode={item.barcode} active={tab === 'orders'} />
+
+          {tab !== 'detail' ? null : detailLoading ? (
             /* ── 로딩 상태 ─────────────────────────────────────── */
             <div style={styles.loading}>
               <div style={styles.spinner} />

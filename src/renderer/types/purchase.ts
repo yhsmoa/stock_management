@@ -153,3 +153,7 @@ export interface CoupangProductDetail {
     }[]
   }[]
 }
+
+// ── 사입관리 상품 상세 패널 탭 ──────────────────────────────────────
+//   detail = 상품 상세 (쿠팡 상세 API) · orders = 주문상황 (주문 프로젝트 구매주문)
+export type ProductDetailTab = 'detail' | 'orders'

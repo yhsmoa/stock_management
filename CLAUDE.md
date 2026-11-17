@@ -141,6 +141,7 @@ Electron is built separately via `scripts/build-electron.mjs` (called manually; 
 - **승인 전 옵션은 옵션 ID 가 없다** — 예전 코드가 `String(null)` 로 `'null'` 글자를 저장했다(2026-10-08 DB 40행 정리). ID 는 `idString()` 으로만 만들고, 병합 키도 `'null'` 을 '없음'으로 본다. 키로 쓰면 승인 전 옵션들이 한 옵션으로 묶여 서로 다른 상품 값으로 덮인다.
 - **[바코드 동기화]** = 상세 API(초당 5건). 바코드나 이미지가 빈 행이 대상이고, 바코드(비어 있을 때만)·대표 이미지·판매가·사이즈·노출상품명·SKU 를 한 번에 채운다(`fetchDetailsFromApi`). 목록 API 에는 이 값들이 없다.
 - **노출상품 ID** = `si_rg_items.product_id` ← 목록 API `productId`(승인된 상품만). 상세 API 응답에는 없다. 재고 SKU 엑셀의 'Inventory ID'(`si_rg_item_data.item_id`)는 **등록상품 ID** 다. `si_coupang_items.product_id` 도 일부 행이 칸이 밀려 있어 믿을 수 없다. 상세 패널의 쿠팡 링크는 `product_id` 가 있을 때만 보인다.
+- **상세 패널 [주문상황] 탭 (2026-11-17)**: 상세 패널(`ProductDetailPanel`)이 [상품 상세] · [주문상황] 두 탭이다. 상품정보 칸은 상세 탭, 값이 있는 '주문' 열 칸은 주문상황 탭으로 연다(열 정의 `opensOrderStatus`). 주문상황은 주문 DB 에서 그 행의 `barcode`(DB 값 — '주문' 열과 같은 키)로 `ft_order_items` 대표행(set_seq 1/null)과 입고 · 취소 · 포장 · 출고 기록을 읽어 줄마다 단계(입고 대기 › 일부 입고 › 입고완료 › 포장완료 › 출고완료 / 취소)를 보여 준다 — `services/productOrderStatusService.ts`(`deriveOrderLineStage` 순수 함수) · `components/purchase/useProductOrderStatus.ts` · `ProductOrderStatusTab.tsx`. 정의는 `fetchOrderDelta` 와 같다(취소 = CANCEL+RETURN, 출고 = PACKED 중 shipment_id 배정). 탭의 '들어올 수량'은 모든 유형 · 출고일 미체크 기준이라 [주문] 조건을 고른 '주문' 열과 다를 수 있다. 탭이 처음 보일 때만 받고, 패널을 닫으면 버린다.
 - **API 로 엑셀을 대체하지 않은 이유**: 로켓창고 재고 API·로켓그로스 주문 API 는 분당 50회 제한에 페이지 크기가 문서에 없다. 재고 API 는 주문가능수량·30일 판매수량만 주고(7일·아이템위너·입고예정·보관료·재고기간·반품 없음), 주문 API 는 판매자배송을 주지 않아 재고 SKU·기간판매량 엑셀이 계속 필요하다.
 
 ### 홈 — 상품 랭킹 (2026-10-02)
