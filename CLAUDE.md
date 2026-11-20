@@ -123,6 +123,11 @@ Electron is built separately via `scripts/build-electron.mjs` (called manually; 
   - 검사·계획은 순수 함수 `services/stockImportService.ts`(`parseStockImportRows` → `planStockImport`, 키 `stockKeyOf` 도 여기). 셀은 raw 로 읽는다 — 바코드 숫자 셀은 15자리 이내 정수만(`utils/excelCell.ts` `readExcelIdCell`, [배송준비] 와 공용), 수량은 0 이상 정수(글자는 쉼표·공백 제거). 오류(빈 위치·바코드·수량, 자릿수 손실, 소수·음수, 차감의 재고 없음 · 같은 키 누적 부족, 열 중복)가 **하나라도 있으면 실행 불가**. 수량 0 행은 제외, 같은 (위치 + 바코드) 여러 행은 합산.
   - 추가의 기존 행은 수량만 더하고 이름은 그대로. 신규 행 이름은 ① 이 계정 `si_coupang_items`(바코드, option_id 가 가장 작은 행) ② 다른 위치의 기존 재고 ③ 엑셀 ④ 없음.
   - DB 는 `StockService.loadStockImportContext`(재고 전체 + 신규 바코드의 쿠팡 이름, 조회 실패 시 throw — 빈 목록으로 진행하면 추가가 전부 신규로 중복 삽입) · `applyStockImport`(신규 500건 배치 · 수량 수정 500건 병렬, `user_id` 로 한 번 더 거르고 0행 수정은 실패로 셈). **실행 직전에 재고를 다시 읽어 계획을 다시 만들고**, 검사 때와 작업 목록(`stockImportOpsSignature`)이 다르면 아무것도 쓰지 않고 "그사이 재고가 바뀌었습니다" 로 멈춘다. 쓰기는 원자적이지 않다 — 실패 배치가 있으면 결과 화면이 건수와 함께 알린다. 닫으면(쓴 것이 있을 때) 마지막 검색 조건으로 다시 읽는다.
+- **메뉴 (2026-11-20)**: 물류 › 재고관리가 그룹이다 — **전체재고**(`/inventory`, 위 화면) · **재고입력**(`/stock-input`). 예전 입고작업(`/in-management`, `InManagement.tsx`)은 그대로 남아 있다(위치 조회에 `user_id` 조건이 없고 실패 안내가 화면에 안 나온다 — 재고입력이 대신한다).
+- **재고입력** (`/stock-input`): 위치(왼쪽) · 바코드(오른쪽) 입력폼 1:1(높이 100px = 입고작업 폼의 절반) → 스캔 목록 → 오른쪽 위 [재고 추가]. 서비스 `services/stockInputService.ts` · 훅 `pages/useStockInput.ts` · 화면 `pages/StockInput.tsx` + `StockInput.css`(.sin-).
+  - 바코드 확인은 이 계정 **로켓그로스 옵션**(`si_rg_items.barcode`) — 진입 때 전체를 한 번 받아 색인(실패 시 스캔을 막고 [다시 시도]). 색인에 없는 바코드 · 위치가 빈 스캔은 목록에 넣지 않고 안내한다.
+  - 목록(`addScan` 순수 함수): 최신이 맨 위, 같은 (위치 + 바코드)는 수량 +1 하고 맨 위로. 위치는 바꿀 때까지 유지. 줄마다 ×(빼기). 화면 상태라 저장 전 이탈은 `UnsavedChangesGuard` 가 묻는다.
+  - [재고 추가] 는 [엑셀 추가] › 추가와 **같은 경로**(`loadStockImportContext` → `planStockImport('add')` → `applyStockImport`)라 규칙이 같다: 기존 (위치 + 바코드) 행은 수량만 더하고, 신규 행 이름은 ① 상품관리 ② 다른 위치의 기존 재고 ③ 스캔한 로켓그로스 이름. 실행 직전에 재고를 새로 읽고, 조회 실패 · 계획 오류면 아무것도 쓰지 않는다. 저장된 줄은 목록에서 빼고 실패한 줄(`applyStockImport` 결과의 `failedKeys`)만 남긴다.
 - [전체 삭제] 는 검색 조건과 무관하게 계정 전체 — 확인 문구의 건수는 `countStocksByUser`. 작업 뒤 다시 읽기는 마지막으로 조회한 검색 조건으로.
 
 ### 로켓그로스 콘솔 (2026-10-27)

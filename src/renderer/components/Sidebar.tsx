@@ -106,7 +106,14 @@ const SECTIONS: Section[] = [
           { path: '/item-info', label: '상품정보' },
         ],
       },
-      { type: 'link', path: '/inventory', icon: 'cube', label: '재고관리' },
+      {
+        type: 'group', icon: 'cube', label: '재고관리',
+        children: [
+          { path: '/inventory',   label: '전체재고' },
+          // 위치 + 바코드 스캔 목록을 재고에 더한다
+          { path: '/stock-input', label: '재고입력' },
+        ],
+      },
       {
         type: 'group', icon: 'inbox', label: '입고관리',
         children: [

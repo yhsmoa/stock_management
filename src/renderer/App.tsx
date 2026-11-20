@@ -6,6 +6,7 @@ import Login from './pages/Login'
 import Register from './pages/Register'
 import Index from './pages/Index'
 import Inventory from './pages/Inventory'
+import StockInput from './pages/StockInput'
 import InManagement from './pages/InManagement'
 import ShipmentList from './pages/ShipmentList'
 import RocketShipment from './pages/RocketShipment'
@@ -50,6 +51,7 @@ const router = createBrowserRouter([
       { path: '/analysis-management', element: <AnalysisManagement /> },
       { path: '/item-info', element: <ItemInfo /> },
       { path: '/inventory', element: <Inventory /> },
+      { path: '/stock-input', element: <StockInput /> },
       { path: '/in-management', element: <InManagement /> },
       { path: '/shipment-list', element: <ShipmentList /> },
       { path: '/rocket-shipment', element: <RocketShipment /> },

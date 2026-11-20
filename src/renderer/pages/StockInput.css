@@ -1,0 +1,116 @@
+/* ================================================================
+   재고입력 (StockInput) 전용 스타일 — 접두어 .sin-
+   - 화면 틀 · 표 · 버튼은 PurchaseManagement.css (purchase-*) 를 그대로 쓰고,
+     여기에는 재고입력에만 필요한 규칙만 둔다.
+   ================================================================ */
+
+/* ── 입력폼: 위치 | 바코드 (1:1) ─────────────────────────────────
+   높이 · 글자는 입고작업 입력폼(200px · 48px)의 절반 */
+.sin-form-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  flex-shrink: 0;
+  margin-bottom: 12px;
+}
+
+.sin-input {
+  width: 100%;
+  min-width: 0;
+  height: 100px;
+  padding: 0 20px;
+  box-sizing: border-box;
+  border: 2px solid #dde2ec;
+  border-radius: 10px;
+  background: #fff;
+  color: #111827;
+  font-size: 24px;
+  font-weight: 500;
+  text-align: center;
+  outline: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.sin-input::placeholder {
+  color: #9CA3AF;
+}
+.sin-input:focus {
+  border-color: #4A8CF7;
+  box-shadow: 0 0 0 3px rgba(74, 140, 247, 0.14);
+}
+.sin-input:disabled {
+  background: #F9FAFB;
+  color: #9CA3AF;
+  cursor: not-allowed;
+}
+
+/* ── [재고 추가] — 이 화면의 주 동작이라 파랑 ─────────────────── */
+.purchase-btn.sin-save-btn:not(:disabled) {
+  background-image: none;
+  background-color: #4A8CF7;
+  border-color: #4A8CF7;
+  color: #fff;
+}
+.purchase-btn.sin-save-btn:hover:not(:disabled) {
+  background-image: none;
+  background-color: #3B7BE8;
+  border-color: #3B7BE8;
+  color: #fff;
+}
+
+/* ── 안내 한 줄 (스캔 · 저장 결과 / 바코드 불러오기 실패) ─────── */
+.sin-notice {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0 0 12px;
+  padding: 8px 12px;
+  border: 1px solid;
+  border-radius: 8px;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.sin-notice-error {
+  border-color: #FCA5A5;
+  background: #FEF2F2;
+  color: #B91C1C;
+}
+.sin-notice-success {
+  border-color: #86EFAC;
+  background: #F0FDF4;
+  color: #166534;
+}
+
+/* ── 표 ──────────────────────────────────────────────────────── */
+/* 상품명 열만 폭이 비어 남는 폭을 가진다. 고정 폭 열 합계(648px) + 상품명 최소 폭보다
+   좁아지면 상품명이 0 이 되므로 그 아래에서는 가로 스크롤로 넘긴다. */
+.sin-table {
+  min-width: 900px;
+}
+.sin-table td.sin-col-qty {
+  font-weight: 600;
+  color: #111827;
+}
+
+/* ── 줄 빼기 (×) ─────────────────────────────────────────────── */
+.sin-remove-btn {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: #9CA3AF;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+.sin-remove-btn:hover:not(:disabled) {
+  background: #FEF2F2;
+  color: #B91C1C;
+}
+.sin-remove-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}

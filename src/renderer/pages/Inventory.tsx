@@ -56,7 +56,7 @@ const Inventory: React.FC = () => {
       {/* ── 상단: 타이틀 · 전체 삭제 | 엑셀 작업 ─────────────── */}
       <div className="purchase-top-actions">
         <div className="purchase-toolbar-left">
-          <h1 className="purchase-title">재고관리</h1>
+          <h1 className="purchase-title">전체재고</h1>
           <button
             className="purchase-btn purchase-reset-btn"
             onClick={inv.deleteAll}

@@ -26,6 +26,7 @@ export interface StockImportApplyResult {
   updated: number
   failedInserts: number
   failedUpdates: number
+  failedKeys: string[]   // 저장하지 못한 작업의 (위치 + 바코드) 키 — 재고입력이 그 줄만 남긴다
 }
 
 /**
@@ -565,7 +566,7 @@ export class StockService {
     ops: StockImportOps,
     onProgress?: (done: number, total: number) => void,
   ): Promise<StockImportApplyResult> {
-    const result: StockImportApplyResult = { created: 0, updated: 0, failedInserts: 0, failedUpdates: 0 }
+    const result: StockImportApplyResult = { created: 0, updated: 0, failedInserts: 0, failedUpdates: 0, failedKeys: [] }
     const total = ops.inserts.length + ops.updates.length
     let done = 0
     onProgress?.(done, total)
@@ -587,6 +588,7 @@ export class StockService {
       if (error) {
         console.error('재고 일괄 삽입 오류:', error)
         result.failedInserts += batch.length
+        for (const op of ops.inserts.slice(i, i + INSERT_BATCH_SIZE)) result.failedKeys.push(op.key)
       } else {
         result.created += batch.length
       }
@@ -602,14 +604,15 @@ export class StockService {
           supabase.from('si_stocks').update({ qty: op.nextQty }).eq('id', op.id).eq('user_id', userId).select('id'),
         ),
       )
-      for (const { data, error } of responses) {
+      responses.forEach(({ data, error }, idx) => {
         if (error || !data || data.length === 0) {
           if (error) console.error('재고 수량 업데이트 오류:', error)
           result.failedUpdates++
+          result.failedKeys.push(batch[idx].key)
         } else {
           result.updated++
         }
-      }
+      })
       done += batch.length
       onProgress?.(done, total)
     }
