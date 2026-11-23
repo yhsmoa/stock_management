@@ -321,7 +321,23 @@ export async function fetchAllOrdersheets(
 //   - 60일 2분할 × 2 상태 = 4 태스크, 동시성 FETCH_CONCURRENCY 준수
 // ══════════════════════════════════════════════════════════════════
 
-const RETURN_STATUSES = ['RU', 'UC'] as const // RU=출고중지요청, UC=반품접수
+/** 반품/취소 요청 조회 상태 코드 */
+export const RETURN_REQUEST_STATUS = {
+  /** 출고중지요청 — 상품준비중 주문에 고객이 취소를 요청함 (판매자가 출고중지완료 처리해야 한다) */
+  STOP_REQUESTED: 'RU',
+  /** 반품접수 */
+  RETURN_RECEIVED: 'UC',
+} as const
+export type ReturnRequestStatus = typeof RETURN_REQUEST_STATUS[keyof typeof RETURN_REQUEST_STATUS]
+
+const RETURN_STATUSES: readonly ReturnRequestStatus[] = [
+  RETURN_REQUEST_STATUS.STOP_REQUESTED,
+  RETURN_REQUEST_STATUS.RETURN_RECEIVED,
+]
+const RETURN_STATUS_LABEL: Record<ReturnRequestStatus, string> = {
+  RU: '출고중지요청',
+  UC: '반품접수',
+}
 
 /** 단일 페이지 호출 (재시도 포함) — 빈 응답/500 에러 대응 */
 async function fetchReturnRequestsPage(
@@ -388,24 +404,20 @@ async function fetchReturnRequestsByStatus(
 }
 
 /**
- * 전체 반품/취소 요청 조회 — 출고중지 대상 shipment_box_id Set 반환
- * - 60일 기간을 2분할 (31일 제한 대응)
- * - RU(출고중지요청) + UC(반품접수) 양쪽 조회
+ * 반품/취소 요청 원문 조회 — 상태마다 최근 60일
+ * - 60일 기간을 2분할 (31일 제한 대응) — 두 구간이 경계일을 함께 포함하므로 접수번호로 중복을 지운다
+ * - 동시성 FETCH_CONCURRENCY 준수, 실패하면 throw
  */
-export async function fetchAllReturnRequests(
+export async function fetchReturnRequests(
+  statuses: readonly ReturnRequestStatus[],
   onProgress?: (msg: string) => void,
-): Promise<Set<string>> {
-  type Task = { status: string; fromDate: string; toDate: string; label: string }
+): Promise<any[]> {
+  type Task = { status: ReturnRequestStatus; fromDate: string; toDate: string; label: string }
 
-  const STATUS_LABEL: Record<string, string> = {
-    RU: '출고중지요청',
-    UC: '반품접수',
-  }
-
-  // 60일 2분할 × 2 상태 = 4 태스크
-  const tasks: Task[] = RETURN_STATUSES.flatMap((status) => [
-    { status, fromDate: daysAgo(60), toDate: daysAgo(30), label: `${STATUS_LABEL[status]} (1/2)` },
-    { status, fromDate: daysAgo(30), toDate: today(),    label: `${STATUS_LABEL[status]} (2/2)` },
+  // 60일 2분할 × 상태 수
+  const tasks: Task[] = statuses.flatMap((status) => [
+    { status, fromDate: daysAgo(60), toDate: daysAgo(30), label: `${RETURN_STATUS_LABEL[status]} (1/2)` },
+    { status, fromDate: daysAgo(30), toDate: today(),    label: `${RETURN_STATUS_LABEL[status]} (2/2)` },
   ])
 
   let completed = 0
@@ -419,7 +431,26 @@ export async function fetchAllReturnRequests(
   })
 
   const batched = await runWithConcurrency(fns, FETCH_CONCURRENCY)
-  const merged = batched.flat()
+
+  // ── 접수번호 중복 제거 (접수번호가 없는 항목은 그대로 둔다) ──
+  const byReceipt = new Map<string, any>()
+  const withoutReceipt: any[] = []
+  for (const request of batched.flat()) {
+    const receiptId = request?.receiptId
+    if (receiptId === undefined || receiptId === null) withoutReceipt.push(request)
+    else byReceipt.set(String(receiptId), request)
+  }
+  return [...byReceipt.values(), ...withoutReceipt]
+}
+
+/**
+ * 전체 반품/취소 요청 조회 — 출고중지 대상 shipment_box_id Set 반환
+ * - RU(출고중지요청) + UC(반품접수) 양쪽 조회
+ */
+export async function fetchAllReturnRequests(
+  onProgress?: (msg: string) => void,
+): Promise<Set<string>> {
+  const merged = await fetchReturnRequests(RETURN_STATUSES, onProgress)
 
   // ── shipment_box_id 추출 (returnItems 배열 순회) ───────────
   const stopSet = new Set<string>()

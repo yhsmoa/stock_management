@@ -1,6 +1,8 @@
 /* ================================================================
-   [출고중지] 서비스 — 상품준비중(INSTRUCT) 주문을 판매자가 취소한다
-   - WING 의 "주문취소(사유 선택) → 출고중지요청 목록에서 출고중지완료" 2단계와 같은 일.
+   [출고중지] 서비스 — 상품준비중(INSTRUCT) 주문의 출고를 멈춘다. 대상은 두 가지:
+     · 판매자 취소   : 판매자가 직접 취소한다 (WING 의 "주문취소 → 출고중지요청 목록에서 출고중지완료" 2단계와 같은 일)
+     · 고객 취소 요청 : 고객이 먼저 취소(출고중지)를 요청한 건 — 쿠팡 출고중지요청 목록에서 접수 건을 찾아
+                       ③ 출고중지완료 처리만 한다 (WING › 출고중지요청 › 출고중지완료와 같은 일. ① 취소는 보내지 않는다)
    - 쿠팡 Open API (developers.coupang.com · 2026-11-12 확인)
        ① 주문 상품 취소 처리   POST  v5/vendors/{vendorId}/orders/{orderId}/cancel            (CANCEL_ORDER_PROCESSING)
             · 결제완료 = 즉시 취소, 상품준비중 = 출고중지. 문서상 상품준비중은 이 호출 하나로 출고중지 접수와 완료가
@@ -25,9 +27,13 @@
        · 고객 사유는 보낼 수 없다: WING 화면이 쓰는 값(bigCancelCode=CUSTOMER · middleCancelCode=CHANGEMIND)은
          "취소사유 대분류 코드를 확인해 주세요", CANERR + CHANGEMIND 는 "취소사유 중분류 코드를 확인해 주세요" 로 거절됐다 (주문 변화 없음)
        ①이 접수된 뒤에는 ②·③이 실패해도 그 상품은 취소 접수된 것이다 → 화면·DB 는 취소로 반영하고 '확인 필요'로 알린다.
-   - 대상: 선택한 줄의 남은 수량 전체. 고객이 먼저 취소를 요청한 건(release_stop)은 다루지 않는다
-       (접수 건을 찾아 처리하는 다른 흐름 — WING › 출고중지요청).
-   - 구성: buildShipmentStopPlan(순수 함수 — 사전 검사·묶음 구성) → runShipmentStop(순차 실행)
+   - 판매자 취소 대상: 선택한 줄의 남은 수량 전체 (묶음배송번호마다 ① 1회)
+   - 고객 취소 요청 대상: 선택한 줄(release_stop)이 든 접수 건 전체 — ③ 은 접수번호 단위로만 처리되므로
+       같은 접수 건의 선택하지 않은 상품도 함께 완료된다 (고객이 요청한 수량만큼. 화면에 미리 보여 준다).
+       접수 건은 출고중지요청(RU) 목록 최근 60일에서 묶음배송번호 + 옵션ID 로 찾는다
+       (personalOrderService.fetchReturnRequests → parseStopRequestReceipts). 실행 때 ②로 상태를 다시 보고
+       완료 처리에 쓰는 수량(cancelCountSum)도 그 응답 값을 쓴다.
+   - 구성: buildShipmentStopPlan(순수 함수 — 사전 검사·대상 구성) → runShipmentStop(순차 실행)
            → toStoppedRowPatches(반영값) → saveShipmentStopped(DB)
    - 프록시: /api/coupang/order-cancel · return-request-detail · return-request-stop — coupangProxy.ts · prodServer.js 양쪽.
        응답 { success, data: 쿠팡 본문, coupangStatus: 쿠팡 HTTP 상태 }
@@ -37,6 +43,7 @@
 import {
   getCoupangHeaders,
   saveOrderRowPatches,
+  type OrderRowPatchFields,
   STATUS_MAP,
   type OrderRowPatch,
   type PersonalOrderRow,
@@ -101,6 +108,11 @@ const ROLLBACK_REASON =
 const NO_RECEIPT_NOTE =
   '취소는 접수됐지만 응답에 접수번호가 없어 출고중지완료 여부를 확인하지 못했습니다 — WING 에서 확인해 주세요'
 const ALL_REJECTED_REASON = '쿠팡이 모든 상품의 취소를 거절했습니다'
+const REQUEST_LOOKUP_FAILED_REASON = '쿠팡 출고중지요청 목록을 읽지 못했습니다 — 창을 닫았다가 다시 열어 주세요'
+const REQUEST_NOT_FOUND_REASON =
+  '쿠팡 출고중지요청 목록(최근 60일)에 이 상품의 접수 건이 없습니다 — 반품접수 건이거나 이미 처리됐을 수 있습니다. [주문 업데이트] 후 확인해 주세요'
+const REQUEST_UNKNOWN_REASON =
+  '쿠팡 응답을 받지 못했습니다 — 출고중지완료가 처리됐을 수 있습니다. [주문 업데이트] 후 WING › 출고중지요청에서 확인해 주세요'
 const ORDER_MISMATCH_REASON = '같은 묶음의 주문번호가 서로 다릅니다 — [주문 업데이트] 후 다시 시도해 주세요'
 
 // ══════════════════════════════════════════════════════════════════
@@ -109,17 +121,23 @@ const ORDER_MISMATCH_REASON = '같은 묶음의 주문번호가 서로 다릅니
 
 /** 출고중지할 줄 1개 (옵션 하나) */
 export interface StopLine {
+  shipmentBoxId: string
   vendorItemId: string
   /** 화면 표시용 '상품명 / 옵션명' */
   itemLabel: string
-  /** 취소 수량 = 남은 수량 전체 (주문 수량 − 이미 취소된 수량) */
+  /** 취소 수량 — 판매자 취소는 남은 수량 전체, 고객 요청은 고객이 요청한 수량 */
   quantity: number
-  /** 주문 수량 (shipping_count) — 취소 뒤의 cancel_count 가 된다 */
+  /** 주문 수량 (shipping_count) */
   orderedQuantity: number
+  /** 처리 전의 취소 수량 (cancel_count) — 처리 뒤 = 이 값 + 처리된 quantity 합 (같은 줄이 여러 건에 나와도 맞게) */
+  cancelCountBefore: number
 }
 
-/** 출고중지할 묶음 1개 = 쿠팡 취소 요청 1회 (주문번호 + 묶음배송번호) */
+/** 판매자 취소 대상 1개 = 묶음 하나 = 쿠팡 취소 요청 1회 (주문번호 + 묶음배송번호) */
 export interface StopBox {
+  kind: 'sellerCancel'
+  /** 화면 · 결과 키 (= 묶음배송번호) */
+  key: string
   shipmentBoxId: string
   orderId: string
   receiverName: string
@@ -131,6 +149,39 @@ export interface StopBox {
   otherLinesInOrder: number
 }
 
+/** 고객 취소 요청 대상 1개 = 쿠팡 접수 건 하나 = 출고중지완료 처리 1회 */
+export interface StopRequest {
+  kind: 'customerRequest'
+  /** 화면 · 결과 키 (= 접수번호) */
+  key: string
+  receiptId: string
+  orderId: string
+  receiverName: string
+  /** 접수 건의 상품 전체 — 완료 처리는 접수 건 단위라 선택하지 않은 상품도 함께 처리된다 */
+  lines: StopLine[]
+  /** lines 중 선택하지 않은 상품 수 */
+  unselectedLines: number
+  /** 고객이 남긴 취소 사유 (없으면 '') */
+  reason: string
+}
+
+export type StopTarget = StopBox | StopRequest
+
+/** 출고중지요청(RU) 목록의 접수 건 (parseStopRequestReceipts) */
+export interface StopRequestReceipt {
+  receiptId: string
+  orderId: string
+  reason: string
+  items: Array<{ shipmentBoxId: string; vendorItemId: string; vendorItemName: string; cancelCount: number }>
+}
+
+/** 고객 요청 건의 접수 건 조회 상태 — 고객 요청 줄이 없으면 조회하지 않는다(notNeeded) */
+export type RequestLookup =
+  | { status: 'notNeeded' }
+  | { status: 'loading' }
+  | { status: 'ready'; receipts: readonly StopRequestReceipt[] }
+  | { status: 'error'; message: string }
+
 /** 사전 검사에서 뺀 줄 */
 export interface StopExclusion {
   shipmentBoxId: string
@@ -141,50 +192,56 @@ export interface StopExclusion {
 }
 
 export interface ShipmentStopPlan {
+  /** 판매자 취소 */
   boxes: StopBox[]
+  /** 고객 취소 요청 */
+  requests: StopRequest[]
   excluded: StopExclusion[]
+  /** 접수 건 조회를 기다리는 고객 요청 줄 수 (조회 중일 때만 0 보다 크다) */
+  pendingRequestLines: number
 }
 
 /**
- * 묶음 처리 결과
- * - completed  : 취소 접수 + 출고중지완료 확인
- * - needsCheck : 취소는 접수됨(화면 반영) — 완료를 확인하지 못했거나 일부 상품이 거절돼 사람이 봐야 한다
- * - failed     : 쿠팡이 거절 — 바뀐 것 없음
- * - unknown    : 접수 여부를 모름 (응답 없음 · 롤백 실패) — 화면에 반영하지 않는다
+ * 대상 처리 결과
+ * - completed  : 출고중지완료 확인 (판매자 취소는 취소 접수까지 포함)
+ * - needsCheck : 판매자 취소가 접수됨(화면 반영) — 완료를 확인하지 못했거나 일부 상품이 거절돼 사람이 봐야 한다
+ * - failed     : 쿠팡이 거절 · 처리할 수 없는 상태 — 바뀐 것 없음
+ * - unknown    : 처리 여부를 모름 (응답 없음 · 롤백 실패) — 화면에 반영하지 않는다
  * - notSent    : 중단으로 보내지 않음
  */
 export type StopOutcome = 'completed' | 'needsCheck' | 'failed' | 'unknown' | 'notSent'
 
-export interface StopBoxResult {
-  box: StopBox
+export interface StopResult {
+  target: StopTarget
   outcome: StopOutcome
-  /** 쿠팡이 취소를 접수한 줄 (completed · needsCheck 에서만 채워진다) — 화면·DB 반영 대상 */
+  /** 쿠팡이 처리한 줄 (completed · needsCheck 에서만 채워진다) — 화면·DB 반영 대상 */
   acceptedLines: StopLine[]
   /** 쿠팡이 거절한 줄 (응답 failedVendorItemIds) */
   rejectedLines: StopLine[]
   /** 쿠팡 접수번호 — WING 에서 찾을 때 쓴다 */
   receiptIds: string[]
-  /** ③ 출고중지완료 처리를 따로 호출했는지 (취소 호출만으로 완료되지 않았다는 뜻) */
+  /** ③ 출고중지완료 처리를 호출했는지 (판매자 취소: 취소 호출만으로 완료되지 않았다는 뜻 · 고객 요청: 이번에 완료 처리함) */
   usedSecondStep: boolean
   /** 실패 · 확인 사유 (completed 는 '') */
   message: string
 }
 
 export interface ShipmentStopRun {
-  /** 넘긴 묶음과 같은 순서 */
-  results: StopBoxResult[]
+  /** 넘긴 대상과 같은 순서 */
+  results: StopResult[]
   aborted: boolean
 }
 
 export interface RunShipmentStopOptions {
   signal?: AbortSignal
-  onProgress?: (doneBoxes: number, totalBoxes: number) => void
+  onProgress?: (done: number, total: number) => void
 }
 
 // ══════════════════════════════════════════════════════════════════
-// 1) 사전 검사 + 묶음 구성 (순수 함수 — React·네트워크 없음)
-//   선택한 줄을 묶음배송번호로 묶는다. 묶음 하나가 쿠팡 요청 1회.
-//   걸린 줄은 빼고 나머지만 보낸다 — 취소는 옵션마다 따로 접수되므로 묶음 안의 다른 줄을 막지 않는다.
+// 1) 사전 검사 + 대상 구성 (순수 함수 — React·네트워크 없음)
+//   판매자 취소: 선택한 줄을 묶음배송번호로 묶는다. 묶음 하나가 쿠팡 취소 요청 1회.
+//   고객 요청  : 선택한 줄(release_stop)의 접수 건을 찾는다. 접수 건 하나가 출고중지완료 처리 1회.
+//   걸린 줄은 빼고 나머지만 보낸다 — 옵션마다 따로 처리되므로 다른 줄을 막지 않는다.
 //   검사 기준은 화면이 가진 주문 — 오래됐으면 쿠팡이 거절한다(바뀌는 것 없음).
 // ══════════════════════════════════════════════════════════════════
 
@@ -197,31 +254,38 @@ const isSafeId = (v: string | null | undefined): v is string =>
 const itemLabelOf = (row: PersonalOrderRow) =>
   row.item_name + (row.option_name ? ` / ${row.option_name}` : '')
 
+const lineKey = (shipmentBoxId: string, vendorItemId: string) => `${shipmentBoxId}|${vendorItemId}`
+
 /**
  * 남은 수량 = 주문 수량 − 취소 확정 수량.
  * 쿠팡 발주서의 발주 가능 수량은 shippingCount − (holdCountForCancel + cancelCount) 인데
- * 환불 대기 수량(holdCountForCancel)은 저장하지 않는다 — 그 경우(고객 취소 요청)는 release_stop 으로 걸러진다.
+ * 환불 대기 수량(holdCountForCancel)은 저장하지 않는다 — 그 경우(고객 취소 요청)는 release_stop 으로 따로 다룬다.
  */
 const remainingQuantity = (row: PersonalOrderRow) => (row.shipping_count ?? 0) - (row.cancel_count ?? 0)
 
 /** 아직 나갈 물량이 있는 줄 */
 const isActiveRow = (row: PersonalOrderRow) => !row.canceled && remainingQuantity(row) > 0
 
-/** 출고중지할 수 없는 줄이면 사유, 할 수 있으면 null */
+/** 출고중지할 수 없는 줄이면 사유, 할 수 있으면 null (판매자 취소 · 고객 요청 공통) */
 function exclusionReason(row: PersonalOrderRow): string | null {
   if (row.status !== STOPPABLE_STATUS) {
     const label = STATUS_MAP[row.status] ?? (row.status || '알 수 없는')
     return `${label} 상태입니다 — 상품준비중 주문만 출고중지할 수 있습니다`
   }
   if (!isActiveRow(row)) return '이미 취소된 상품입니다'
-  if (row.release_stop) {
-    return '고객이 취소(출고중지)를 요청한 건입니다 — WING › 출고중지요청에서 처리해 주세요'
-  }
   if (!isDigits(row.shipment_box_id) || !isSafeId(row.order_id) || !isSafeId(row.vendor_item_id)) {
     return '묶음배송번호 · 주문번호 · 옵션ID 를 읽을 수 없습니다 — [주문 업데이트] 후 다시 시도해 주세요'
   }
   if (!Number.isInteger(remainingQuantity(row))) return '수량이 정수가 아닙니다 — [주문 업데이트] 후 다시 시도해 주세요'
   return null
+}
+
+/** 고객 취소 요청 줄인지 — 접수 건 조회가 필요한 줄 */
+const isCustomerRequestRow = (row: PersonalOrderRow) => row.release_stop && exclusionReason(row) === null
+
+/** 선택한 줄 중 고객 취소 요청 줄이 있는지 — 있으면 모달을 열 때 접수 건을 조회한다 */
+export function needsRequestLookup(selectedRows: readonly PersonalOrderRow[]): boolean {
+  return selectedRows.some(isCustomerRequestRow)
 }
 
 const toExclusion = (row: PersonalOrderRow, reason: string): StopExclusion => ({
@@ -232,34 +296,144 @@ const toExclusion = (row: PersonalOrderRow, reason: string): StopExclusion => ({
   reason,
 })
 
-const toLine = (row: PersonalOrderRow): StopLine => ({
+/** 판매자 취소 줄 — 남은 수량 전체를 취소하므로 처리 뒤 취소 수량 = 주문 수량 */
+const toSellerCancelLine = (row: PersonalOrderRow): StopLine => ({
+  shipmentBoxId: row.shipment_box_id,
   vendorItemId: row.vendor_item_id,
   itemLabel: itemLabelOf(row),
   quantity: remainingQuantity(row),
   orderedQuantity: row.shipping_count,
+  cancelCountBefore: row.cancel_count ?? 0,
 })
 
+type ReceiptItem = StopRequestReceipt['items'][number]
+
 /**
- * 선택한 줄 + 화면이 가진 주문(계정 전체) → 출고중지 계획.
+ * 출고중지요청(RU) 목록 원문 → 접수 건 (순수 함수).
+ * 접수번호 · 주문번호 · 상품(묶음배송번호 · 옵션ID · 취소 수량)을 읽을 수 없는 건은 뺀다
+ * — 그 상품은 계획에서 '접수 건 없음'으로 제외된다.
+ */
+export function parseStopRequestReceipts(raw: readonly any[]): StopRequestReceipt[] {
+  const receipts: StopRequestReceipt[] = []
+  for (const entry of raw) {
+    const receiptId = String(entry?.receiptId ?? '')
+    const orderId = String(entry?.orderId ?? '')
+    if (!isSafeId(receiptId) || !isSafeId(orderId)) continue
+
+    const rawItems: any[] = Array.isArray(entry.returnItems) ? entry.returnItems : []
+    const items: ReceiptItem[] = rawItems.map((item) => ({
+      shipmentBoxId: String(item?.shipmentBoxId ?? ''),
+      vendorItemId: String(item?.vendorItemId ?? ''),
+      vendorItemName: String(item?.vendorItemName ?? ''),
+      cancelCount: Number(item?.cancelCount),
+    }))
+    const readable = items.length > 0 && items.every((item) =>
+      isDigits(item.shipmentBoxId) && isSafeId(item.vendorItemId) &&
+      Number.isInteger(item.cancelCount) && item.cancelCount > 0)
+    if (!readable) continue
+
+    const category = [entry.cancelReasonCategory1, entry.cancelReasonCategory2]
+      .filter((v): v is string => typeof v === 'string' && v.trim() !== '')
+      .join(' › ')
+    const detail = typeof entry.cancelReason === 'string' ? entry.cancelReason.trim() : ''
+    receipts.push({ receiptId, orderId, reason: [category, detail].filter(Boolean).join(' — '), items })
+  }
+  return receipts
+}
+
+/** 접수 건 → 고객 요청 대상 (상품 이름 · 주문 수량 · 이미 취소된 수량은 화면이 가진 주문에서) */
+function toStopRequest(
+  receipt: StopRequestReceipt,
+  selectedKeys: ReadonlySet<string>,
+  rowByKey: ReadonlyMap<string, PersonalOrderRow>,
+): StopRequest {
+  const rowOf = (item: ReceiptItem) => rowByKey.get(lineKey(item.shipmentBoxId, item.vendorItemId))
+  const lines = receipt.items.map((item): StopLine => {
+    const row = rowOf(item)
+    const ordered = row?.shipping_count ?? item.cancelCount
+    return {
+      shipmentBoxId: item.shipmentBoxId,
+      vendorItemId: item.vendorItemId,
+      itemLabel: row ? itemLabelOf(row) : (item.vendorItemName || `옵션 ${item.vendorItemId}`),
+      quantity: item.cancelCount,
+      orderedQuantity: ordered,
+      cancelCountBefore: row?.cancel_count ?? 0,
+    }
+  })
+  const anyRow = receipt.items.map(rowOf).find((row): row is PersonalOrderRow => row != null)
+  return {
+    kind: 'customerRequest',
+    key: receipt.receiptId,
+    receiptId: receipt.receiptId,
+    orderId: receipt.orderId,
+    receiverName: anyRow?.receiver_name ?? '',
+    lines,
+    unselectedLines: lines.filter((line) => !selectedKeys.has(lineKey(line.shipmentBoxId, line.vendorItemId))).length,
+    reason: receipt.reason,
+  }
+}
+
+/**
+ * 선택한 줄 + 화면이 가진 주문(계정 전체) + 고객 요청 접수 건 → 출고중지 계획.
  * @param selectedRows 체크한 줄
- * @param orders 계정 전체 주문 — 같은 주문에서 취소하지 않는 상품 수를 세는 데만 쓴다
+ * @param orders 계정 전체 주문 — 같은 주문에서 취소하지 않는 상품 수 · 접수 건 상품의 이름과 수량을 찾는 데 쓴다
+ * @param lookup 출고중지요청 접수 건 조회 상태 (고객 요청 줄이 없으면 notNeeded)
  */
 export function buildShipmentStopPlan(
   selectedRows: readonly PersonalOrderRow[],
   orders: readonly PersonalOrderRow[],
+  lookup: RequestLookup,
 ): ShipmentStopPlan {
   const excluded: StopExclusion[] = []
+  const rowByKey = new Map(orders.map((row) => [lineKey(row.shipment_box_id, row.vendor_item_id), row]))
+  // 한 상품에 접수 건이 여럿일 수 있다 (고객이 수량을 나눠 요청) — 모두 처리한다
+  const receiptsByLine = new Map<string, StopRequestReceipt[]>()
+  if (lookup.status === 'ready') {
+    for (const receipt of lookup.receipts) {
+      for (const item of receipt.items) {
+        const key = lineKey(item.shipmentBoxId, item.vendorItemId)
+        const list = receiptsByLine.get(key)
+        if (list) list.push(receipt)
+        else receiptsByLine.set(key, [receipt])
+      }
+    }
+  }
 
-  // 묶음배송번호로 묶기 (선택 순서 유지 · 같은 줄이 두 번 오면 한 번만)
+  // 판매자 취소는 묶음배송번호로, 고객 요청은 접수번호로 모은다 (선택 순서 유지 · 같은 줄이 두 번 오면 한 번만)
   const rowsByBox = new Map<string, PersonalOrderRow[]>()
+  const requestReceipts = new Map<string, { receipt: StopRequestReceipt; selectedKeys: Set<string> }>()
+  let pendingRequestLines = 0
   const seen = new Set<string>()
   for (const row of selectedRows) {
-    const key = `${row.shipment_box_id}|${row.vendor_item_id}`
+    const key = lineKey(row.shipment_box_id, row.vendor_item_id)
     if (seen.has(key)) continue
     seen.add(key)
 
     const reason = exclusionReason(row)
     if (reason) { excluded.push(toExclusion(row, reason)); continue }
+
+    // ── 고객 취소 요청 줄 — 접수 건을 찾아 그 건 단위로 ──
+    if (row.release_stop) {
+      if (lookup.status === 'loading') { pendingRequestLines++; continue }
+      if (lookup.status !== 'ready') {
+        const detail = lookup.status === 'error' ? ` (${lookup.message})` : ''
+        excluded.push(toExclusion(row, `${REQUEST_LOOKUP_FAILED_REASON}${detail}`))
+        continue
+      }
+      const receipts = (receiptsByLine.get(key) ?? []).filter((receipt) => receipt.orderId === row.order_id)
+      if (receipts.length === 0) {
+        excluded.push(toExclusion(row, REQUEST_NOT_FOUND_REASON))
+        continue
+      }
+      for (const receipt of receipts) {
+        const entry = requestReceipts.get(receipt.receiptId)
+        if (entry) entry.selectedKeys.add(key)
+        else requestReceipts.set(receipt.receiptId, { receipt, selectedKeys: new Set([key]) })
+      }
+      continue
+    }
+
+    // ── 판매자 취소 줄 ──
     const list = rowsByBox.get(row.shipment_box_id)
     if (list) list.push(row)
     else rowsByBox.set(row.shipment_box_id, [row])
@@ -288,14 +462,18 @@ export function buildShipmentStopPlan(
   const boxes: StopBox[] = drafts.map(({ shipmentBoxId, orderId, rows }) => {
     const stopping = stoppingByOrder.get(orderId) ?? 0
     return {
+      kind: 'sellerCancel',
+      key: shipmentBoxId,
       shipmentBoxId,
       orderId,
       receiverName: rows[0].receiver_name,
-      lines: rows.map(toLine),
+      lines: rows.map(toSellerCancelLine),
       otherLinesInOrder: Math.max(0, (activeByOrder.get(orderId) ?? stopping) - stopping),
     }
   })
-  return { boxes, excluded }
+  const requests = Array.from(requestReceipts.values(), ({ receipt, selectedKeys }) =>
+    toStopRequest(receipt, selectedKeys, rowByKey))
+  return { boxes, requests, excluded, pendingRequestLines }
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -524,8 +702,8 @@ async function readReceiptState(receiptId: string, ctx: RunContext): Promise<Rec
 }
 
 // ══════════════════════════════════════════════════════════════════
-// 4) 실행 — 묶음을 하나씩, 묶음 안에서는 ① → ② → (③) 를 끝까지
-//   중단(signal)은 묶음 사이에서만 확인한다 — 취소를 접수한 묶음은 확인까지 마친다.
+// 4) 실행 — 대상을 하나씩. 판매자 취소는 ① → ② → (③), 고객 요청은 ② → (③) 를 끝까지
+//   중단(signal)은 대상 사이에서만 확인한다 — 보낸 대상은 확인까지 마친다.
 //   쿠팡 호출 사이에는 COUPANG_RATE_LIMIT.intervalMs 이상 둔다.
 // ══════════════════════════════════════════════════════════════════
 
@@ -573,12 +751,12 @@ async function confirmReceiptStopped(receiptId: string, ctx: RunContext): Promis
   }
 }
 
-const emptyResult = (box: StopBox, outcome: StopOutcome, message: string): StopBoxResult => ({
-  box, outcome, acceptedLines: [], rejectedLines: [], receiptIds: [], usedSecondStep: false, message,
+const emptyResult = (target: StopTarget, outcome: StopOutcome, message: string): StopResult => ({
+  target, outcome, acceptedLines: [], rejectedLines: [], receiptIds: [], usedSecondStep: false, message,
 })
 
-/** 묶음 1개 처리 */
-async function stopBox(box: StopBox, ctx: RunContext): Promise<StopBoxResult> {
+/** 판매자 취소 — 묶음 1개 처리 */
+async function stopBox(box: StopBox, ctx: RunContext): Promise<StopResult> {
   // ① 취소 접수
   const verdict = judgeCancel(box, await requestOrderCancel(box, ctx))
   if (verdict.kind !== 'accepted') return emptyResult(box, verdict.kind, verdict.message)
@@ -600,7 +778,7 @@ async function stopBox(box: StopBox, ctx: RunContext): Promise<StopBoxResult> {
   }
 
   return {
-    box,
+    target: box,
     outcome: notes.length === 0 ? 'completed' : 'needsCheck',
     acceptedLines,
     rejectedLines,
@@ -611,12 +789,45 @@ async function stopBox(box: StopBox, ctx: RunContext): Promise<StopBoxResult> {
 }
 
 /**
- * 준비된 묶음을 차례로 출고중지한다.
+ * 고객 취소 요청 — 접수 건 1개 처리: ② 상태 확인 → 출고중지요청이면 ③ 완료 처리.
+ * ① 취소는 보내지 않는다 (고객이 이미 요청했다). 완료 처리 수량은 ② 응답의 cancelCountSum.
+ * 이미 출고중지된 건이면 보낼 것 없이 화면만 맞춘다.
+ */
+async function completeRequest(request: StopRequest, ctx: RunContext): Promise<StopResult> {
+  const { receiptId } = request
+  const done = (usedSecondStep: boolean): StopResult => ({
+    target: request, outcome: 'completed', acceptedLines: request.lines, rejectedLines: [],
+    receiptIds: [receiptId], usedSecondStep, message: '',
+  })
+  const notDone = (outcome: 'failed' | 'unknown', message: string): StopResult =>
+    ({ ...emptyResult(request, outcome, message), receiptIds: [receiptId] })
+
+  const state = await readReceiptState(receiptId, ctx)
+  if (state.kind === 'stopped') return done(false)
+  if (state.kind === 'unreadable') return notDone('failed', `접수 건을 조회하지 못해 보내지 않았습니다 (${state.message})`)
+  if (state.kind === 'other') {
+    return notDone('failed', `출고중지요청 상태가 아니라 보내지 않았습니다 (${state.description}) — WING 에서 확인해 주세요`)
+  }
+
+  // ── ③ 완료 처리 — 성공 응답이 아니면 상태를 다시 본다 (그 사이 처리가 끝났을 수 있다) ──
+  const stop = await requestStopComplete(receiptId, state.cancelCount, ctx)
+  if (stop.kind === 'ok' && stop.body?.data?.resultCode === STOP_RESULT_SUCCESS) return done(true)
+  const recheck = await readReceiptState(receiptId, ctx)
+  if (recheck.kind === 'stopped') return done(true)
+  if (stop.kind === 'unknown') return notDone('unknown', `${REQUEST_UNKNOWN_REASON} (${stop.message})`)
+  const stopMessage = stop.kind === 'ok'
+    ? String(stop.body?.data?.resultMessage || stop.body?.message || '응답에 결과가 없습니다')
+    : stop.message
+  return notDone('failed', `쿠팡이 출고중지완료 처리를 거절했습니다 (${stopMessage}) — WING › 출고중지요청에서 확인해 주세요`)
+}
+
+/**
+ * 준비된 대상을 차례로 처리한다 (판매자 취소 · 고객 요청을 넘긴 순서대로).
  * 쿠팡 키가 없으면 첫 요청 전에 throw — 그 밖의 실패는 결과에 담고 throw 하지 않는다.
- * @param wingUserId 쿠팡 WING 로그인 ID (si_users.coupang_user_name)
+ * @param wingUserId 쿠팡 WING 로그인 ID (si_users.coupang_user_name) — 판매자 취소에만 쓴다
  */
 export async function runShipmentStop(
-  boxes: readonly StopBox[],
+  targets: readonly StopTarget[],
   wingUserId: string,
   options: RunShipmentStopOptions = {},
 ): Promise<ShipmentStopRun> {
@@ -626,49 +837,61 @@ export async function runShipmentStop(
     wingUserId,
     pace: createPacer(COUPANG_RATE_LIMIT.intervalMs),
   }
-  const results: StopBoxResult[] = []
+  const results: StopResult[] = []
   let aborted = false
-  onProgress?.(0, boxes.length)
+  onProgress?.(0, targets.length)
 
-  for (const box of boxes) {
+  for (const target of targets) {
     if (aborted || signal?.aborted) {
       aborted = true
-      results.push(emptyResult(box, 'notSent', '보내지 않음 — 다시 선택해 실행하면 됩니다'))
+      results.push(emptyResult(target, 'notSent', '보내지 않음 — 다시 선택해 실행하면 됩니다'))
       continue
     }
     try {
-      results.push(await stopBox(box, ctx))
+      results.push(target.kind === 'sellerCancel' ? await stopBox(target, ctx) : await completeRequest(target, ctx))
     } catch (err) {
-      // 묶음 처리 중 예상하지 못한 오류 — 어디까지 갔는지 모르므로 반영 여부를 모르는 것으로 둔다
-      console.error('[출고중지] 묶음 처리 오류:', box.shipmentBoxId, err)
+      // 처리 중 예상하지 못한 오류 — 어디까지 갔는지 모르므로 반영 여부를 모르는 것으로 둔다
+      console.error('[출고중지] 처리 오류:', target.key, err)
       const detail = err instanceof Error ? err.message : String(err)
-      results.push(emptyResult(box, 'unknown', `${UNKNOWN_REASON} (${detail})`))
+      const reason = target.kind === 'sellerCancel' ? UNKNOWN_REASON : REQUEST_UNKNOWN_REASON
+      results.push(emptyResult(target, 'unknown', `${reason} (${detail})`))
     }
-    onProgress?.(results.length, boxes.length)
+    onProgress?.(results.length, targets.length)
   }
 
   return { results, aborted }
 }
 
 // ══════════════════════════════════════════════════════════════════
-// 5) 반영 — 쿠팡이 취소를 접수한 줄을 화면(items)과 coupang_personal_orders 에 같은 값으로 쓴다
-//   남은 수량 전체를 취소했으므로 취소 수량 = 주문 수량, canceled = true.
-//   취소된 줄은 [배송준비]·사입관리 '개인' 수량에서 빠진다 (둘 다 canceled 를 본다).
+// 5) 반영 — 쿠팡이 처리한 줄을 화면(items)과 coupang_personal_orders 에 같은 값으로 쓴다
+//   취소 수량 = 처리 전 취소 수량 + 이번에 처리된 수량 합 (주문 수량을 넘지 않게), 전량이면 canceled = true.
+//   같은 줄이 여러 접수 건에 나오면 한 줄로 합친다 (줄마다 따로 쓰면 마지막 값만 남는다).
+//   고객 요청은 요청이 끝났으므로 release_stop 을 내린다 (일부 수량만 요청한 건은 남은 수량이 다시 출고 대상).
+//   취소된 줄은 [배송준비]·사입관리 '개인' 수량·출고준비에서 빠진다 (canceled 를 본다).
 //   다음 [주문 업데이트] 가 쿠팡 값으로 다시 덮는다.
 // ══════════════════════════════════════════════════════════════════
 
-/** 처리 결과 → 줄별 반영값 (접수된 줄만) */
-export function toStoppedRowPatches(results: readonly StopBoxResult[]): OrderRowPatch[] {
-  return results.flatMap((result) =>
-    result.acceptedLines.map((line) => ({
-      shipmentBoxId: result.box.shipmentBoxId,
-      vendorItemId: line.vendorItemId,
-      patch: { canceled: true, cancel_count: line.orderedQuantity },
-    })),
-  )
+/** 처리 결과 → 줄별 반영값 (처리된 줄만, 줄마다 1개) */
+export function toStoppedRowPatches(results: readonly StopResult[]): OrderRowPatch[] {
+  const byLine = new Map<string, { line: StopLine; processed: number; customerRequest: boolean }>()
+  for (const result of results) {
+    for (const line of result.acceptedLines) {
+      const key = lineKey(line.shipmentBoxId, line.vendorItemId)
+      const entry = byLine.get(key) ?? { line, processed: 0, customerRequest: false }
+      entry.processed += line.quantity
+      entry.customerRequest = entry.customerRequest || result.target.kind === 'customerRequest'
+      byLine.set(key, entry)
+    }
+  }
+  return Array.from(byLine.values(), ({ line, processed, customerRequest }) => {
+    const cancelCount = Math.min(line.orderedQuantity, line.cancelCountBefore + processed)
+    const patch: OrderRowPatchFields = { canceled: cancelCount >= line.orderedQuantity, cancel_count: cancelCount }
+    if (customerRequest) patch.release_stop = false
+    return { shipmentBoxId: line.shipmentBoxId, vendorItemId: line.vendorItemId, patch }
+  })
 }
 
-/** 접수된 줄을 DB 에 반영 — 실패한 묶음배송번호를 돌려준다 (쿠팡에는 접수됨 → [주문 업데이트] 로 맞춰진다) */
+/** 처리된 줄을 DB 에 반영 — 실패한 묶음배송번호를 돌려준다 (쿠팡에는 처리됨 → [주문 업데이트] 로 맞춰진다) */
 export function saveShipmentStopped(
   userId: string,
   patches: readonly OrderRowPatch[],
