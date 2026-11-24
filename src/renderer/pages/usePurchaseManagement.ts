@@ -74,6 +74,36 @@ const VIEWS_BATCH_SIZE = 1000
 // ── 편집 가능 필드 타입 ──────────────────────────────────────────
 export type EditableField = 'input' | 'in_qty' | 'out_qty'
 
+// ── [입력 초기화] 범위 (전체 = 편집 가능 숫자 열 셋) ─────────────
+export type InputResetScope = 'all' | EditableField
+
+export const INPUT_RESET_OPTIONS: { scope: InputResetScope; label: string }[] = [
+  { scope: 'all',     label: '전체' },
+  { scope: 'input',   label: '입력' },
+  { scope: 'in_qty',  label: '입고' },
+  { scope: 'out_qty', label: '반출' },
+]
+
+const EDITABLE_FIELDS: EditableField[] = ['input', 'in_qty', 'out_qty']
+
+/** 범위 → 초기화할 칼럼 목록 */
+const fieldsOfResetScope = (scope: InputResetScope): EditableField[] =>
+  scope === 'all' ? EDITABLE_FIELDS : [scope]
+
+/** 편집 기록(Map<행 id, 필드별 값>)에서 지정 필드만 빼고, 남는 필드가 없는 행은 지운다 */
+const omitFieldsFromEditMap = <V,>(
+  map: Map<string, Partial<Record<EditableField, V>>>,
+  fields: EditableField[],
+): Map<string, Partial<Record<EditableField, V>>> => {
+  const next = new Map<string, Partial<Record<EditableField, V>>>()
+  for (const [id, entry] of map) {
+    const rest = { ...entry }
+    for (const f of fields) delete rest[f]
+    if (Object.keys(rest).length > 0) next.set(id, rest)
+  }
+  return next
+}
+
 // ── 컬럼 정의 ─────────────────────────────────────────────────
 export interface Column {
   key: string
@@ -1507,27 +1537,31 @@ else{console.log('[조회수] 완료! 총 '+results.length+'건 CSV 저장됨');
     }
   }
 
-  // ── 입력 열 전체 초기화 (input + in_qty + out_qty, user_id 기준) ──
-  const handleResetInputs = async () => {
+  // ── 입력 열 초기화 (범위: 전체 / 입력 / 입고 / 반출, user_id 기준 — 화면 필터와 무관) ──
+  //   고른 칼럼만 비우고, 저장 전 편집 중이던 값도 그 칼럼 것만 버린다.
+  const handleResetInputs = async (scope: InputResetScope) => {
     const userId = getUserId()
     if (!userId) return
 
-    if (!confirm('모든 입력값을 초기화하시겠습니까?')) return
+    const fields = fieldsOfResetScope(scope)
+    const target = scope === 'all'
+      ? '입력 · 입고 · 반출'
+      : INPUT_RESET_OPTIONS.find((o) => o.scope === scope)!.label
+    if (!confirm(`계정 전체 상품의 [${target}] 값을 초기화하시겠습니까?\n되돌릴 수 없습니다.`)) return
 
     setResettingInputs(true)
     try {
+      const cleared = Object.fromEntries(fields.map((f) => [f, null])) as Partial<Record<EditableField, null>>
       const { error } = await supabase
         .from('si_rg_items')
-        .update({ input: null, in_qty: null, out_qty: null })
+        .update(cleared)
         .eq('user_id', userId)
-        .or('input.not.is.null,in_qty.not.is.null,out_qty.not.is.null')
+        .or(fields.map((f) => `${f}.not.is.null`).join(','))
       if (error) throw error
 
-      setPendingEdits(new Map())
-      dbOriginalsRef.current.clear()
-      setItems((prev) => prev.map((item) => ({
-        ...item, input: null, in_qty: null, out_qty: null,
-      })))
+      setPendingEdits((prev) => omitFieldsFromEditMap(prev, fields))
+      dbOriginalsRef.current = omitFieldsFromEditMap(dbOriginalsRef.current, fields)
+      setItems((prev) => prev.map((item) => ({ ...item, ...cleared })))
     } catch (err) {
       console.error('[입력 초기화] 실패:', err)
       alert('입력값 초기화 중 오류가 발생했습니다.')

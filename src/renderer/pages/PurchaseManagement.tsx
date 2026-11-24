@@ -9,6 +9,7 @@ import {
   usePurchaseManagement,
   COLUMNS,
   PAGE_SIZE_OPTIONS,
+  INPUT_RESET_OPTIONS,
   makeReturnKey,
   type EditableField,
 } from './usePurchaseManagement'
@@ -1171,13 +1172,18 @@ const PurchaseManagement: React.FC = () => {
             </DropdownItem>
           </DropdownMenu>
 
-          <button
-            className="purchase-btn"
-            onClick={handleResetInputs}
+          {/* ── 입력 초기화 (전체 / 입력 / 입고 / 반출 중 선택) ─── */}
+          <DropdownMenu
+            label={resettingInputs ? '초기화 중...' : '입력 초기화'}
+            align="right"
             disabled={resettingInputs}
           >
-            {resettingInputs ? '초기화 중...' : '입력 초기화'}
-          </button>
+            {INPUT_RESET_OPTIONS.map((o) => (
+              <DropdownItem key={o.scope} onClick={() => handleResetInputs(o.scope)}>
+                {o.label}
+              </DropdownItem>
+            ))}
+          </DropdownMenu>
           <button
             className="purchase-btn purchase-save-btn"
             onClick={handleSaveInputs}
