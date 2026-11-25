@@ -20,6 +20,7 @@ import {
   cleanupStaleNotes,
   fetchOrderNotes,
   saveOrderNote,
+  saveOrderRowPatches,
   STATUS_MAP,
   STATUS_REVERSE_MAP,
   type OrderRowPatch,
@@ -63,6 +64,16 @@ import {
   type CartTarget,
 } from '../services/orderSendService'
 import { StockService } from '../services/stockService'
+import {
+  EXTRA_SHIP_EXCEL_PREFIX,
+  EXTRA_SHIP_LABEL,
+  EXTRA_SHIP_TAB_STATUS,
+  extraShipQtyOf,
+  isExtraShipPending,
+  isPreInvoiceStatus,
+  planExtraShipPatches,
+  releaseExtraShipPatch,
+} from '../services/extraShipmentService'
 import {
   allocateOutbound,
   OUTBOUND_SHIPMENT_DAYS,
@@ -208,6 +219,13 @@ interface DeliveryAoAOptions {
   pendingInvoice?: boolean
   /** 택배사 열 고정값 — 미지정 시 주문 데이터의 택배사를 그대로 사용 */
   carrierName?: string
+  /** 구매수(수량) 칸 값 — 미지정 시 주문 수량. 추가출고건은 이번에 보낼 수량을 적는다 */
+  qtyOf?: (r: PersonalOrderRow) => number
+  /**
+   * 운송장번호 칸을 비울 행 — 추가출고건은 주문에 이미 나간 송장이 적혀 있어
+   * 그대로 두면 새 송장을 뽑지 못한다
+   */
+  blankInvoice?: (r: PersonalOrderRow) => boolean
 }
 
 /**
@@ -218,19 +236,19 @@ function buildDeliveryAoA(
   rows: PersonalOrderRow[],
   opts: DeliveryAoAOptions = {},
 ): CellInput[][] {
-  const { boxPrefixOf, pendingInvoice = false, carrierName } = opts
+  const { boxPrefixOf, pendingInvoice = false, carrierName, qtyOf, blankInvoice } = opts
 
   const body = rows.map((r, i) => [
     i + 1, r.shipment_box_id, r.order_id,
     carrierName ?? r.delivery_company_name,
-    buildInvoiceCell(r, pendingInvoice),
+    blankInvoice?.(r) ? '' : buildInvoiceCell(r, pendingInvoice),
     r.split_shipping || 'N', r.planned_shipping_date ?? '',
     r.estimated_shipping_date ?? '',
     r.in_transit_date_time ? formatDateTime(r.in_transit_date_time) : '',
     r.ordered_at ? formatDateTime(r.ordered_at) : '',
     (boxPrefixOf ? boxPrefixOf(r) : '') + r.item_name, r.option_name, r.product_name, r.product_id, r.vendor_item_id,
     `${r.item_name},${r.option_name}`, r.external_vendor_sku_code, r.barcode,
-    r.order_price_units, '무료', 0, 0, r.shipping_count, r.sales_price_units,
+    r.order_price_units, '무료', 0, 0, qtyOf ? qtyOf(r) : r.shipping_count, r.sales_price_units,
     r.orderer_name, r.receiver_safe_number, r.receiver_name, r.receiver_safe_number,
     r.receiver_post_code, r.receiver_address, r.parcel_print_message, '', '',
     r.delivered_date ? formatDateTime(r.delivered_date) : '', '', '', '', '',
@@ -355,6 +373,8 @@ export function usePersonalOrder() {
   const [shipmentOptions, setShipmentOptions] = useState<ShipmentPickerOption[]>([])
   // rowKey → { boxStr, displayStr, matched } (OutboundAlloc 참고)
   const [outboundAllocMap, setOutboundAllocMap] = useState<Map<string, OutboundAlloc>>(new Map())
+  // 이번 출고준비에서 배정 대상이었던 행 키 — 출고엑셀 때 추가발송 기록 범위 (planExtraShipPatches)
+  const [outboundDemandKeys, setOutboundDemandKeys] = useState<Set<string>>(new Set())
   // 엑셀 shipment_list 시트용: 상세 + 출고(allocated)
   const [outboundShipmentRows, setOutboundShipmentRows] = useState<Array<ShipmentDetailRow & { allocated: number }>>([])
   // 엑셀 재고출고 시트용: 배정된 재고 행 + 출고(allocated)
@@ -723,6 +743,28 @@ export function usePersonalOrder() {
     )
   }, [])
 
+  // ── 추가발송 해제 — 상품정보 칸의 [추가발송 N] 표시를 눌렀을 때 (확인 후 화면 · DB 같이) ──
+  //   자동으로는 풀지 않는다. 실제로 보낸 뒤 사람이 지운다 (extraShipmentService).
+  const handleExtraShipRelease = useCallback(async (row: PersonalOrderRow) => {
+    const qty = extraShipQtyOf(row)
+    if (qty <= 0) return
+    const { userId } = getUserInfo()
+    if (!userId) { alert('로그인 정보를 확인해 주세요.'); return }
+    const ok = window.confirm(
+      `${EXTRA_SHIP_LABEL} ${qty}개를 해제할까요?\n\n`
+      + `${row.receiver_name} · ${row.item_name} / ${row.option_name}\n`
+      + '해제하면 다음 출고준비에서 이 주문에 더 배정하지 않습니다.',
+    )
+    if (!ok) return
+    const patch = releaseExtraShipPatch(row)
+    const { failedBoxIds } = await saveOrderRowPatches(userId, [patch], EXTRA_SHIP_LABEL)
+    if (failedBoxIds.length > 0) {
+      alert(`${EXTRA_SHIP_LABEL} 해제를 저장하지 못했습니다. 잠시 뒤 다시 시도해 주세요.`)
+      return
+    }
+    applyRowPatches([patch])
+  }, [getUserInfo, applyRowPatches])
+
   // ── 탭 전환 (다중 선택) ───────────────────────────────────────
   //   '전체' 선택 → 비움(= 모든 상태). 그 외 → 토글. 모두 해제 시 = 전체.
   const handleTabChange = useCallback((tab: OrderStatusTab) => {
@@ -805,7 +847,10 @@ export function usePersonalOrder() {
       const codes = new Set(
         Array.from(selectedTabs).map((t) => STATUS_REVERSE_MAP[t]).filter(Boolean),
       )
-      result = items.filter((row) => codes.has(row.status))
+      // 진행 중인 추가발송 줄은 쿠팡 상태(배송지시 ~)와 무관하게 상품준비중 탭에도 보인다
+      const showExtraShip = codes.has(EXTRA_SHIP_TAB_STATUS)
+      result = items.filter((row) =>
+        codes.has(row.status) || (showExtraShip && isExtraShipPending(row)))
     }
 
     // 검색 필터 (Enter로 적용된 검색어 기준)
@@ -1142,6 +1187,7 @@ export function usePersonalOrder() {
     if (outboundActive) {
       setOutboundActive(false)
       setOutboundAllocMap(new Map())
+      setOutboundDemandKeys(new Set())
       setOutboundShipmentRows([])
       setOutboundStockRows([])
       return
@@ -1160,6 +1206,8 @@ export function usePersonalOrder() {
 
   // ── 모달 [준비] → 쉽먼트 상세 · 재고 조회 → 배정 (규칙: outboundPrepService) ──
   //   배정 대상: 선택 탭의 주문 중 취소 안 된 줄 (취소 = 쿠팡 발주서 값 · [출고중지] 반영값)
+  //   + 진행 중인 추가발송 줄(이미 송장이 나간 주문의 남은 수량) — 상품준비중 탭(또는 전체)일 때,
+  //     배정 수량은 주문 수량이 아니라 남은 수량(extra_ship_qty)
   //   '재고 — 미주문건만' 의 줄별 상한 = 수량 − 중국 주문으로 채워지는 수량 (deriveFulfillmentState)
   const handleOutboundConfirm = useCallback(async ({ shipmentIds, stockMode }: OutboundPrepSelection) => {
     if (shipmentIds.length === 0 && !stockMode) return
@@ -1185,17 +1233,23 @@ export function usePersonalOrder() {
         ? new Set(Array.from(selectedTabs).map((t) => STATUS_REVERSE_MAP[t]).filter(Boolean))
         : null
       const fulfillmentMaps = { aggMap, itemAggMap, orderItemsMap, cartKeys: cartKeySet }
+      const includeExtraShip = !codes || codes.has(EXTRA_SHIP_TAB_STATUS)
       const demands: OutboundDemand[] = items
-        .filter((r) => !r.canceled && (!codes || codes.has(r.status)))
+        .filter((r) => {
+          if (r.canceled) return false
+          if (isExtraShipPending(r)) return includeExtraShip
+          return !codes || codes.has(r.status)
+        })
         .map((r) => {
-          const qty = r.shipping_count ?? 0
-          const { coveredUnits } = deriveFulfillmentState(r.order_id, r.vendor_item_id, qty, fulfillmentMaps)
+          const orderQty = r.shipping_count ?? 0
+          const { coveredUnits } = deriveFulfillmentState(r.order_id, r.vendor_item_id, orderQty, fulfillmentMaps)
           return {
             key: getRowKey(r),
             barcode: r.barcode ?? '',
-            qty,
+            // 추가발송 줄은 남은 수량만 — 배정분은 이미 출고됐다
+            qty: isExtraShipPending(r) ? extraShipQtyOf(r) : orderQty,
             orderedAt: orderedAtMs(r),
-            uncoveredUnits: qty - coveredUnits,
+            uncoveredUnits: orderQty - coveredUnits,
           }
         })
 
@@ -1206,6 +1260,7 @@ export function usePersonalOrder() {
       })
 
       setOutboundAllocMap(result.allocMap)
+      setOutboundDemandKeys(new Set(demands.map((d) => d.key)))
       // shipment_list 시트: PERSONAL + DIRECT 만
       setOutboundShipmentRows(
         details
@@ -1242,6 +1297,7 @@ export function usePersonalOrder() {
   }, [stockMap])
 
   // ── 출고엑셀: Delivery · 합배송(배정된 주문) + shipment_list · 남은상품 + 재고출고 ──
+  //   받을 때 수량이 모자란 줄(추가★)을 추가발송으로 기록한다 (planExtraShipPatches)
   const handleOutboundExcel = useCallback(() => {
     // 배정된 주문 (주문일 오름차순)
     const deliveryRows = items
@@ -1254,21 +1310,44 @@ export function usePersonalOrder() {
       return
     }
 
-    // ── 단품 / 합배송 분리 ─────────────────────────────────────
-    //   한 주문번호에 주문 라인이 1개면 단품(Delivery),
-    //   2개 이상이면 하나의 주문으로 여러 상품이 나가는 건이므로 '합배송' 시트로 보낸다.
+    // ── Delivery / 합배송 나누기 ────────────────────────────────
+    //   Delivery : ① 추가출고건(이미 송장이 나간 주문의 남은 수량) — 맨 위, 등록상품명 앞에 [추가출고건]
+    //              ② 단품 주문 ③ 합배송인데 이번에 전부 나가는 주문
+    //   합배송   : 한 주문에 상품이 2줄 이상인데 이번에 전부는 못 나가는 주문만
+    //              (송장 전인 줄 중 배정이 없거나 모자란 줄이 있음) — 따로 보고 판단하도록
+    const allocOf = (r: PersonalOrderRow) => outboundAllocMap.get(getRowKey(r))
     const boxPrefixOf = (r: PersonalOrderRow) => {
-      const a = outboundAllocMap.get(getRowKey(r))
-      return a?.boxStr ? `${a.boxStr} ` : ''
+      const a = allocOf(r)
+      const box = a?.boxStr ? `${a.boxStr} ` : ''
+      return isExtraShipPending(r) ? `${EXTRA_SHIP_EXCEL_PREFIX} ${box}` : box
     }
-    const isCombinedOrder = (r: PersonalOrderRow) =>
-      (orderItemCountMap.get(r.order_id) ?? 1) > 1
+    // 주문번호 → 이번에 전부 나가지 못하는 주문인지 (송장 전 · 취소 안 된 줄 기준)
+    const incompleteOrderIds = new Set<string>()
+    for (const r of items) {
+      if (r.canceled || !isPreInvoiceStatus(r.status)) continue
+      const a = allocOf(r)
+      if (!a?.matched || a.shortageQty > 0) incompleteOrderIds.add(r.order_id)
+    }
+    const goesToCombinedSheet = (r: PersonalOrderRow) =>
+      (orderItemCountMap.get(r.order_id) ?? 1) > 1 && incompleteOrderIds.has(r.order_id)
 
-    // 시트1: Delivery (단품만) / 시트2: 합배송 (동일 헤더·서식)
+    const extraRows = deliveryRows.filter(isExtraShipPending)
+    const normalRows = deliveryRows.filter((r) => !isExtraShipPending(r))
+
     //   운송장번호: 화면 표와 동일(대기 운송장은 주황) / 택배사: CJ 대한통운 고정
-    const deliveryOpts = { boxPrefixOf, pendingInvoice: true, carrierName: OUTBOUND_CARRIER_NAME }
-    const aoaDelivery = buildDeliveryAoA(deliveryRows.filter((r) => !isCombinedOrder(r)), deliveryOpts)
-    const aoaCombined = buildDeliveryAoA(deliveryRows.filter(isCombinedOrder), deliveryOpts)
+    //   추가출고건: 수량 = 이번에 보낼 수량, 운송장 칸은 비움(주문의 송장은 먼저 나간 것)
+    const deliveryOpts: DeliveryAoAOptions = {
+      boxPrefixOf,
+      pendingInvoice: true,
+      carrierName: OUTBOUND_CARRIER_NAME,
+      qtyOf: (r) => (isExtraShipPending(r) ? allocOf(r)?.allocatedQty ?? 0 : r.shipping_count),
+      blankInvoice: isExtraShipPending,
+    }
+    const aoaDelivery = buildDeliveryAoA(
+      [...extraRows, ...normalRows.filter((r) => !goesToCombinedSheet(r))],
+      deliveryOpts,
+    )
+    const aoaCombined = buildDeliveryAoA(normalRows.filter(goesToCombinedSheet), deliveryOpts)
 
     // 시트3: shipment_list (구성 컬럼 + 출고/잔여)
     const SHIPMENT_HEADERS = [
@@ -1315,7 +1394,31 @@ export function usePersonalOrder() {
       console.error('[출고엑셀] 생성 실패:', err)
       alert(`출고엑셀 생성 실패: ${err.message}`)
     })
-  }, [items, outboundAllocMap, outboundShipmentRows, outboundStockRows, orderItemCountMap])
+
+    // ── 추가발송 기록 — 모자란 줄(추가★)의 남은 수량을 화면 · DB 에 같이 ──
+    //   같은 배정으로 엑셀을 다시 받아도 값이 같다 (배정 결과에서 다시 계산)
+    const extraPatches = planExtraShipPatches({
+      rows: items,
+      rowKeyOf: getRowKey,
+      allocMap: outboundAllocMap,
+      demandKeys: outboundDemandKeys,
+    })
+    if (extraPatches.length > 0) {
+      const { userId } = getUserInfo()
+      saveOrderRowPatches(userId, extraPatches, EXTRA_SHIP_LABEL)
+        .then(({ failedBoxIds }) => {
+          const failed = new Set(failedBoxIds)
+          applyRowPatches(extraPatches.filter((x) => !failed.has(x.shipmentBoxId)))
+          if (failed.size > 0) {
+            alert(`${EXTRA_SHIP_LABEL} 기록 ${failed.size}건을 저장하지 못했습니다.\n[출고엑셀] 을 다시 받아 주세요.`)
+          }
+        })
+        .catch((err) => {
+          console.error(`[${EXTRA_SHIP_LABEL}] 기록 실패:`, err)
+          alert(`${EXTRA_SHIP_LABEL} 기록 실패: ${err?.message ?? ''}\n[출고엑셀] 을 다시 받아 주세요.`)
+        })
+    }
+  }, [items, outboundAllocMap, outboundDemandKeys, outboundShipmentRows, outboundStockRows, orderItemCountMap, getUserInfo, applyRowPatches])
 
   // ── [바코드 연결] 핸들러 ──────────────────────────────────────────
   const [barcodeLoading, setBarcodeLoading] = useState(false)
@@ -1945,6 +2048,7 @@ export function usePersonalOrder() {
     items,
     getUserInfo,
     applyRowPatches,
+    handleExtraShipRelease,
 
     // 출고준비 / 출고엑셀
     outboundActive,

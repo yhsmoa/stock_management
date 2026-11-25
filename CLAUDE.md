@@ -177,6 +177,17 @@ Electron is built separately via `scripts/build-electron.mjs` (called manually; 
 - **반영**: 성공 줄(묶음배송번호+옵션ID)마다 `toInstructedRows` 가 정한 값을 화면 `items` 와 `coupang_personal_orders` 에 똑같이 쓴다 — 송장이 나간 줄은 `status='DEPARTURE'`·`invoice_number`·`delivery_company_name`, 분리배송의 나중 줄은 상태 그대로 + `planned_shipping_date`, 분리배송 줄은 `split_shipping='Y'`(`pending_invoice_number` 는 안 건드림). **분리배송 뒤에는 먼저 보낸 옵션의 묶음배송번호가 쿠팡에서 바뀌므로** 결과 화면의 [닫고 주문 업데이트] 로 맞춘다(그 전까지 예전 번호로 남지만 배송지시 상태라 다시 보내지 않고, 남은 옵션은 예전 번호 그대로 이어 보낸다). DB 반영 실패 묶음은 결과에 "쿠팡에는 등록됨 · 화면 반영 실패" 로 안내.
 - 프록시는 쿠팡 프록시 규칙대로 **양쪽**(`coupangProxy.ts` · `prodServer.js`)에 있다. 쿠팡은 등록 IP(Railway)만 받으므로 실제 등록은 배포 후에만 확인할 수 있다.
 
+### 개인주문 — 추가발송 · 출고엑셀 시트 규칙 (2026-11-25)
+출고준비에서 수량이 모자란 줄(`추가★`)은 **배정된 수량만 그날 출고**하고(쿠팡 송장 등록 — 쿠팡은 한 줄의 수량을 나눠 받지 않아 줄 전체가 배송지시로 넘어간다), 남은 수량을 `coupang_personal_orders.extra_ship_qty` 에 적어 두었다가 다음 입고 때 더 보낸다. 쿠팡에는 없는 이 앱만의 기록이다. SQL `docs/sql/2026-11-25_coupang_personal_orders_extra_ship_qty.sql`.
+- **구조**: 규칙은 순수 함수 `services/extraShipmentService.ts`(`isExtraShipPending` · `planExtraShipPatches` · `releaseExtraShipPatch`), 저장은 `saveOrderRowPatches`, 화면은 `usePersonalOrder`(`handleExtraShipRelease` · `handleOutboundExcel`). 배정 결과 `OutboundAlloc` 에 `allocatedQty` · `shortageQty` 가 있다.
+- **상태 두 가지** (`extra_ship_qty > 0`): **예정** = 아직 송장 전(결제완료 · 상품준비중) — 출고준비에서는 주문 수량 전체가 배정 대상이고, 출고엑셀을 받을 때마다 다시 계산해 덮는다(다 채워졌거나 배정이 없으면 비움). **진행** = 송장이 나간 뒤(`isExtraShipPending`) — 쿠팡 상태와 무관하게 **상품준비중 탭에도 보이고**, 출고준비 배정 수량은 주문 수량이 아니라 남은 수량이다.
+- **기록**: [출고엑셀] 을 받을 때 자동. 같은 배정으로 다시 받아도 값이 같다(배정 결과에서 다시 계산 — 또 줄지 않는다). 진행 줄이 일부만 채워지면 남은 수량으로 줄이고, **다 채워져도 자동으로 풀지 않는다**.
+- **해제**: 상품명 앞 노란 `추가발송 N` 표시(`.po-extra-ship-chip`, `data-no-copy`)를 눌러 확인 → null. 사람이 실제로 보낸 뒤 지운다. 해제하지 않으면 다음 출고준비에서 또 배정된다.
+- **출고엑셀 시트**: **Delivery** = ① 추가출고건(진행 줄) 맨 위 — 등록상품명 앞 `[추가출고건]`, 수량 칸 = 이번에 보낼 수량, 운송장 칸 비움(주문의 송장은 먼저 나간 것) ② 단품 주문 ③ 합배송인데 이번에 전부 나가는 주문. **합배송** = 한 주문에 상품 2줄 이상인데 이번에 전부는 못 나가는 주문만(송장 전 · 취소 안 된 줄 중 배정이 없거나 모자란 줄이 있음). 예전에는 합배송 주문을 모두 합배송 시트로 보냈다.
+- **[배송준비]**: 엑셀의 추가출고건 행(DB 에서 그 묶음 + 옵션이 진행 줄)은 쿠팡에 보내지 않고 '추가출고건 제외'로 센다(`plan.extraShipments`) — 주문이 이미 배송지시 이후라 다시 등록할 수 없다.
+- **[주문 업데이트]**: `savePersonalOrders` 가 `extra_ship_qty` 를 바코드처럼 이월한다(모든 payload 행에 넣는다 — 빠지면 PostgREST 가 null 로 덮는다). 추가발송이 남은 행은 prune 하지 않는다 — 같은 주문 · 옵션이 새 묶음배송번호 한 행으로 왔을 때만 그 행으로 옮기고 옛 행을 지운다. 그래서 60일 조회 창을 벗어나도 해제 전까지 남는다.
+- 아직 안 한 것: 사입관리 '개인' 열(`fetchPersonalOrderQtyByBarcode`)은 추가발송 남은 수량을 세지 않는다. [송장 통합 업로드] 는 여전히 합배송 주문에 운송장을 넣지 않는다(Delivery 시트로 온 합배송 주문은 운송장 칸이 빈다). 추가출고건의 새 운송장번호는 저장하지 않는다.
+
 ### 개인주문 — [출고중지] 상품준비중 주문 취소 (2026-11-12)
 `/personal-order` 상품준비중 탭에서 줄을 체크하고 표 위 [출고중지] → 확인 모달 → 쿠팡에서 취소한다 (WING 의 주문취소 → 출고중지요청 › 출고중지완료와 같은 일).
 - **쿠팡 API 3개** (developers.coupang.com 2026-11-12 확인): ① 주문 상품 취소 처리 `POST v5/vendors/{vendorId}/orders/{orderId}/cancel` ② 반품요청 단건 조회 `GET v6/.../returnRequests/{receiptId}` ③ 출고중지완료 처리 `PATCH v4/.../returnRequests/{receiptId}/stoppedShipment`. 문서상 상품준비중 주문은 ①만으로 출고중지 접수 + 완료가 된다(`receiptType=STOP_SHIPMENT` = 출고중지완료 접수 번호). WING 은 2단계라 **①이 접수되면 ②로 접수 건을 확인하고, 출고중지요청으로 남아 있으면(`RELEASE_STOP_UNCHECKED` 또는 `releaseStatus=N`) ③까지 부른다** — 어느 쪽이든 같은 코드로 끝난다. 결과 화면이 "취소 접수로 완료 / 출고중지완료 처리까지 실행"을 구분해 보여 준다. **실측(2026-11-12, hilili 1건): ① 한 번으로 끝났다** — 1초 뒤 ②가 `RETURNS_COMPLETED` · `releaseStatus=S` 라 ③은 부르지 않았다. 응답 모양은 문서와 다르다: 성공 본문의 `receiptMap` 은 접수번호를 키로 묶은 꼴(`{"<receiptId>": {…}}`), 거절은 HTTP 200 + 본문 `code: 400`(문서는 HTTP 400) — 둘 다 코드가 읽는다.

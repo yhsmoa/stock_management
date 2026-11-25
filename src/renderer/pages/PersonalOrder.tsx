@@ -25,6 +25,7 @@ import { useDeliveryInstruct } from '../components/personal-order/useDeliveryIns
 import ShipmentStopModal from '../components/personal-order/ShipmentStopModal'
 import { useShipmentStop } from '../components/personal-order/useShipmentStop'
 import StockExcelImportModal from '../components/inventory/StockExcelImportModal'
+import { EXTRA_SHIP_LABEL, extraShipQtyOf, isExtraShipPending } from '../services/extraShipmentService'
 import type { OrderRowPatch } from '../services/personalOrderService'
 import DropdownMenu, { DropdownItem } from '../components/common/DropdownMenu'
 import SearchBar from '../components/common/SearchBar'
@@ -118,6 +119,7 @@ const PersonalOrder: React.FC = () => {
     items,
     getUserInfo,
     applyRowPatches,
+    handleExtraShipRelease,
   } = usePersonalOrder()
 
   // ── [배송준비] 송장 엑셀 → 쿠팡 배송지시 (상태·흐름은 별도 훅) ──
@@ -686,6 +688,24 @@ const PersonalOrder: React.FC = () => {
                                     >
                                       취소
                                     </span>
+                                  )}
+                                  {extraShipQtyOf(row) > 0 && (
+                                    <button
+                                      type="button"
+                                      className="po-extra-ship-chip"
+                                      data-no-copy
+                                      title={
+                                        isExtraShipPending(row)
+                                          ? `먼저 배정된 수량은 출고했고 ${extraShipQtyOf(row)}개를 더 보내야 합니다 — 보낸 뒤 눌러서 해제`
+                                          : `이번 출고엑셀 기준 ${extraShipQtyOf(row)}개가 모자랍니다 (송장 등록 후 ${EXTRA_SHIP_LABEL}으로 남음) — 눌러서 해제`
+                                      }
+                                      onClick={(e) => {
+                                        e.stopPropagation()
+                                        void handleExtraShipRelease(row)
+                                      }}
+                                    >
+                                      {`${EXTRA_SHIP_LABEL} ${extraShipQtyOf(row)}`}
+                                    </button>
                                   )}
                                   {baseTitle}
                                   {reorderCount >= 2 && (

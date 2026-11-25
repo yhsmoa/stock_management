@@ -69,6 +69,10 @@ export interface OutboundAlloc {
   displayStr: string
   /** 1개 이상 배정됨 — 출고엑셀 대상 */
   matched: boolean
+  /** 배정된 수량 (이번에 보낼 수량) */
+  allocatedQty: number
+  /** 모자란 수량 (0 = 다 채움) — 추가발송 기록에 쓴다 (extraShipmentService) */
+  shortageQty: number
 }
 
 export interface OutboundAllocationInput {
@@ -138,7 +142,8 @@ function takeFrom(units: SourceUnit[] | undefined, limit: number, parts: AllocPa
 }
 
 /** 배정 조각 → 표시 문자열 (형식은 파일 머리 설명) */
-function formatAlloc(rawParts: AllocPart[], shortage: boolean): OutboundAlloc {
+function formatAlloc(rawParts: AllocPart[], shortageQty: number): OutboundAlloc {
+  const shortage = shortageQty > 0
   // 같은 묶음 · 같은 code 가 여러 원천 행(같은 박스에 같은 바코드 2줄 등)에서 오면 한 조각으로 합친다
   const merged = new Map<string, AllocPart>()
   for (const p of rawParts) {
@@ -164,7 +169,13 @@ function formatAlloc(rawParts: AllocPart[], shortage: boolean): OutboundAlloc {
   const displayStr = Array.from(groups.entries())
     .map(([group, groupParts]) => (group ? `${group} ` : '') + `[${groupParts.join(', ')}]`)
     .join(' ')
-  return { boxStr: `[${boxParts.join(', ')}]`, displayStr, matched: true }
+  return {
+    boxStr: `[${boxParts.join(', ')}]`,
+    displayStr,
+    matched: true,
+    allocatedQty: parts.reduce((sum, p) => sum + p.qty, 0),
+    shortageQty: Math.max(0, shortageQty),
+  }
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -232,7 +243,7 @@ export function allocateOutbound(input: OutboundAllocationInput): OutboundAlloca
 
   const allocMap = new Map<string, OutboundAlloc>()
   for (const s of state) {
-    if (s.parts.length > 0) allocMap.set(s.demand.key, formatAlloc(s.parts, s.need > 0))
+    if (s.parts.length > 0) allocMap.set(s.demand.key, formatAlloc(s.parts, s.need))
   }
   return { allocMap, shipmentAllocated, stockAllocated }
 }

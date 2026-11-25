@@ -33,6 +33,7 @@ import {
 } from './coupangCarriers'
 import { COUPANG_RATE_LIMIT } from '../utils/rateLimitQueue'
 import { readExcelIdCell } from '../utils/excelCell'
+import { isExtraShipPending } from './extraShipmentService'
 
 // ══════════════════════════════════════════════════════════════════
 // 상수
@@ -187,6 +188,11 @@ export interface DeliveryInstructPlan {
   boxes: ReadyBox[]
   /** 운송장번호가 비어 제외한 행 (실패 아님) */
   skipped: SkippedRow[]
+  /**
+   * 추가출고건이라 제외한 행 (실패 아님) — 이미 송장이 나간 주문의 남은 수량을 보내는 행.
+   * 쿠팡에는 한 주문 줄에 송장을 한 번만 등록할 수 있다 (extraShipmentService)
+   */
+  extraShipments: SkippedRow[]
   /** 등록 불가 행 (시트 · 행 순) */
   failures: PlanFailure[]
 }
@@ -629,6 +635,7 @@ function buildSplitFollowUpLines(checked: CheckedRow[]): ReadyLine[] | string {
 interface PlanCollector {
   boxes: ReadyBox[]
   skipped: SkippedRow[]
+  extraShipments: SkippedRow[]
   failures: PlanFailure[]
 }
 
@@ -721,8 +728,17 @@ export function buildDeliveryInstructPlan(
     else rowsByBox.set(row.shipmentBoxId, [row])
   }
 
-  const out: PlanCollector = { boxes: [], skipped: [], failures: [] }
-  for (const [boxId, rows] of rowsByBox) planBox(boxId, rows, index, today, out)
+  const out: PlanCollector = { boxes: [], skipped: [], extraShipments: [], failures: [] }
+  for (const [boxId, rows] of rowsByBox) {
+    // 추가출고건(진행 중인 추가발송 줄) 행은 먼저 뺀다 — 주문은 이미 배송지시 이후라 다시 등록할 수 없다
+    const sendable: DeliveryExcelRow[] = []
+    for (const row of rows) {
+      const order = index.byKey.get(boxOptionKey(row.shipmentBoxId, row.vendorItemId))
+      if (order && isExtraShipPending(order)) out.extraShipments.push(refOf(row))
+      else sendable.push(row)
+    }
+    if (sendable.length > 0) planBox(boxId, sendable, index, today, out)
+  }
 
   // 실패 목록은 시트 · 행 순서로
   const sheetOrder = new Map<string, number>()
@@ -730,7 +746,13 @@ export function buildDeliveryInstructPlan(
   out.failures.sort((a, b) =>
     (sheetOrder.get(a.sheet) ?? 0) - (sheetOrder.get(b.sheet) ?? 0) || a.rowNumber - b.rowNumber)
 
-  return { totalRows: excelRows.length, boxes: out.boxes, skipped: out.skipped, failures: out.failures }
+  return {
+    totalRows: excelRows.length,
+    boxes: out.boxes,
+    skipped: out.skipped,
+    extraShipments: out.extraShipments,
+    failures: out.failures,
+  }
 }
 
 /** 분리배송 묶음인지 (시작 · 이어 보내기) */

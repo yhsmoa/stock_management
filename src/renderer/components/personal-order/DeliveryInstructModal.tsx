@@ -317,6 +317,9 @@ const DeliveryInstructModal: React.FC<{ state: DeliveryInstruct }> = ({ state })
                     color={splitBoxCount > 0 ? theme.colors.warning : theme.colors.textSecondary}
                   />
                   <Stat label="운송장 없음 제외" value={`${plan.skipped.length}행`} color={theme.colors.textSecondary} />
+                  {plan.extraShipments.length > 0 && (
+                    <Stat label="추가출고건 제외" value={`${plan.extraShipments.length}행`} color={theme.colors.textSecondary} />
+                  )}
                   <Stat
                     label="등록 불가"
                     value={`${plan.failures.length}행`}

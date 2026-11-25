@@ -549,6 +549,28 @@
   vertical-align: middle;
 }
 
+/* ── 추가발송 표시 (상품명 앞, 노란 배지 — 눌러서 해제) ───────────
+   출고준비에서 모자라 다음 입고 때 더 보낼 수량 (extraShipmentService) */
+.po-extra-ship-chip {
+  display: inline-block;
+  margin-right: 4px;
+  padding: 1px 6px;
+  border: 1px solid #FACC15;
+  border-radius: 4px;
+  background: #FEF9C3;
+  color: #854D0E;
+  font-size: 11px;
+  font-weight: 700;
+  font-family: inherit;
+  line-height: inherit;
+  vertical-align: middle;
+  cursor: pointer;
+}
+
+.po-extra-ship-chip:hover {
+  background: #FDE047;
+}
+
 /* ── 합배송 배지 (수취인 칸, 한 주문에 상품 2개↑일 때만) ─────────── */
 .po-combined-badge {
   display: inline-block;

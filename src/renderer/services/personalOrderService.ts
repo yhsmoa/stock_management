@@ -124,6 +124,9 @@ export interface PersonalOrderRow {
   barcode: string
   note: string
   release_stop: boolean  // 출고중지요청(RU) 또는 반품접수(UC) 대상 여부
+  // 추가발송 남은 수량 (null·0 = 없음) — 쿠팡에 없는 이 앱의 기록 (extraShipmentService).
+  // API 변환 행에는 없고, savePersonalOrders 가 기존 행의 값을 이월한다.
+  extra_ship_qty?: number | null
   updated_at?: string
 }
 
@@ -689,9 +692,12 @@ export interface SavePersonalOrdersResult {
  *   0. 기존 행 조회 (id, 키, barcode) — 이월과 prune 판정에 함께 사용
  *   1. prune 안전장치 — 삭제 대상이 과다하면 저장 전에 중단하고 확인 요청
  *   2. Upsert (onConflict = 유니크 제약 user_id, shipment_box_id, vendor_item_id)
- *      · payload 의 barcode 는 기존 행 값으로 대체 → [업데이트] 가 바코드를 지우지 않는다
+ *      · payload 의 barcode · extra_ship_qty(추가발송) 는 기존 행 값으로 대체
+ *        → [업데이트] 가 바코드 · 추가발송 기록을 지우지 않는다
  *      · id·pending_invoice_number 는 payload 에 없으므로 유지된다
  *   3. Prune — 이번에 안 온 기존 행만 삭제 (누적 없음)
+ *      · 추가발송이 남은 행(extra_ship_qty > 0)은 더 보낼 물건이 있으므로 지우지 않는다.
+ *        단, 같은 주문 · 옵션이 새 묶음배송번호로 왔으면(분리배송 등) 그 행으로 옮기고 옛 행은 지운다
  *
  * ⚠️ payload 에 id 를 넣지 않는 것이 핵심(넣으면 batch upsert 에서 null-id 위험).
  * ⚠️ 안전장치에 걸려 중단되면 DB 는 아무것도 바뀌지 않는다 (upsert 전 판정).
@@ -709,19 +715,24 @@ export async function savePersonalOrders(
 
   try {
     // ── 0. 기존 행 조회 (1000건 루프) ────────────────────────────
-    const existingByKey = new Map<string, { id: string; barcode: string }>()
+    const existingByKey = new Map<string, { id: string; barcode: string; orderId: string; extraShipQty: number }>()
     {
       let from = 0
       while (true) {
         const { data, error } = await supabase
           .from('coupang_personal_orders')
-          .select('id, shipment_box_id, vendor_item_id, barcode')
+          .select('id, shipment_box_id, vendor_item_id, barcode, order_id, extra_ship_qty')
           .eq('user_id', userId)
           .range(from, from + SUPABASE_PAGE_SIZE - 1)
         if (error) throw error
         if (!data || data.length === 0) break
         for (const r of data as any[]) {
-          existingByKey.set(keyOf(r), { id: r.id, barcode: r.barcode ?? '' })
+          existingByKey.set(keyOf(r), {
+            id: r.id,
+            barcode: r.barcode ?? '',
+            orderId: String(r.order_id ?? ''),
+            extraShipQty: r.extra_ship_qty ?? 0,
+          })
         }
         if (data.length < SUPABASE_PAGE_SIZE) break
         from += SUPABASE_PAGE_SIZE
@@ -732,9 +743,28 @@ export async function savePersonalOrders(
     const newKeys = new Set<string>()
     for (const r of rows) newKeys.add(keyOf(r))
 
+    // 추가발송이 남은 행은 지우지 않는다 — 같은 주문 · 옵션이 새 묶음배송번호로 왔을 때만
+    // 그 행으로 수량을 옮기고(extraMovedTo) 옛 행을 지운다
+    const newKeysByOrderOption = new Map<string, string[]>()
+    for (const r of rows) {
+      const orderOption = `${r.order_id}|${r.vendor_item_id ?? ''}`
+      const list = newKeysByOrderOption.get(orderOption)
+      if (list) list.push(keyOf(r))
+      else newKeysByOrderOption.set(orderOption, [keyOf(r)])
+    }
+    const extraMovedTo = new Map<string, number>() // 새 행 키 → 옮겨 받은 추가발송 수량
+
     const idsToDelete: string[] = []
     for (const [key, ex] of existingByKey) {
-      if (!newKeys.has(key)) idsToDelete.push(ex.id)
+      if (newKeys.has(key)) continue
+      if (ex.extraShipQty > 0) {
+        const vendorItemId = key.slice(key.indexOf('|') + 1)
+        const successors = newKeysByOrderOption.get(`${ex.orderId}|${vendorItemId}`) ?? []
+        // 옮길 곳이 정확히 한 행일 때만 옮긴다 (여러 행이면 어느 쪽인지 알 수 없어 옛 행을 남긴다)
+        if (successors.length !== 1) continue
+        extraMovedTo.set(successors[0], (extraMovedTo.get(successors[0]) ?? 0) + ex.extraShipQty)
+      }
+      idsToDelete.push(ex.id)
     }
 
     const guard = Math.max(PRUNE_GUARD_MIN, Math.floor(existingByKey.size * PRUNE_GUARD_RATIO))
@@ -755,11 +785,18 @@ export async function savePersonalOrders(
     if (uniqueByKey.size < rows.length) {
       console.warn(`[personalOrderService] 같은 키 ${rows.length - uniqueByKey.size}건 제외 후 저장`)
     }
-    const payload: PersonalOrderRow[] = Array.from(uniqueByKey.values()).map((r) => ({
-      ...r,
-      barcode: existingByKey.get(keyOf(r))?.barcode || '',
-      updated_at: now,
-    }))
+    //   extra_ship_qty 는 모든 행에 넣는다 — 한 배치의 행은 칼럼 구성이 같아야 하고,
+    //   빠진 칼럼은 PostgREST 가 null 로 덮어 기존 추가발송 기록이 지워진다.
+    const payload: PersonalOrderRow[] = Array.from(uniqueByKey.values()).map((r) => {
+      const key = keyOf(r)
+      const extraShipQty = (existingByKey.get(key)?.extraShipQty ?? 0) + (extraMovedTo.get(key) ?? 0)
+      return {
+        ...r,
+        barcode: existingByKey.get(key)?.barcode || '',
+        extra_ship_qty: extraShipQty > 0 ? extraShipQty : null,
+        updated_at: now,
+      }
+    })
 
     let count = 0
     for (let i = 0; i < payload.length; i += SUPABASE_BATCH_SIZE) {
