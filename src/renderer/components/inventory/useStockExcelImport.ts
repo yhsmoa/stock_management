@@ -119,11 +119,12 @@ function rememberMapping(
 // 훅
 // ══════════════════════════════════════════════════════════════════
 
-export function useStockExcelImport() {
+/** @param initialMode 처음 고른 모드 — 재고관리는 추가, 개인주문 [재고처리] 는 차감 */
+export function useStockExcelImport(initialMode: StockImportMode = 'add') {
   const userId = useMemo(readUserId, [])
 
   // ── 입력 ──
-  const [mode, setModeState] = useState<StockImportMode>('add')
+  const [mode, setModeState] = useState<StockImportMode>(initialMode)
   const [file, setFile] = useState<ImportFileInfo | null>(null)
   const [reading, setReading] = useState(false)
   const [readError, setReadError] = useState<string | null>(null)

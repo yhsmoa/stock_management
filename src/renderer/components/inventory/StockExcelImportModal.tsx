@@ -1,5 +1,6 @@
 // ═══════════════════════════════════════════════════════════════════
 // StockExcelImportModal — 재고관리 [엑셀 추가] (추가 · 차감)
+//   개인주문 [재고처리] 도 같은 모달을 차감 기본값(initialMode='deduct')으로 연다
 //   ① 파일 → ② 시트 · 머리글 행 → ③ 열 선택 + 미리 보기 → ④ 자동 검사 → 실행 → 결과
 //   - 앞 단계가 끝나야 다음 단계가 켜진다
 //   - 실행 중에는 닫을 수 없다 (Esc · 바깥 클릭 · 버튼 모두)
@@ -8,6 +9,8 @@
 // ═══════════════════════════════════════════════════════════════════
 
 import React, { useEffect, useRef } from 'react'
+// 버튼(purchase-btn)은 PurchaseManagement.css — 재고관리 밖(개인주문)에서도 열리므로 직접 불러온다
+import '../../pages/PurchaseManagement.css'
 import './StockExcelImport.css'
 import ExcelDropZone from './ExcelDropZone'
 import ImportColumnMapper from './ImportColumnMapper'
@@ -47,10 +50,12 @@ const Step: React.FC<{ no: string; title: string; hint?: string; disabled?: bool
 interface StockExcelImportModalProps {
   /** changed = DB 에 쓴 것이 있어 목록을 다시 읽어야 함 */
   onClose: (changed: boolean) => void
+  /** 처음 고른 모드 (기본 추가) — 열린 뒤에는 사용자가 바꿀 수 있다 */
+  initialMode?: StockImportMode
 }
 
-const StockExcelImportModal: React.FC<StockExcelImportModalProps> = ({ onClose }) => {
-  const im = useStockExcelImport()
+const StockExcelImportModal: React.FC<StockExcelImportModalProps> = ({ onClose, initialMode = 'add' }) => {
+  const im = useStockExcelImport(initialMode)
   const closable = !im.running
   const overlayDown = useRef(false)
 

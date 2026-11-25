@@ -483,6 +483,17 @@ export function usePersonalOrder() {
     loadData()
   }, [getUserInfo, loadFulfillmentData])
 
+  // ── 재고 다시 읽기 — [재고처리] 로 재고를 바꾼 뒤 표의 재고 수량 · 출고준비 요약을 맞춘다 ──
+  const refreshStockMap = useCallback(async () => {
+    const { userId } = getUserInfo()
+    if (!userId) return
+    try {
+      setStockMap(await StockService.getStockQtyByBarcode(userId))
+    } catch (err) {
+      console.error('[PersonalOrder] 재고 다시 읽기 실패:', err)
+    }
+  }, [getUserInfo])
+
   // ── [업데이트] 핸들러 ─────────────────────────────────────────
   const handleUpdate = useCallback(async () => {
     const { userId, vendorId } = getUserInfo()
@@ -1980,6 +1991,7 @@ export function usePersonalOrder() {
     barcodeLoading,
     trackingMap,
     stockMap,
+    refreshStockMap,
     // 송장 통합 업로드 모달
     invoiceUploadModalOpen,
     setInvoiceUploadModalOpen,

@@ -128,6 +128,7 @@ Electron is built separately via `scripts/build-electron.mjs` (called manually; 
   - 바코드 확인은 이 계정 **로켓그로스 옵션**(`si_rg_items.barcode`) — 진입 때 전체를 한 번 받아 색인(실패 시 스캔을 막고 [다시 시도]). 색인에 없는 바코드 · 위치가 빈 스캔은 목록에 넣지 않고 안내한다.
   - 목록(`addScan` 순수 함수): 최신이 맨 위, 같은 (위치 + 바코드)는 수량 +1 하고 맨 위로. 위치는 바꿀 때까지 유지. 줄마다 ×(빼기). 화면 상태라 저장 전 이탈은 `UnsavedChangesGuard` 가 묻는다.
   - [재고 추가] 는 [엑셀 추가] › 추가와 **같은 경로**(`loadStockImportContext` → `planStockImport('add')` → `applyStockImport`)라 규칙이 같다: 기존 (위치 + 바코드) 행은 수량만 더하고, 신규 행 이름은 ① 상품관리 ② 다른 위치의 기존 재고 ③ 스캔한 로켓그로스 이름. 실행 직전에 재고를 새로 읽고, 조회 실패 · 계획 오류면 아무것도 쓰지 않는다. 저장된 줄은 목록에서 빼고 실패한 줄(`applyStockImport` 결과의 `failedKeys`)만 남긴다.
+- **개인주문 [재고처리]** (2026-11-25): `/personal-order` [배송준비] 옆 버튼이 같은 `StockExcelImportModal` 을 `initialMode="deduct"`(차감 기본, 모달에서 추가로 바꿀 수 있음)로 연다. 재고를 바꿨으면 `usePersonalOrder.refreshStockMap` 으로 표 재고 · 출고준비 요약을 다시 읽는다.
 - [전체 삭제] 는 검색 조건과 무관하게 계정 전체 — 확인 문구의 건수는 `countStocksByUser`. 작업 뒤 다시 읽기는 마지막으로 조회한 검색 조건으로.
 
 ### 로켓그로스 콘솔 (2026-10-27)

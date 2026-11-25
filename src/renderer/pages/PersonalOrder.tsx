@@ -24,6 +24,7 @@ import DeliveryInstructModal from '../components/personal-order/DeliveryInstruct
 import { useDeliveryInstruct } from '../components/personal-order/useDeliveryInstruct'
 import ShipmentStopModal from '../components/personal-order/ShipmentStopModal'
 import { useShipmentStop } from '../components/personal-order/useShipmentStop'
+import StockExcelImportModal from '../components/inventory/StockExcelImportModal'
 import type { OrderRowPatch } from '../services/personalOrderService'
 import DropdownMenu, { DropdownItem } from '../components/common/DropdownMenu'
 import SearchBar from '../components/common/SearchBar'
@@ -83,6 +84,7 @@ const PersonalOrder: React.FC = () => {
     handleBarcodeRelink,
     barcodeLoading,
     stockMap,
+    refreshStockMap,
     // 송장 통합 업로드 모달
     invoiceUploadModalOpen,
     setInvoiceUploadModalOpen,
@@ -122,6 +124,13 @@ const PersonalOrder: React.FC = () => {
   //   분리배송 뒤에는 묶음배송번호가 바뀌므로 결과 화면에서 [주문 업데이트](handleUpdate)로 이어진다
   const getUserId = useCallback(() => getUserInfo().userId, [getUserInfo])
   const deliveryInstruct = useDeliveryInstruct(items, getUserId, applyRowPatches, handleUpdate)
+
+  // ── [재고처리] 재고관리 [엑셀 추가] 모달을 차감 기본값으로 — 재고를 바꿨으면 재고를 다시 읽는다 ──
+  const [stockImportOpen, setStockImportOpen] = useState(false)
+  const closeStockImport = useCallback((changed: boolean) => {
+    setStockImportOpen(false)
+    if (changed) void refreshStockMap()
+  }, [refreshStockMap])
 
   // ── [출고중지] 선택한 상품준비중 주문 → 쿠팡 취소 (상태·흐름은 별도 훅) ──
   //   대상은 체크한 줄. 취소가 접수된 줄이 있으면 화면에 반영하고 선택을 푼다
@@ -371,6 +380,15 @@ const PersonalOrder: React.FC = () => {
             title="택배사·운송장번호를 채운 DeliveryList 엑셀로 상품준비중 주문을 배송지시로 등록"
           >
             배송준비
+          </button>
+
+          {/* ── 재고처리 (재고 엑셀 차감 · 추가 — 재고관리 [엑셀 추가] 와 같은 모달, 차감이 기본) ── */}
+          <button
+            className="po-btn"
+            onClick={() => setStockImportOpen(true)}
+            title="출고한 수량을 엑셀로 재고에서 차감합니다 (모달에서 추가로 바꿀 수도 있음)"
+          >
+            재고처리
           </button>
 
           {/* ── 출고중지 (선택한 상품준비중 주문을 쿠팡에서 취소 — 상품준비중 탭에서만) ── */}
@@ -871,6 +889,9 @@ const PersonalOrder: React.FC = () => {
 
       {/* ── 출고중지 — 선택한 상품준비중 주문을 쿠팡에서 취소 ───── */}
       <ShipmentStopModal state={shipmentStop} />
+
+      {/* ── 재고처리 — 재고 엑셀 차감(기본) · 추가 ─────────────── */}
+      {stockImportOpen && <StockExcelImportModal initialMode="deduct" onClose={closeStockImport} />}
     </div>
   )
 }
