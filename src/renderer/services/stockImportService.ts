@@ -397,6 +397,25 @@ export function guessMapping(
   return mapping
 }
 
+/**
+ * 자동으로 채우지 않고 사람이 반드시 고르는 역할 — 수량.
+ * 수량 열을 잘못 잡으면(재고 · 입고수량 · 주문수량 …) 재고가 통째로 틀어지는데
+ * 검사로는 걸러지지 않아서다. guessMapping 은 그대로 수량까지 추측한다
+ * (머리글 행 점수 · 다른 역할이 수량 열을 가져가지 않게 하는 용도) — 화면에 줄 때만 비운다.
+ */
+const MANUAL_ONLY_ROLES: readonly StockImportRole[] = ['qty']
+
+/** 화면의 처음 열 선택 — guessMapping 에서 사람이 고를 역할(MANUAL_ONLY_ROLES)을 비운 것 */
+export function autoMapping(
+  sheet: ExcelSheetData,
+  headerRowIndex: number,
+  memory: StockImportMappingMemory = {},
+): StockImportMapping {
+  const mapping = guessMapping(sheet, headerRowIndex, memory)
+  for (const role of MANUAL_ONLY_ROLES) mapping[role] = null
+  return mapping
+}
+
 // ── 미리 보기에서 열을 눌러 고르기 ──────────────────────────────────
 
 /** 다음에 채울 역할 — 이 모드의 역할 순서(위치 → 바코드 → 수량 → 상품명 → 옵션명)에서 첫 빈 역할 */

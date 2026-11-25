@@ -5,6 +5,7 @@
 //     요청 번호(checkSeq)로 버린다.
 //   - 실행: 재고를 새로 읽어 같은 엑셀 행으로 계획을 다시 만들고, 검사 때와 작업 목록이
 //     다르면 아무것도 쓰지 않고 멈춘다.
+//   - 수량 열은 자동으로 채우지 않는다 — 사람이 반드시 고른다 (autoMapping).
 //   - 실행한 열 선택은 머리글 글자로 localStorage 에 기억해 다음 파일의 자동 추측에 쓴다
 //     (고르는 도중의 값은 기억하지 않는다 — 잘못 누른 선택이 다음 파일에 남지 않도록).
 //   검사·계획 규칙은 services/stockImportService.ts, DB 는 StockService.
@@ -16,7 +17,7 @@ import {
   STOCK_IMPORT_ROLES,
   detectHeaderRow,
   firstSheetWithData,
-  guessMapping,
+  autoMapping,
   headerRowChoices,
   headerTexts,
   mappingConflicts,
@@ -171,7 +172,7 @@ export function useStockExcelImport() {
     const header = detectHeaderRow(target, memory)
     setSheetIndex(index)
     setHeaderRowIndex(header)
-    setMapping(guessMapping(target, header, memory))
+    setMapping(autoMapping(target, header, memory))
     setStaleMessage(null)
   }, [])
 
@@ -206,7 +207,7 @@ export function useStockExcelImport() {
   const selectHeaderRow = useCallback((index: number) => {
     if (!sheet) return
     setHeaderRowIndex(index)
-    setMapping(guessMapping(sheet, index, readMappingMemory()))
+    setMapping(autoMapping(sheet, index, readMappingMemory()))
     setStaleMessage(null)
   }, [sheet])
 
