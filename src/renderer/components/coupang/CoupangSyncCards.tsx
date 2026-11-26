@@ -1,10 +1,10 @@
 /* ================================================================
    상품관리 — 동기화 3단계 카드 (목록 · 상세 · 판매상태)
-   - 카드 맨 아래: 지금 어디까지 받았는지
-     · 목록 — 마지막 [목록 받기] 실행 (si_coupang_sync_runs)
-     · 상세 — 상세 · 고시정보를 받은 옵션 비율 막대 + 마지막 [상세 받기] 실행
-     · 판매상태 — 마지막 확인 실행
-   - 실행이 창 닫힘 등으로 끊겼으면 어디서 끊겼는지와, 다시 누르면 어떻게 이어지는지 알려 준다
+   - 카드 한 장 = 한 줄 (2026-11-26 — 아래 목록을 넓게 쓰려고 높이를 줄였다)
+       단계 · 현재 값 · 상태 문구(넘치면 '…') · 버튼
+   - 상태 문구 = (상세 카드만) 받은 비율 + 마지막 실행 (si_coupang_sync_runs).
+     줄인 내용(단계가 받는 값 · 끊겼을 때 이어 받는 방법 · 옵션 수)은 마우스를 올리면 보인다
+   - 진행 중이면 카드 아래 가장자리에 진행 막대
    - 다른 창 · 화면에서 진행 중이면 버튼을 잠근다 (locked)
    ================================================================ */
 
@@ -32,66 +32,99 @@ const RESUME_HINT: Record<SyncRunKind, string> = {
   status: '확인한 옵션은 저장돼 있습니다. 다시 누르면 오래된 순으로 이어서 확인합니다.',
 }
 
+/** 내림 — 하나라도 남았으면 100% 로 보이지 않게 (87,884 / 87,886 = 99%) */
 function percent(done: number, total: number): number {
-  return total > 0 ? Math.min(100, Math.round((done / total) * 100)) : 0
+  return total > 0 ? Math.min(100, Math.floor((done / total) * 100)) : 0
 }
 
-/** 실행 기록 한 줄 */
-function RunLine({ run, kind }: { run: SyncRun | undefined; kind: SyncRunKind }) {
-  if (!run) return <div className="cp-sync-run">아직 실행 기록이 없습니다</div>
-  const view = runViewStatus(run)
+// ══════════════════════════════════════════════════════════════════
+// 마지막 실행 → 한 줄 문구
+// ══════════════════════════════════════════════════════════════════
+
+interface RunLineView {
+  /** 카드에 보이는 짧은 문구 */
+  text: string
+  /** 마우스를 올렸을 때 보이는 전체 문구 */
+  full: string
+  tone: '' | 'is-running' | 'is-warn'
+}
+
+function runLineView(run: SyncRun | undefined, kind: SyncRunKind): RunLineView {
+  if (!run) return { text: '실행 기록 없음', full: '아직 실행 기록이 없습니다', tone: '' }
   const progress = run.total > 0 ? `${num(run.done)} / ${num(run.total)} (${percent(run.done, run.total)}%)` : ''
   const when = shortDateTime(run.finished_at ?? run.updated_at)
-  switch (view) {
-    case 'running':
-      return (
-        <div className="cp-sync-run is-running">
-          진행 중{progress && ` · ${progress}`} — {run.title ?? ''}
-          {run.total > 0 && <RunBar done={run.done} total={run.total} />}
-        </div>
-      )
-    case 'interrupted':
-      return (
-        <div className="cp-sync-run is-warn">
-          {when} · {progress ? `${progress} 에서 ` : ''}끊김 (창을 닫았거나 연결이 끊김). {RESUME_HINT[kind]}
-        </div>
-      )
-    case 'aborted':
-      return (
-        <div className="cp-sync-run is-warn">
-          {when} · {progress ? `${progress} 에서 ` : ''}중단함. {RESUME_HINT[kind]}
-        </div>
-      )
-    case 'failed':
-      return <div className="cp-sync-run is-warn">{when} · 실패 — {run.message ?? ''}</div>
-    case 'done':
-      return <div className="cp-sync-run">마지막 {when} 완료{run.message ? ` · ${run.message}` : ''}</div>
+  const at = progress ? ` · ${progress} 에서` : ''
+  switch (runViewStatus(run)) {
+    case 'running': {
+      const text = `진행 중${progress && ` · ${progress}`}`
+      return { text, full: `${text} — ${run.title ?? ''}`, tone: 'is-running' }
+    }
+    case 'interrupted': {
+      const text = `${when}${at} 끊김`
+      return { text, full: `${text} (창을 닫았거나 연결이 끊김). ${RESUME_HINT[kind]}`, tone: 'is-warn' }
+    }
+    case 'aborted': {
+      const text = `${when}${at} 중단함`
+      return { text, full: `${text}. ${RESUME_HINT[kind]}`, tone: 'is-warn' }
+    }
+    case 'failed': {
+      const text = `${when} 실패 — ${run.message ?? ''}`
+      return { text, full: text, tone: 'is-warn' }
+    }
+    case 'done': {
+      const text = `${when} 완료`
+      return { text, full: `마지막 ${text}${run.message ? ` · ${run.message}` : ''}`, tone: '' }
+    }
   }
 }
 
-function RunBar({ done, total }: { done: number; total: number }) {
-  const p = percent(done, total)
+// ══════════════════════════════════════════════════════════════════
+// 카드 틀
+// ══════════════════════════════════════════════════════════════════
+
+interface CardProps {
+  step: string
+  /** 단계 설명 (마우스를 올리면) */
+  stepHint: string
+  value: string
+  valueWarn?: boolean
+  /** 상태 문구 앞에 붙는 값 (상세 카드의 받은 비율) */
+  lead?: { text: string; full: string }
+  run: SyncRun | undefined
+  kind: SyncRunKind
+  action: React.ReactNode
+}
+
+function SyncCard({ step, stepHint, value, valueWarn, lead, run, kind, action }: CardProps) {
+  const view = runLineView(run, kind)
+  const running = view.tone === 'is-running' && !!run && run.total > 0
+  const p = running ? percent(run.done, run.total) : 0
   return (
-    <div className="cp-sync-bar" role="progressbar" aria-valuenow={p} aria-valuemin={0} aria-valuemax={100}>
-      <div className="cp-sync-bar-fill" style={{ width: `${p}%` }} />
+    <div className="cp-sync-card">
+      <span className="cp-sync-card-step" title={stepHint}>{step}</span>
+      <span className={`cp-sync-card-value cp-num${valueWarn ? ' is-warn' : ''}`}>{value}</span>
+      <span
+        className={`cp-sync-card-info cp-num ${view.tone}`}
+        title={[lead?.full, view.full].filter(Boolean).join('\n')}
+      >
+        {lead ? `${lead.text} · ${view.text}` : view.text}
+      </span>
+      {action}
+      {running && (
+        <div className="cp-sync-bar" role="progressbar" aria-valuenow={p} aria-valuemin={0} aria-valuemax={100}>
+          <div className="cp-sync-bar-fill" style={{ width: `${p}%` }} />
+        </div>
+      )}
     </div>
   )
 }
 
-/** 받은 비율 막대 + 숫자 */
-function Coverage({ label, done, total }: { label: string; done: number; total: number }) {
-  return (
-    <div className="cp-sync-coverage">
-      <div className="cp-sync-coverage-head cp-num">
-        <span>{label}</span>
-        <span>{num(done)} / {num(total)} 옵션 · {percent(done, total)}%</span>
-      </div>
-      <RunBar done={done} total={total} />
-    </div>
-  )
-}
+// ══════════════════════════════════════════════════════════════════
+// 카드 3장
+// ══════════════════════════════════════════════════════════════════
 
 const CoupangSyncCards: React.FC<Props> = ({ summary, latestRuns, busy, locked, onListSync, onDetailSync, onStatusCheck }) => {
+  const total = summary?.totalRows ?? 0
   const checked = summary ? summary.totalRows - summary.statusUnchecked : 0
   const detailReceived = summary ? summary.totalRows - summary.detailMissing : 0
   const lockTitle = locked && !busy ? '다른 창 · 화면에서 동기화가 진행 중입니다 — 끝나면 다시 누를 수 있습니다' : undefined
@@ -99,67 +132,41 @@ const CoupangSyncCards: React.FC<Props> = ({ summary, latestRuns, busy, locked, 
   return (
     <section className="cp-sync-cards" aria-label="쿠팡 동기화">
       {/* ── 1 · 목록 ── */}
-      <div className="cp-sync-card">
-        <div className="cp-sync-card-main">
-          <div className="cp-sync-card-body">
-            <div className="cp-sync-card-step">1 · 목록 (상품 · 옵션 ID · 승인상태)</div>
-            <div className="cp-sync-card-value cp-num">{summary ? `옵션 ${num(summary.totalRows)}개` : '—'}</div>
-            <div className="cp-sync-card-meta">일반 + 로켓그로스 목록을 받아 새 상품은 상세까지 이어서 받습니다</div>
-          </div>
-          <div className="cp-sync-card-actions">
-            <button type="button" className="cp-btn" disabled={locked} title={lockTitle} onClick={onListSync}>목록 받기</button>
-          </div>
-        </div>
-        <div className="cp-sync-card-foot">
-          <RunLine run={latestRuns.list} kind="list" />
-        </div>
-      </div>
+      <SyncCard
+        step="1 · 목록"
+        stepHint="상품 · 옵션 ID · 승인상태 — 일반 + 로켓그로스 목록을 받아 새 상품은 상세까지 이어서 받습니다"
+        value={summary ? `옵션 ${num(summary.totalRows)}개` : '—'}
+        run={latestRuns.list}
+        kind="list"
+        action={<button type="button" className="cp-btn cp-btn-xs" disabled={locked} title={lockTitle} onClick={onListSync}>목록 받기</button>}
+      />
 
       {/* ── 2 · 상세 ── */}
-      <div className="cp-sync-card">
-        <div className="cp-sync-card-main">
-          <div className="cp-sync-card-body">
-            <div className="cp-sync-card-step">2 · 상세 (옵션 · 가격 · 재고 · 이미지 · 고시정보)</div>
-            <div className="cp-sync-card-value cp-num">
-              {summary ? (summary.detailMissing > 0 ? `옵션 ${num(summary.detailMissing)}개 미수신` : '모두 받음') : '—'}
-            </div>
-            <div className={`cp-sync-card-meta${summary?.detailMissing ? ' is-warn' : ''}`}>
-              {summary?.lastDetailAt ? `마지막 ${shortDateTime(summary.lastDetailAt)} · ` : ''}상품당 1회 호출 (초당 5회)
-            </div>
-          </div>
-          <div className="cp-sync-card-actions">
-            <button type="button" className="cp-btn cp-btn-primary" disabled={locked} title={lockTitle} onClick={onDetailSync}>상세 받기</button>
-          </div>
-        </div>
-        <div className="cp-sync-card-foot">
-          {summary && summary.totalRows > 0 && (
-            <>
-              <Coverage label="상세" done={detailReceived} total={summary.totalRows} />
-              <Coverage label="고시정보" done={summary.noticesReceived} total={summary.totalRows} />
-            </>
-          )}
-          <RunLine run={latestRuns.detail} kind="detail" />
-        </div>
-      </div>
+      <SyncCard
+        step="2 · 상세"
+        stepHint={`옵션 · 가격 · 재고 · 이미지 · 고시정보 — 상품당 1회 호출 (초당 5회)${summary?.lastDetailAt ? ` · 마지막으로 받은 때 ${shortDateTime(summary.lastDetailAt)}` : ''}`}
+        value={summary ? (summary.detailMissing > 0 ? `${num(summary.detailMissing)}개 미수신` : '모두 받음') : '—'}
+        valueWarn={!!summary?.detailMissing}
+        lead={summary && total > 0
+          ? {
+            text: `상세 ${percent(detailReceived, total)}% · 고시 ${percent(summary.noticesReceived, total)}%`,
+            full: `상세 ${num(detailReceived)} / ${num(total)} 옵션 · 고시정보 ${num(summary.noticesReceived)} / ${num(total)} 옵션`,
+          }
+          : undefined}
+        run={latestRuns.detail}
+        kind="detail"
+        action={<button type="button" className="cp-btn cp-btn-xs cp-btn-primary" disabled={locked} title={lockTitle} onClick={onDetailSync}>상세 받기</button>}
+      />
 
       {/* ── 3 · 판매상태 ── */}
-      <div className="cp-sync-card">
-        <div className="cp-sync-card-main">
-          <div className="cp-sync-card-body">
-            <div className="cp-sync-card-step">3 · 판매상태 (판매중 · 재고 · 판매가)</div>
-            <div className="cp-sync-card-value cp-num">{summary ? `옵션 ${num(checked)} / ${num(summary.totalRows)} 확인` : '—'}</div>
-            <div className="cp-sync-card-meta">
-              {summary?.lastStatusAt ? `마지막 ${shortDateTime(summary.lastStatusAt)} · ` : ''}옵션당 1회 호출 — 전체는 엑셀이 빠릅니다
-            </div>
-          </div>
-          <div className="cp-sync-card-actions">
-            <button type="button" className="cp-btn" disabled={locked} title={lockTitle} onClick={onStatusCheck}>오래된 순 500개 확인</button>
-          </div>
-        </div>
-        <div className="cp-sync-card-foot">
-          <RunLine run={latestRuns.status} kind="status" />
-        </div>
-      </div>
+      <SyncCard
+        step="3 · 판매상태"
+        stepHint={`판매중 · 재고 · 판매가 — 옵션당 1회 호출이라 전체는 가격/재고 엑셀이 빠릅니다${summary?.lastStatusAt ? ` · 마지막으로 확인한 때 ${shortDateTime(summary.lastStatusAt)}` : ''}`}
+        value={summary ? `${num(checked)} / ${num(summary.totalRows)} 확인` : '—'}
+        run={latestRuns.status}
+        kind="status"
+        action={<button type="button" className="cp-btn cp-btn-xs" disabled={locked} title={lockTitle ?? '확인한 지 가장 오래된 옵션 500개의 판매상태를 쿠팡에서 확인합니다'} onClick={onStatusCheck}>오래된 500개 확인</button>}
+      />
     </section>
   )
 }

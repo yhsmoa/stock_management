@@ -36,6 +36,7 @@ import type {
 import { PACKAGE_TYPE_OPTIONS } from '../types/coupangProduct'
 import type { CoupangNotice } from '../types/coupangProduct'
 import { toCoupangNotices, extractComposition } from './coupangNotices'
+import { fillRecommendedAges } from './recommendedAgeService'
 
 // ── 상수 ──────────────────────────────────────────────────────────
 const TABLE = 'si_coupang_items'
@@ -58,6 +59,12 @@ const ROW_COLUMNS = [
   'delivery_charge_type', 'delivery_charge', 'free_ship_over_amount',
   'detail_synced_at', 'status_checked_at', 'app_changed_at', 'excel_synced_at', 'composition',
 ].join(', ')
+
+/**
+ * 목록 화면용 — ROW_COLUMNS + 고시정보 분류 (JSON 전체가 아니라 첫 항목의 category 만).
+ * 키즈 판정(labelInfoRules)에 쓴다. 한 옵션의 고시정보는 분류가 하나라 첫 항목이면 충분하다.
+ */
+const LIST_COLUMNS = `${ROW_COLUMNS}, notice_category:notices->0->>category`
 
 // ══════════════════════════════════════════════════════════════════
 // 공통 헬퍼
@@ -228,7 +235,7 @@ export async function fetchProductPage(
   const rows: CoupangProductRow[] = []
   for (const ids of chunk(itemIds, IN_CHUNK)) {
     for (let from = 0; ; from += PAGE_ROWS) {
-      const query = supabase.from(TABLE).select(ROW_COLUMNS)
+      const query = supabase.from(TABLE).select(LIST_COLUMNS)
       applyFilters(query as unknown as FilterableQuery, userId, filters)
       const { data, error } = await query
         .in('item_id', ids)
@@ -239,7 +246,7 @@ export async function fetchProductPage(
         console.error('[fetchProductPage] 옵션 행 조회 오류:', error)
         throw error
       }
-      // ROW_COLUMNS 가 런타임 문자열이라 supabase 가 행 타입을 추론하지 못한다 → 칼럼 목록과 같은 모양으로 단언
+      // LIST_COLUMNS 가 런타임 문자열이라 supabase 가 행 타입을 추론하지 못한다 → 칼럼 목록과 같은 모양으로 단언
       rows.push(...((data ?? []) as unknown as CoupangProductRow[]))
       if (!data || data.length < PAGE_ROWS) break
     }
@@ -248,25 +255,65 @@ export async function fetchProductPage(
   return { rows, itemIds, nextCursor: hasMore ? itemIds[itemIds.length - 1] : null }
 }
 
-/**
- * 판매상태 칩별 건수 (현재 출처·승인·검색 조건 안에서)
- * - 7.8만 행 계정에서 count 를 동시에 여러 개 보내면 DB statement timeout 이 난다 (2026-10-20 실측) → 순서대로
- */
+// ── 판매상태 칩별 건수 (현재 출처 · 승인 · 검색 조건 안에서) ─────────
+//   DB 함수 하나가 한 번 훑어서 5개를 센다 (docs/sql/2026-11-26_si_coupang_items_search_speed.sql).
+//   함수의 조건은 위 applyFilters 와 같아야 한다 — 한쪽을 바꾸면 같이 바꾼다.
+
+const SALES_COUNTS_RPC = 'si_coupang_items_sales_counts'
+/** PostgREST: 그 이름 · 인자의 함수가 없음 (SQL 을 아직 실행하지 않은 DB) */
+const RPC_NOT_FOUND = 'PGRST202'
+const SALES_KINDS: SalesFilter[] = ['all', 'on', 'off', 'zeroStock', 'unchecked']
+
+interface SalesCountsRpcRow {
+  total: number
+  on_sale: number
+  off_sale: number
+  zero_stock: number
+  unchecked: number
+}
+
+/** 실패하면 throw — 0 으로 채워 보여 주면 "0건" 으로 읽힌다 */
 export async function fetchSalesCounts(userId: string, filters: CoupangProductFilters): Promise<SalesCounts> {
-  const kinds: SalesFilter[] = ['all', 'on', 'off', 'zeroStock', 'unchecked']
-  const counts: number[] = []
-  for (const kind of kinds) {
+  const { data, error } = await supabase.rpc(SALES_COUNTS_RPC, {
+    p_user_id: userId,
+    p_channel: filters.channel,
+    p_approval: filters.approval,
+    p_search_field: filters.searchField,
+    p_search: filters.search.trim(),
+  })
+  if (error) {
+    if (error.code === RPC_NOT_FOUND) return fetchSalesCountsOneByOne(userId, filters)
+    console.error('[fetchSalesCounts] 오류:', error)
+    throw error
+  }
+  const row = ((data ?? []) as SalesCountsRpcRow[])[0]
+  if (!row) throw new Error('판매상태 건수 응답이 비어 있습니다.')
+  return {
+    all: Number(row.total),
+    on: Number(row.on_sale),
+    off: Number(row.off_sale),
+    zeroStock: Number(row.zero_stock),
+    unchecked: Number(row.unchecked),
+  }
+}
+
+/**
+ * DB 함수가 없는 DB 용 — 칩마다 count 한 번씩, 순서대로.
+ * 7.8만 행 계정에서 count 를 동시에 여러 개 보내면 DB statement timeout 이 난다 (2026-10-20 실측)
+ */
+async function fetchSalesCountsOneByOne(userId: string, filters: CoupangProductFilters): Promise<SalesCounts> {
+  const counts = {} as SalesCounts
+  for (const kind of SALES_KINDS) {
     const query = supabase.from(TABLE).select('option_id', { count: 'exact', head: true })
     applyFilters(query as unknown as FilterableQuery, userId, filters, kind)
     const { count, error } = await query
     if (error) {
       console.error('[fetchSalesCounts] 오류:', error)
-      counts.push(0)
-      continue
+      throw error
     }
-    counts.push(count ?? 0)
+    counts[kind] = count ?? 0
   }
-  return { all: counts[0], on: counts[1], off: counts[2], zeroStock: counts[3], unchecked: counts[4] }
+  return counts
 }
 
 /**
@@ -319,15 +366,16 @@ export async function fetchProductSummaries(
   return map
 }
 
-/** 머리 카드용 동기화 요약 */
+/** 머리 카드용 동기화 요약 — 건수를 하나라도 세지 못하면 throw */
 export async function fetchSyncSummary(userId: string): Promise<CoupangSyncSummary> {
   const countWhere = async (build: (q: FilterableQuery) => void): Promise<number> => {
     const query = supabase.from(TABLE).select('option_id', { count: 'exact', head: true }).eq('user_id', userId)
     build(query as unknown as FilterableQuery)
     const { count, error } = await query
+    // 세지 못했으면 throw — 0 으로 두면 카드에 "옵션 0개" 처럼 틀린 숫자가 뜬다 (화면은 이전 값을 그대로 둔다)
     if (error) {
       console.error('[fetchSyncSummary] count 오류:', error)
-      return 0
+      throw error
     }
     return count ?? 0
   }
@@ -350,7 +398,9 @@ export async function fetchSyncSummary(userId: string): Promise<CoupangSyncSumma
   // 동시에 보내면 큰 계정에서 statement timeout — 순서대로
   const totalRows = await countWhere(() => undefined)
   const detailMissing = await countWhere((q) => q.is('detail_synced_at', null))
-  const noticesReceived = await countWhere((q) => q.not('notices', 'is', null))
+  // 받은 쪽(거의 전부)이 아니라 못 받은 쪽(소수)을 센다 — 미수신 행만 담은 작은 인덱스로 끝난다
+  const noticesMissing = await countWhere((q) => q.is('notices', null))
+  const noticesReceived = Math.max(0, totalRows - noticesMissing)
   const statusUnchecked = await countWhere((q) => q.is('sales_status', null))
   const lastDetailAt = await latest('detail_synced_at')
   const lastCheckedAt = await latest('status_checked_at')
@@ -408,13 +458,8 @@ async function fetchAllRows<T>(
 }
 
 // ══════════════════════════════════════════════════════════════════
-// 직접 입력값 — 분류 · 비고 · 삭제
+// 직접 입력값 — 분류 · 비고
 // ══════════════════════════════════════════════════════════════════
-
-export async function updatePackageType(userId: string, optionId: string, packageType: string): Promise<void> {
-  const { error } = await supabase.from(TABLE).update({ package_type: packageType }).eq('option_id', optionId).eq('user_id', userId)
-  if (error) throw error
-}
 
 export async function updateNote(userId: string, optionId: string, note: string): Promise<void> {
   const { error } = await supabase.from(TABLE).update({ note: note || null }).eq('option_id', optionId).eq('user_id', userId)
@@ -429,11 +474,6 @@ export async function bulkClassify(userId: string, optionIds: string[], packageT
     const { error } = await supabase.from(TABLE).update(payload).eq('user_id', userId).in('option_id', ids)
     if (error) throw error
   }
-}
-
-export async function deleteProductRow(userId: string, optionId: string): Promise<void> {
-  const { error } = await supabase.from(TABLE).delete().eq('option_id', optionId).eq('user_id', userId)
-  if (error) throw error
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -828,6 +868,8 @@ export interface DetailSyncResult {
   options: number
   failed: string[]     // "등록상품ID: 사유"
   aborted: boolean
+  /** 받은 상품 중 키즈 상품의 빈 권장연령을 사이즈로 채운 수 (recommendedAgeService) */
+  agesFilled: number
 }
 
 export async function syncProductDetails(
@@ -856,8 +898,22 @@ export async function syncProductDetails(
     if (isAbortError(r.reason)) { aborted = true; return }
     failed.push(`${ids[i]}: ${(r.reason as Error)?.message ?? '조회 실패'}`)
   })
-  console.log(`[syncProductDetails] 상품 ${products} · 옵션 ${options} · 실패 ${failed.length}${aborted ? ' · 중단' : ''}`)
-  return { products, options, failed, aborted }
+
+  // 받은 상품 중 키즈 상품의 빈 권장연령을 사이즈로 채운다 (라벨 출력 조건 — 키즈는 권장연령이 있어야 한다).
+  // 실패해도 상세 저장은 그대로 둔다. 그 상품을 다시 받으면 다시 시도된다.
+  let agesFilled = 0
+  const savedIds = ids.filter((_, i) => results[i].status === 'fulfilled')
+  if (savedIds.length > 0) {
+    try {
+      const filled = await fillRecommendedAges(userId, savedIds)
+      agesFilled = filled.filled + filled.created
+    } catch (err) {
+      failed.push(`권장연령 자동 입력: ${(err as { message?: string } | null)?.message ?? '저장 실패'}`)
+    }
+  }
+
+  console.log(`[syncProductDetails] 상품 ${products} · 옵션 ${options} · 권장연령 ${agesFilled} · 실패 ${failed.length}${aborted ? ' · 중단' : ''}`)
+  return { products, options, failed, aborted, agesFilled }
 }
 
 /** 상세를 아직 받지 않은 상품 (detail_synced_at 이 없는 상품) — 범위별 ID 목록 */

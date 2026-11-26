@@ -17,9 +17,9 @@ import { labelJobExt } from '../../utils/label/labelJob'
 import { LABEL_AUDIENCES, type LabelTemplate, type LabelType } from '../../utils/label/labelTypes'
 import {
   buildPrintJobs,
+  printErrorText,
   printLabels,
   type LabelPrintItem,
-  type PrintLabelResult,
 } from '../../services/labelPrintService'
 import { fetchLabelUser, type LabelUser } from '../../services/labelTemplateService'
 import { getCurrentLabelAccount } from '../../services/labelService'
@@ -114,24 +114,6 @@ const LabelPrintModal: React.FC<Props> = ({ open, items: sourceItems, onClose, e
     return () => clearTimeout(timer)
   }, [flash])
 
-  /** 결과의 i18n 키를 문구로 */
-  const errorText = useCallback(
-    (labelType: LabelType, r: PrintLabelResult): string => {
-      if (!r.errorKey) return t('print.printFailed')
-      const p = { ...(r.errorParams ?? {}) }
-      if (r.errorKey === 'print.noTemplate') {
-        p.audience = String(p.audienceKeys ?? '')
-          .split(',')
-          .map((k) => t(k === 'kids' ? 'print.templateKids' : 'print.templateAdult'))
-          .join(', ')
-        p.type = t(labelType === 'care' ? 'print.careLabel' : 'print.labelSticker')
-      }
-      const base = t(r.errorKey, p)
-      return r.errorDetail ? `${base}\n\n(${r.errorDetail})` : base
-    },
-    [t]
-  )
-
   // ── 종류 하나 인쇄 ──
   const printOne = useCallback(
     async (labelType: LabelType): Promise<boolean> => {
@@ -147,10 +129,10 @@ const LabelPrintModal: React.FC<Props> = ({ open, items: sourceItems, onClose, e
         setFlash((f) => ({ ...f, [labelType]: `${typeLabel} ${t('print.printedCount', { count: result.printed })}` }))
         return true
       }
-      alert(errorText(labelType, result))
+      alert(printErrorText(labelType, result))
       return false
     },
-    [items, labelUser, plan, account?.username, t, errorText]
+    [items, labelUser, plan, account?.username, t]
   )
 
   const handlePrint = useCallback(

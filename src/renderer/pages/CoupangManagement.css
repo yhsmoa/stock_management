@@ -32,14 +32,14 @@
 .cp-page {
   height: 100%;
   overflow-y: auto;
-  padding: 22px 24px 32px;
+  padding: 16px 24px 28px;
   box-sizing: border-box;
   background: var(--cp-bg);
   color: var(--cp-text);
   font-size: 13px;
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 10px;
 }
 
 .cp-page a { color: var(--cp-blue); text-decoration: none; }
@@ -57,8 +57,10 @@
   justify-content: space-between;
   gap: 12px;
 }
+/* 제목 오른쪽에 설명 한 줄 — 좁으면 아래로 내려간다 */
+.cp-header-title { display: flex; flex-wrap: wrap; align-items: baseline; column-gap: 12px; row-gap: 2px; min-width: 0; }
 .cp-title { margin: 0; font-size: 22px; font-weight: 700; letter-spacing: -0.01em; }
-.cp-subtitle { margin-top: 3px; font-size: 12px; color: var(--cp-text-2); }
+.cp-subtitle { font-size: 12px; color: var(--cp-text-2); }
 .cp-header-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 
 /* ── 버튼 ───────────────────────────────────────────────────── */
@@ -97,31 +99,31 @@
   gap: 10px;
 }
 @media (max-width: 1100px) { .cp-sync-cards { grid-template-columns: 1fr; } }
+/* 카드 한 장 = 한 줄: 단계 · 값 · 상태 문구(넘치면 '…') · 버튼 (2026-11-26) */
 .cp-sync-card {
+  position: relative;
+  overflow: hidden;
   background: var(--cp-card);
   border: 1px solid var(--cp-line);
   border-radius: 10px;
-  padding: 14px 16px;
+  padding: 6px 8px 6px 12px;
   display: flex;
-  flex-direction: column;
-  gap: 10px;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  white-space: nowrap;
 }
-.cp-sync-card-main { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-/* 카드 맨 아래 — 어디까지 받았는지 (실행 기록 · 받은 비율) */
-.cp-sync-card-foot { border-top: 1px solid var(--cp-line-soft); padding-top: 8px; margin-top: auto; display: flex; flex-direction: column; gap: 6px; }
-.cp-sync-run { font-size: 12px; color: var(--cp-muted); line-height: 1.45; display: flex; flex-direction: column; gap: 4px; }
-.cp-sync-run.is-running { color: #1D4ED8; }
-.cp-sync-run.is-warn { color: var(--cp-amber-text); }
-.cp-sync-coverage { display: flex; flex-direction: column; gap: 3px; }
-.cp-sync-coverage-head { display: flex; justify-content: space-between; font-size: 12px; color: var(--cp-text-2); }
-.cp-sync-bar { height: 6px; border-radius: 999px; background: var(--cp-line-soft); overflow: hidden; }
-.cp-sync-bar-fill { height: 100%; background: var(--cp-blue); border-radius: 999px; transition: width .3s ease; }
-.cp-sync-card-body { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
-.cp-sync-card-step { font-size: 12px; color: var(--cp-text-2); font-weight: 600; }
-.cp-sync-card-value { font-size: 15px; font-weight: 600; }
-.cp-sync-card-meta { font-size: 12px; color: var(--cp-muted); }
-.cp-sync-card-meta.is-warn { color: var(--cp-amber-text); }
-.cp-sync-card-actions { display: flex; flex-direction: column; gap: 6px; flex: none; align-items: stretch; }
+.cp-sync-card-step { flex: none; font-size: 12px; color: var(--cp-text-2); font-weight: 600; }
+.cp-sync-card-value { flex: none; font-size: 13px; font-weight: 600; }
+.cp-sync-card-value.is-warn { color: var(--cp-amber-text); }
+/* 상태 문구 — 남는 폭을 쓰고 넘치면 '…' (전체는 title) */
+.cp-sync-card-info { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; font-size: 12px; color: var(--cp-muted); }
+.cp-sync-card-info.is-running { color: #1D4ED8; }
+.cp-sync-card-info.is-warn { color: var(--cp-amber-text); }
+.cp-sync-card .cp-btn { flex: none; }
+/* 진행 중 — 카드 아래 가장자리 막대 */
+.cp-sync-bar { position: absolute; left: 0; right: 0; bottom: 0; height: 3px; background: var(--cp-line-soft); }
+.cp-sync-bar-fill { height: 100%; background: var(--cp-blue); transition: width .3s ease; }
 
 /* ── 필터 줄 ────────────────────────────────────────────────── */
 .cp-filter-row {
@@ -132,6 +134,8 @@
   gap: 10px;
 }
 .cp-filter-groups { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+/* 지금 목록 요약 (페이지 · 상품 수 · 옵션 수) — 승인 칩 오른쪽 */
+.cp-list-info { font-size: 12px; color: var(--cp-text-2); white-space: nowrap; }
 .cp-chip-group { display: flex; flex-wrap: wrap; gap: 6px; }
 .cp-chip {
   height: 32px;
@@ -188,10 +192,13 @@
   border-radius: 10px;
   overflow-x: auto;
 }
-.cp-list-inner { min-width: 1180px; }
+/* 다시 읽는 동안 — 이전 조건의 행을 흐리게 하고 누르지 못하게 한다 */
+.cp-list.is-loading { opacity: .55; pointer-events: none; }
+.cp-list-inner { min-width: 1080px; }
+/* 열: 선택 · 옵션명 · 옵션 ID · 판매가/기준가 · 재고 · 판매상태 · 바코드/상품코드 · 라벨 · 비고 · 상태 확인 */
 .cp-grid {
   display: grid;
-  grid-template-columns: 36px minmax(180px, 1.6fr) 120px 120px 64px 92px 150px 92px minmax(120px, 1fr) 80px 36px;
+  grid-template-columns: 36px minmax(180px, 1.6fr) 120px 120px 64px 92px 150px 40px minmax(120px, 1fr) 80px;
   gap: 10px;
   align-items: center;
   padding: 9px 16px;
@@ -206,21 +213,26 @@
   padding-bottom: 10px;
 }
 .cp-right { text-align: right; }
+.cp-center { text-align: center; }
 .cp-list-empty { padding: 40px 16px; text-align: center; color: var(--cp-muted); }
 .cp-list-loading { padding: 40px 16px; text-align: center; color: var(--cp-muted); }
 
-/* 목록 도구 막대 (펼치기 / 접기) */
-.cp-list-toolbar {
-  display: flex;
-  flex-wrap: wrap;
+/* 표 머리 첫 칸 — 모두 펼치기 / 모두 접기 (상품 머리줄의 펼침 단추와 같은 자리) */
+.cp-expand-all-btn {
+  width: 24px;
+  height: 24px;
+  margin: -4px 0 -4px -8px;
+  display: inline-flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 8px;
+  justify-content: center;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
   color: var(--cp-text-2);
-  font-size: 12px;
-  margin-bottom: -6px;
+  cursor: pointer;
 }
-.cp-list-toolbar-actions { display: flex; gap: 6px; }
+.cp-expand-all-btn:hover:not(:disabled) { background: #DCE3EE; color: var(--cp-text); }
+.cp-expand-all-btn:disabled { opacity: .4; cursor: not-allowed; }
 
 /* 상품 묶음 — 상품 사이 경계는 진하게 (옵션 줄과 구분) */
 .cp-product { border-bottom: 1px solid #D5DAE3; }
@@ -336,18 +348,22 @@
 .cp-status-zero { color: var(--cp-amber-text); border: 1px solid var(--cp-amber-line); background: var(--cp-amber-bg); }
 .cp-status-unknown { color: var(--cp-text-2); border: 1px dashed #9CA3AF; background: #FFFFFF; }
 
-/* 분류 드롭박스 · 비고 */
-.cp-package-select {
+/* 라벨 바로 출력 단추 · 비고 */
+.cp-label-btn {
+  width: 28px;
   height: 28px;
-  border: 1px solid var(--cp-line);
+  padding: 0;
+  border: 1px solid transparent;
   border-radius: 6px;
-  background: var(--cp-card);
-  color: var(--cp-text);
-  font-size: 12px;
-  padding: 0 6px;
+  background: transparent;
+  font-size: 15px;
+  line-height: 1;
   cursor: pointer;
-  max-width: 100%;
 }
+.cp-label-btn:hover:not(:disabled) { border-color: #D5DAE3; background: #F8FAFC; }
+/* 잠김(바코드 · 라벨 정보 없음 · 인쇄 중) — 흑백으로 */
+.cp-label-btn:disabled { filter: grayscale(1); opacity: .35; cursor: not-allowed; }
+.cp-label-btn.is-done { color: #15803D; font-weight: 700; }
 .cp-note { font-size: 12px; color: #374151; min-width: 0; cursor: text; min-height: 18px; white-space: pre-wrap; word-break: break-word; }
 .cp-note-empty { color: #B0B6C2; }
 .cp-note-input {
@@ -399,9 +415,6 @@
 .cp-status-btn.is-locked { cursor: not-allowed; }
 
 .cp-checked-at { font-size: 12px; color: var(--cp-muted); text-align: right; }
-.cp-row-menu { display: flex; justify-content: flex-end; }
-.cp-row-delete { border: 0; background: transparent; color: #9CA3AF; cursor: pointer; padding: 4px; border-radius: 4px; }
-.cp-row-delete:hover { color: var(--cp-danger); background: #FEF2F2; }
 
 /* ── 페이지 이동 ────────────────────────────────────────────── */
 .cp-pagination {
@@ -699,3 +712,31 @@
 .cp-history li { display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: 12px; }
 .cp-history-date { color: var(--cp-muted); }
 .cp-history-comment { color: var(--cp-text-2); font-size: 12px; margin-top: 2px; word-break: break-word; }
+
+/* ── 키즈 표시 · 상세 패널 [라벨] 탭 ──────────────────────────── */
+.cp-badge-kids { color: var(--cp-amber-text); border-color: var(--cp-amber-line); background: var(--cp-amber-bg); }
+.cp-label-tab { display: flex; flex-direction: column; gap: 22px; }
+.cp-label-tab-note { font-size: 13px; color: var(--cp-text-2); }
+.cp-label-tab-note.is-err { color: var(--cp-danger); }
+.cp-label-tab-kind { display: flex; align-items: flex-start; gap: 8px; font-size: 12px; line-height: 1.55; color: var(--cp-text-2); }
+.cp-label-tab-kind .cp-badge { flex: none; }
+.cp-label-tab-bulk { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.cp-label-tab-bulk .cp-edit-input { flex: 1 1 220px; width: auto; }
+/* 옵션 · 바코드 | 혼용률 | 권장연령 | 출력 */
+.cp-label-tab-row {
+  display: grid;
+  grid-template-columns: minmax(120px, 1fr) minmax(170px, 1.4fr) 104px 96px;
+  gap: 10px;
+  align-items: start;
+  padding: 8px 12px;
+  font-size: 13px;
+}
+.cp-label-tab-row + .cp-label-tab-row { border-top: 1px solid var(--cp-line-soft); }
+.cp-label-tab-row.is-head { background: #F8FAFC; color: var(--cp-text-2); font-size: 12px; font-weight: 600; align-items: center; }
+.cp-label-tab-sub { margin-top: 2px; font-size: 11px; color: var(--cp-muted); }
+.cp-label-tab-status { font-size: 12px; font-weight: 600; color: #15803D; padding-top: 8px; }
+.cp-label-tab-status.is-blocked { color: var(--cp-danger); }
+.cp-label-tab-status .cp-label-tab-sub { font-weight: 400; color: var(--cp-danger); }
+.cp-label-tab-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
+.cp-label-tab-msg { margin-right: auto; font-size: 12px; color: #15803D; }
+.cp-label-tab-msg.is-err { color: var(--cp-danger); }

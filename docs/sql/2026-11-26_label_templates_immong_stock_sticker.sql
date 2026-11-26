@@ -1,0 +1,40 @@
+-- ================================================================
+-- label_templates — 아이엠몽(BZ) 스티커 라벨 60×80 성인 · 키즈, 재고 앱(source='stock')용 (2026-11-26)
+--
+--   재고 앱 라벨 설정(/label-settings)에는 설온(BO) 스티커 양식만 있고 아이엠몽 스티커 양식이 없었다
+--   (케어라벨은 둘 다 있음). 아이엠몽 로켓(source='rocket')의 60×80 성인 · 키즈 양식을 그대로 복사했다.
+--   설온 스티커 2종은 이미 로켓 양식과 같다 (2026-11-26 대조: 필드 이름만 다르고 배치 · 인쇄 설정 동일).
+--
+--   만든 행 (이미 운영 DB 에 insert 됨 — 아래는 기록용):
+--     9c1b1799-e862-480e-ab93-594d650d437b  아이엠몽 스티커 라벨 60×80        audiences {adult}  is_default
+--     127c1532-59fa-4bcb-a874-001d2e29c25a  아이엠몽 키즈 스티커 라벨 60×80   audiences {kids}   is_default
+--   원본:
+--     f1262a3d-76ac-4104-991e-bc62b904198e  (rocket 성인)   66409704-f93a-4110-ad13-f30dbffe5e1e  (rocket 키즈)
+--
+--   출처 차이로 바꾼 것 — 키즈 양식의 상품명 요소 하나뿐:
+--     로켓: field = item_name (옵션까지 들어 있는 이름)
+--     재고: text = '{item_name}, {option_name}' (상품명 · 옵션명이 따로다 — 설온 stock 양식과 같은 방식)
+--   나머지 필드(barcode · composition · recommanded_age)는 두 출처가 같은 이름이다.
+--   상품명 요소의 model_badge(모델명 배지)는 재고 앱 엔진에 없어서 같은 날 옮겼다 (utils/label/labelRender.ts).
+--
+--   권장연령: 재고 앱은 아직 라벨 data 에 recommanded_age 를 싣지 않는다 → 전부 성인 양식으로 나가고,
+--            키즈 양식은 라벨출력 창의 드롭다운에서 직접 골라야 한다 (사용연령 칸은 빈다).
+--
+--   되돌리기:
+--     delete from public.label_templates
+--      where id in ('9c1b1799-e862-480e-ab93-594d650d437b', '127c1532-59fa-4bcb-a874-001d2e29c25a');
+-- ================================================================
+
+-- insert into public.label_templates
+--   (name, description, source, label_type, audiences, user_ids, printer_lang, width_mm, height_mm, gap_mm,
+--    media, cutter, dpi, density, speed, print_rotate, box_per_order, is_default, layout)
+-- select r.name, r.description, 'stock', r.label_type, r.audiences, r.user_ids, r.printer_lang, r.width_mm, r.height_mm, r.gap_mm,
+--        r.media, r.cutter, r.dpi, r.density, r.speed, r.print_rotate, r.box_per_order, true,
+--        (select jsonb_agg(
+--                  case when e->>'type' = 'text' and e->>'field' = 'item_name'
+--                       then (e - 'field') || jsonb_build_object('name', '상품명 + 옵션', 'text', '{item_name}, {option_name}')
+--                       else e end
+--                  order by ord)
+--           from jsonb_array_elements(r.layout) with ordinality as t(e, ord))
+--   from public.label_templates r
+--  where r.id in ('f1262a3d-76ac-4104-991e-bc62b904198e', '66409704-f93a-4110-ad13-f30dbffe5e1e');

@@ -12,7 +12,13 @@
    ================================================================ */
 
 import { supabase } from './supabase'
-import { toLabelPrintItems, applyManualComposition, type LabelSourceItem } from './labelService'
+import {
+  toLabelPrintItems,
+  applyLabelInfo,
+  splitPrintableLabelItems,
+  type BlockedLabelItem,
+  type LabelSourceItem,
+} from './labelService'
 import type { LabelPrintItem } from './labelPrintService'
 import type { RgItem } from '../types/purchase'
 
@@ -21,9 +27,9 @@ const PAGE_SIZE = 1000
 /** in() 한 번에 넣는 옵션 ID 수 — ID 는 10~11자리, 100개면 URL 약 1.3KB */
 const OPTION_ID_CHUNK = 100
 
-/** toLabelPrintItems 가 읽는 si_coupang_items 컬럼 (LabelSourceItem 과 같게) */
+/** toLabelPrintItems 가 읽는 si_coupang_items 컬럼 (LabelSourceItem 과 같게). 고시정보는 첫 항목의 분류만 (키즈 판정) */
 const COUPANG_LABEL_COLUMNS =
-  'option_id, barcode, item_name, option_name, product_name, item_code, item_id, product_id, price, regular_price, stock, season, note, package_type, composition'
+  'option_id, barcode, item_name, option_name, product_name, item_code, item_id, product_id, price, regular_price, stock, season, note, package_type, composition, notice_category:notices->0->>category'
 
 // ══════════════════════════════════════════════════════════════════
 // 타입 정의
@@ -32,8 +38,10 @@ const COUPANG_LABEL_COLUMNS =
 type CoupangLabelRow = LabelSourceItem & { option_id: string }
 
 export interface PurchaseLabelItems {
-  /** 인쇄 항목 — 사입관리 행 순서 그대로, 1장씩 (장수는 모달에서 고친다) */
+  /** 인쇄 항목 — 사입관리 행 순서 그대로, 1장씩 (장수는 모달에서 고친다). 출력 조건에 걸린 항목은 빠져 있다 */
   items: LabelPrintItem[]
+  /** 라벨 정보(성인 = 혼용률, 키즈 = 혼용률 + 권장연령)가 빠져 뺀 항목 */
+  blocked: BlockedLabelItem[]
   /** 바코드가 없어 뺀 행 수 */
   skipped: number
   /** 출고코드(item_code)가 비어 있는 항목 수 — 상품관리에 없거나 코드가 비어 있음 */
@@ -73,7 +81,7 @@ async function fetchCoupangLabelRows(
         console.error('[fetchCoupangLabelRows]', error)
         throw error
       }
-      const rows = (data ?? []) as CoupangLabelRow[]
+      const rows = (data ?? []) as unknown as CoupangLabelRow[]
       for (const row of rows) byOptionId.set(String(row.option_id), row)
       if (rows.length < PAGE_SIZE) break
       from += PAGE_SIZE
@@ -111,9 +119,11 @@ export async function buildPurchaseLabelItems(rows: RgItem[], userId: string): P
     return toSourceItem(rg, optionId ? coupangRows.get(optionId) : undefined)
   })
   // 바코드 없는 행 제외 규칙은 상품관리와 같다 (toLabelPrintItems)
-  const { items, skipped } = toLabelPrintItems(sources)
-  // 혼용률: 상품정보 화면의 직접 입력값이 있으면 쿠팡 고시정보 값보다 우선
-  await applyManualComposition(items, userId)
+  const { items: all, skipped } = toLabelPrintItems(sources)
+  // 혼용률 · 권장연령: 상품정보 화면의 직접 입력값 (혼용률은 쿠팡 고시정보 값보다 우선)
+  await applyLabelInfo(all, userId)
+  // 성인 = 혼용률, 키즈 = 혼용률 + 권장연령 — 빠진 항목은 찍지 않는다
+  const { printable: items, blocked } = splitPrintableLabelItems(all)
   const missingCode = items.filter((it) => !String(it.data.item_code ?? '').trim()).length
-  return { items, skipped, missingCode }
+  return { items, blocked, skipped, missingCode }
 }

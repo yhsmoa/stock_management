@@ -11,7 +11,7 @@ import { useCallback, useRef, useState } from 'react'
 import type { RgItem } from '../../types/purchase'
 import type { LabelPrintItem } from '../../services/labelPrintService'
 import { buildPurchaseLabelItems } from '../../services/purchaseLabelService'
-import { getCurrentLabelAccount } from '../../services/labelService'
+import { getCurrentLabelAccount, blockedLabelSummary } from '../../services/labelService'
 
 export interface PurchaseLabel {
   open: boolean
@@ -48,10 +48,13 @@ export function usePurchaseLabel(filteredItems: RgItem[], selectedIds: Set<strin
     setPreparing(true)
     try {
       const built = await buildPurchaseLabelItems(selected, account.id)
-      if (built.items.length === 0) {
+      if (built.items.length === 0 && built.blocked.length === 0) {
         alert('선택한 항목에 바코드가 없어 라벨을 출력할 수 없습니다.')
         return
       }
+      // 라벨 정보(성인 = 혼용률, 키즈 = 혼용률 + 권장연령)가 빠진 항목은 찍지 않는다
+      if (built.blocked.length > 0) alert(blockedLabelSummary(built.blocked))
+      if (built.items.length === 0) return
       if (built.skipped > 0) {
         alert(`바코드가 없는 ${built.skipped}개 항목은 제외하고 ${built.items.length}개만 출력합니다.`)
       }

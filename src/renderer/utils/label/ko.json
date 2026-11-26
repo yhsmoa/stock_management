@@ -289,6 +289,7 @@
       "bold": "굵게",
       "italic": "기울임",
       "invert": "반전",
+      "modelBadge": "모델명 배지",
       "letterSpacing": "자간 (mm)",
       "lineGap": "줄 간격 (배수)",
       "areaTitle": "영역",

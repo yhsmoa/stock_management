@@ -47,6 +47,11 @@ export interface CoupangProductRow {
   notices?: CoupangNotice[] | null
   /** 혼용률 — 고시정보 "제품 소재"/"소재" 값 (라벨 소재란). 안내 문구뿐이면 null */
   composition: string | null
+  /**
+   * 쿠팡 고시정보 분류 (notices 첫 항목의 category — 예: 어린이제품 · 의류). 받은 적 없으면 null.
+   * DB 칼럼이 아니라 목록 조회(LIST_COLUMNS)가 JSON 에서 꺼내 싣는 값 — 키즈 판정에 쓴다 (labelInfoRules)
+   */
+  notice_category?: string | null
 }
 
 /** 고시정보 한 칸 (쿠팡 notices[] 를 줄인 모양) */

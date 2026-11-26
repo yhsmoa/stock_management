@@ -378,6 +378,11 @@ const ElementPropsPanel: React.FC<Props> = ({ el, template, data, warning, onPat
                 checked={!!el.invert}
                 onChange={(v) => patch({ invert: v || undefined })}
               />
+              <Check
+                label={P('modelBadge')}
+                checked={!!el.model_badge}
+                onChange={(v) => patch({ model_badge: v || undefined })}
+              />
             </div>
 
             <Num

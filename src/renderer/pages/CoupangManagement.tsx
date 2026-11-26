@@ -2,7 +2,7 @@
    상품관리 (CoupangManagement) — /coupang
    - 쿠팡 Open API 동기화 기반 (2026-10-20 전면 재작성). 엑셀 업로드는 보조
    - 상태·동작은 useCoupangManagement, 데이터는 services/coupangProductService
-   - 화면: 머리(제목 · 엑셀 보조) → 동기화 3단계 카드 → 필터 → 선택 작업 막대 → 목록 → 페이지
+   - 화면: 머리(제목 · 설명 · 엑셀 보조) → 동기화 3단계 카드(한 줄) → 필터(+ 목록 요약) → 선택 작업 막대 → 목록 → 페이지
    - 목록은 상품 단위 페이지(50개 · 이전/다음), 상품은 기본 접힘 · 옵션은 옵션명 순 (2026-10-20)
    ================================================================ */
 
@@ -40,7 +40,7 @@ const CoupangManagement: React.FC = () => {
     <div className="cp-page">
       {/* ── 머리 ── */}
       <header className="cp-header">
-        <div>
+        <div className="cp-header-title">
           <h1 className="cp-title">일반판매자 상품</h1>
           <div className="cp-subtitle">쿠팡 상품을 한 목록에서 — 상품마다 전체(로켓 + 일반) · 일반 · 로켓그로스로 구분 · Open API 동기화 · 엑셀은 보조</div>
         </div>
@@ -72,11 +72,15 @@ const CoupangManagement: React.FC = () => {
       <CoupangFilterBar
         filters={s.filters}
         counts={s.salesCounts}
+        searchField={s.searchFieldInput}
         searchInput={s.searchInput}
+        page={s.page}
+        productCount={s.groups.length}
+        loading={s.loading}
         onChannel={s.setChannel}
         onSales={s.setSales}
         onApproval={s.setApproval}
-        onSearchField={s.setSearchField}
+        onSearchField={s.setSearchFieldInput}
         onSearchInput={s.setSearchInput}
         onSubmitSearch={s.submitSearch}
         onClearSearch={s.clearSearch}
@@ -104,7 +108,6 @@ const CoupangManagement: React.FC = () => {
         noteEditing={s.noteEditing}
         page={s.page}
         productsPerPage={s.productsPerPage}
-        optionCount={s.salesCounts ? s.salesCounts[s.filters.sales] : null}
         hasPrev={s.hasPrevPage}
         hasNext={s.hasNextPage}
         onPrev={s.goPrevPage}
@@ -119,11 +122,12 @@ const CoupangManagement: React.FC = () => {
         onInline={s.applyInline}
         onOpenDetail={s.setDetailItemId}
         onFetchDetail={s.runDetailForProduct}
-        onPackageType={s.changePackageType}
+        labelPrint={s.labelPrint}
+        onPrintLabel={s.printLabelNow}
+        labelState={s.labelStateOf}
         onStartNote={s.startNote}
         onNoteValue={s.setNoteValue}
         onCommitNote={s.commitNote}
-        onDelete={s.deleteRow}
       />
 
       {/* ── 상세 패널 ── */}

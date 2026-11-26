@@ -11,7 +11,8 @@ import {
   type LabelTemplate,
   type LabelType,
 } from '../utils/label/labelTypes';
-import { insertLabelPrintLogs, type LabelUser } from './labelTemplateService';
+import { t } from '../utils/label/i18n';
+import { fetchLabelTemplates, fetchLabelUser, insertLabelPrintLogs, type LabelUser } from './labelTemplateService';
 
 // ============================================================
 // 라벨 즉시 출력 — 상품관리에서 고른 항목을 QZ Tray 로 인쇄
@@ -29,7 +30,8 @@ import { insertLabelPrintLogs, type LabelUser } from './labelTemplateService';
 //   4. 템플릿(=프린터)별로 묶어 바인딩(상품 + 계정 정보) → 명령(TSPL/ZPL, 템플릿의 printer_lang) → QZ RAW
 //   5. label_print_logs 기록 (실패해도 인쇄 성공은 유지)
 //
-// 오류 문구는 i18n 키로 돌려준다 (호출 측이 t() 로 번역).
+// 오류 문구는 i18n 키로 돌려준다 (호출 측이 printErrorText() 로 문구를 만든다).
+// quickPrintLabels() 는 모달 없이 기본 템플릿 · 이 PC 프린터로 바로 찍는다 (상품관리 옵션 줄의 🖨).
 // buildPrintJobs() 는 같은 준비 과정을 인쇄 없이 돌려 TSPL/ZPL 바이트만 만든다 (진단용 다운로드).
 // ============================================================
 
@@ -249,4 +251,55 @@ export async function printLabels(params: PrintLabelParams): Promise<PrintLabelR
       errorDetail: error instanceof Error ? error.message : undefined,
     };
   }
+}
+
+// ============================================================
+// 결과 → 안내 문구 (모달 · 바로 출력 공용)
+// ============================================================
+export function printErrorText(labelType: LabelType, r: PrintLabelResult): string {
+  if (!r.errorKey) return t('print.printFailed');
+  const p = { ...(r.errorParams ?? {}) };
+  if (r.errorKey === 'print.noTemplate') {
+    p.audience = String(p.audienceKeys ?? '')
+      .split(',')
+      .map((k) => t(k === 'kids' ? 'print.templateKids' : 'print.templateAdult'))
+      .join(', ');
+    p.type = t(labelType === 'care' ? 'print.careLabel' : 'print.labelSticker');
+  }
+  const base = t(r.errorKey, p);
+  return r.errorDetail ? `${base}\n\n(${r.errorDetail})` : base;
+}
+
+// ============================================================
+// 바로 출력 — 모달을 거치지 않고 "지금 라벨 설정대로"
+//   템플릿: 모달이 처음 고르는 것과 같은 규칙 (pickTemplate — 기본 템플릿 우선, 대상별)
+//   프린터: [라벨 설정] · 모달에서 이 PC 에 지정해 둔 것
+//   템플릿이나 프린터가 정해지지 않았으면 찍지 않고 사유를 돌려준다 → 호출 측이 모달을 열어 정하게 한다
+// ============================================================
+export async function quickPrintLabels(params: {
+  items: LabelPrintItem[];
+  /** 로그인 계정 (si_users.id) — 템플릿 범위 · 계정 정보 바인딩 */
+  accountId: string;
+  labelType: LabelType;
+  printedBy?: string | null;
+}): Promise<PrintLabelResult> {
+  const { items, accountId, labelType, printedBy } = params;
+  let templates: LabelTemplate[];
+  let account: LabelUser | null;
+  try {
+    [templates, account] = await Promise.all([fetchLabelTemplates(accountId), fetchLabelUser(accountId)]);
+  } catch (error) {
+    console.error('라벨 바로 출력 — 템플릿 · 계정 조회 오류:', error);
+    return {
+      success: false,
+      printed: 0,
+      errorKey: 'print.printFailed',
+      errorDetail: error instanceof Error ? error.message : undefined,
+    };
+  }
+  const selected: AudienceTemplates = {};
+  for (const audience of Object.keys(groupByAudience(items)) as LabelAudience[]) {
+    selected[audience] = pickTemplate(templates, accountId, labelType, audience);
+  }
+  return printLabels({ items, account, labelType, templates: selected, printedBy });
 }

@@ -193,6 +193,12 @@ export interface TextElement extends ElementBase {
   letter_spacing_mm?: number;
   /** 검정 배경 + 흰 글씨 (반전) */
   invert?: boolean;
+  /**
+   * 모델명 배지 (2026-11-26, label-service 에서 옮김) — 글 안의 모델명만 검정 둥근 상자 + 굵은 흰 글씨로 (나머지는 그대로).
+   * 모델명 = 첫 콤마 앞부분의 마지막 단어가 영문+숫자 조합일 때 (예 "아동 바지 WT-SDYYGH5L03_30 S5W127, 블랙 140" → S5W127).
+   * 찾지 못하면 평소처럼 그린다. 규칙은 utils/label/labelRender.ts findModelBadge.
+   */
+  model_badge?: boolean;
 }
 
 export interface BarcodeElement extends ElementBase {

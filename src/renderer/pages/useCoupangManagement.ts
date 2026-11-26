@@ -1,6 +1,8 @@
 /* ================================================================
    상품관리 (CoupangManagement) 화면 상태 훅
    - 조회(필터 · 페이지 · 상품 요약 · 건수) · 선택 · 동기화 진행 · 변경 작업 · 분류/비고 · 엑셀 · 라벨
+   - 조회 순서 = 목록 → 상품 요약 → 판매상태 건수 → 실행 기록 → 카드 요약 (한 번에 하나씩).
+     건수는 조건(출처 · 승인 · 검색)이 바뀔 때만, 카드 요약은 처음 · 다시 읽기 때만 받는다 (2026-11-26)
    - Supabase · 쿠팡 호출은 전부 services/coupangProductService 에 있다
    ================================================================ */
 
@@ -11,10 +13,8 @@ import {
   fetchSalesCounts,
   fetchProductSummaries,
   fetchSyncSummary,
-  updatePackageType,
   updateNote,
   bulkClassify,
-  deleteProductRow,
   syncProductList,
   syncProductDetails,
   fetchDetailMissingProductIds,
@@ -31,7 +31,17 @@ import {
   type ClassifyExcelResult,
   type DetailMissingIds,
 } from '../services/coupangProductService'
-import { toLabelPrintItems, applyManualComposition } from '../services/labelService'
+import {
+  toLabelPrintItems,
+  applyLabelInfo,
+  splitPrintableLabelItems,
+  blockedLabelSummary,
+  labelItemBlockReason,
+  getCurrentLabelAccount,
+} from '../services/labelService'
+import { quickPrintLabels, printErrorText } from '../services/labelPrintService'
+import { fetchItemInfosByBarcodes } from '../services/itemInfoService'
+import { resolveLabelInfo } from '../services/labelInfoRules'
 import { compareOptionNames } from '../components/coupang/optionSort'
 import { isAbortError } from '../utils/rateLimitQueue'
 import { inlineEditBlock, type InlineField } from '../components/coupang/editRules'
@@ -47,6 +57,7 @@ import {
   type SyncRunKind,
 } from '../services/coupangSyncRunService'
 import type { LabelPrintItem } from '../services/labelPrintService'
+import type { LabelAudience, LabelType } from '../utils/label/labelTypes'
 import type {
   CoupangProductRow,
   CoupangProductFilters,
@@ -73,6 +84,40 @@ const RECORDED_KINDS: ReadonlySet<SyncProgress['kind']> = new Set<SyncProgress['
 /** 옵션을 겨냥한 검색이면 결과 상품을 펼쳐서 보여 준다 (찾는 옵션이 바로 보이게) */
 const OPTION_TARGET_SEARCH: ReadonlySet<SearchField> = new Set<SearchField>(['optionId', 'barcode', 'itemCode'])
 
+/** 옵션 줄 🖨 이 찍는 라벨 종류 — 라벨 스티커 1장 (케어 라벨 · 여러 장은 선택 › [라벨출력] 모달) */
+const QUICK_LABEL_TYPE: LabelType = 'barcode'
+/** 🖨 인쇄 뒤 ✓ 표시를 보여 주는 시간 */
+const LABEL_DONE_FLASH_MS = 2000
+/** 바로 출력이 이 사유로 막히면 모달을 연다 (템플릿 · 프린터를 거기서 정한다) */
+const LABEL_SETUP_ERRORS: ReadonlySet<string> = new Set(['print.noTemplate', 'print.printerNotSet'])
+/** 라벨 정보가 빠졌을 때 어디서 넣는지 */
+const LABEL_INFO_HINT = '상품명을 눌러 [라벨] 탭에서 입력할 수 있습니다'
+
+/** 옵션 줄의 라벨 상태 — 대상(바코드가 없으면 null) · 🖨 를 누를 수 없는 사유 */
+export interface RowLabelState {
+  audience: LabelAudience | null
+  blockReason: string | null
+}
+/** Postgres statement timeout */
+const PG_STATEMENT_TIMEOUT = '57014'
+
+/** 조회 오류 → 화면 문구 (supabase 오류는 Error 가 아닌 객체로 오기도 한다) */
+function loadErrorMessage(err: unknown): string {
+  const e = err as { code?: string; message?: string } | null
+  if (e?.code === PG_STATEMENT_TIMEOUT) return '조회 시간이 초과됐습니다. 잠시 뒤 다시 시도해 주세요.'
+  return e?.message || '조회 실패'
+}
+
+/**
+ * 건수 조회를 한 번 더 시도한다.
+ * 큰 계정은 DB 캐시가 식어 있으면 count 가 statement timeout 에 걸리고, 바로 다시 보내면 대개 통과한다
+ * (2026-11-26 실측: 같은 count 가 처음 5~8초 · 다음 0.6초). head 요청이라 오류 코드를 받지 못해 사유로 가르지 않는다.
+ */
+async function withOneRetry<T>(fn: () => Promise<T>): Promise<T> {
+  try { return await fn() }
+  catch { return fn() }
+}
+
 const DEFAULT_FILTERS: CoupangProductFilters = {
   channel: 'all',
   sales: 'on',
@@ -95,7 +140,9 @@ export function useCoupangManagement() {
 
   // ── 조회 상태 ──
   const [filters, setFilters] = useState<CoupangProductFilters>(DEFAULT_FILTERS)
+  // 검색어 · 검색 기준은 [검색] 을 눌러야 조건(filters)에 들어간다 — 입력 중에는 목록을 다시 읽지 않는다
   const [searchInput, setSearchInput] = useState('')
+  const [searchFieldInput, setSearchFieldInput] = useState<SearchField>(DEFAULT_FILTERS.searchField)
   // 페이지 = 커서 목록. cursors[i] 는 i+1 페이지를 여는 커서 (첫 페이지는 null) — 이전으로 갈 때 되짚는다
   const [cursors, setCursors] = useState<(string | null)[]>([null])
   const [nextCursor, setNextCursor] = useState<string | null>(null)
@@ -123,6 +170,14 @@ export function useCoupangManagement() {
   const [classifyOpen, setClassifyOpen] = useState(false)
   const [excelClassifyResult, setExcelClassifyResult] = useState<ClassifyExcelResult | null>(null)
   const [labelItems, setLabelItems] = useState<LabelPrintItem[] | null>(null)
+  /** 옵션 줄 🖨 진행 표시 — 인쇄 중 / 방금 보냄 */
+  const [labelPrint, setLabelPrint] = useState<{ optionId: string; state: 'printing' | 'done' } | null>(null)
+  const labelDoneTimerRef = useRef<number | null>(null)
+  /**
+   * 이 페이지 옵션들의 직접 입력 라벨 정보 (si_item_info — 바코드 → 혼용률 · 권장연령).
+   * 키즈 표시 · 🖨 잠금 판정용 — 조회에 실패하면 'failed' (모르니 잠그지 않고, 인쇄 직전에 다시 확인한다)
+   */
+  const [labelInfoByBarcode, setLabelInfoByBarcode] = useState<Map<string, { composition: string | null; age: string | null }> | 'failed'>(new Map())
   const [excelUpload, setExcelUpload] = useState<{ percent: number; status: string } | null>(null)
   const [noteEditing, setNoteEditing] = useState<{ optionId: string; value: string } | null>(null)
 
@@ -147,17 +202,32 @@ export function useCoupangManagement() {
   // 펼침 상태는 "다른 페이지·조건"으로 갈 때만 초기화한다 — 같은 페이지 다시 읽기(가격 변경·비고 저장 뒤)는 유지
   const lastPageKeyRef = useRef<string>('')
 
-  // 페이지 → 상품 요약 → 판매상태 건수 → 머리 카드 요약, 순서대로.
-  //   큰 계정(7.8만 행)에서 count 쿼리를 한꺼번에 보내면 Supabase statement timeout 이 난다 (2026-10-20 실측)
+  // 판매상태 칩 건수는 출처 · 승인 · 검색에만 달려 있다 — 고른 칩 · 페이지가 바뀌어도 다시 세지 않는다
+  const countsCondition = JSON.stringify([filters.channel, filters.approval, filters.searchField, filters.search])
+  const countsLoadedRef = useRef<{ condition: string; reloadKey: number } | null>(null)
+  // 카드 요약(옵션 수 · 받은 비율)은 조건과 무관하다 — 처음과 다시 읽기(동기화 · 변경 뒤) 때만 받는다
+  const summaryLoadedKeyRef = useRef<number | null>(null)
+
+  // 목록 → 상품 요약 → 판매상태 건수 → 실행 기록 → 카드 요약, 순서대로 하나씩.
+  //   큰 계정(8.7만 행)에서 count 쿼리를 한꺼번에 보내면 Supabase statement timeout 이 난다 (2026-10-20 실측)
   useEffect(() => {
     if (!userId) return
     let cancelled = false
     setLoading(true)
     setLoadError(null)
+    // 조건이 바뀌었으면 이전 조건의 건수를 지운다 — 새 건수가 올 때까지 다른 조건의 숫자가 보이지 않게
+    if (countsLoadedRef.current && countsLoadedRef.current.condition !== countsCondition) {
+      countsLoadedRef.current = null
+      setSalesCounts(null)
+    }
     ;(async () => {
+      // ── ① 목록 — 실패하면 다른 조건의 행을 남겨 두지 않는다 ──
+      let itemIds: string[]
+      let pageRows: CoupangProductRow[]
       try {
         const pageResult = await fetchProductPage(userId, filters, pageCursor, PRODUCTS_PER_PAGE)
         if (cancelled) return
+        pageRows = pageResult.rows
         setRows(pageResult.rows)
         setNextCursor(pageResult.nextCursor)
         // 새 페이지·새 조건은 접어서 시작 (옵션을 겨냥한 검색이면 펼쳐서), 같은 페이지 다시 읽기는 그대로
@@ -166,27 +236,69 @@ export function useCoupangManagement() {
           lastPageKeyRef.current = pageKey
           setExpanded(autoExpand ? new Set(pageResult.itemIds) : new Set())
         }
-        setLoading(false)
+        itemIds = pageResult.itemIds
+      } catch (err) {
+        if (cancelled) return
+        setRows([])
+        setNextCursor(null)
+        setLoadError(loadErrorMessage(err))
+        return
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
 
-        const itemIds = pageResult.itemIds
+      // ── ② 부가 정보 — 하나가 실패해도 목록과 나머지는 그대로 둔다 ──
+      try {
         const sums = await fetchProductSummaries(userId, itemIds)
         if (cancelled) return
         setSummaries(sums)
-
-        const counts = await fetchSalesCounts(userId, filters)
-        if (cancelled) return
-        setSalesCounts(counts)
-
-        const summary = await fetchSyncSummary(userId)
-        if (cancelled) return
-        setSyncSummary(summary)
-
-        const runs = await fetchLatestSyncRuns(userId)
-        if (!cancelled) setLatestRuns(runs)
       } catch (err) {
-        if (!cancelled) setLoadError(err instanceof Error ? err.message : '조회 실패')
-      } finally {
-        if (!cancelled) setLoading(false)
+        console.error('[상품관리] 상품 요약 조회 실패:', err)
+      }
+      if (cancelled) return
+
+      // 키즈 표시 · 🖨 잠금용 — 이 페이지 바코드의 직접 입력 라벨 정보 (혼용률 · 권장연령)
+      try {
+        const barcodes = pageRows.map((r) => (r.barcode ?? '').trim()).filter(Boolean)
+        const manual = await fetchItemInfosByBarcodes(userId, barcodes)
+        if (cancelled) return
+        const byBarcode = new Map<string, { composition: string | null; age: string | null }>()
+        for (const [barcode, info] of manual) byBarcode.set(barcode.trim(), { composition: info.composition, age: info.recommended_age })
+        setLabelInfoByBarcode(byBarcode)
+      } catch (err) {
+        if (cancelled) return
+        console.error('[상품관리] 직접 입력 라벨 정보 조회 실패:', err)
+        setLabelInfoByBarcode('failed')
+      }
+
+      const countsLoaded = countsLoadedRef.current
+      if (!countsLoaded || countsLoaded.condition !== countsCondition || countsLoaded.reloadKey !== reloadKey) {
+        try {
+          const counts = await withOneRetry(() => fetchSalesCounts(userId, filters))
+          if (cancelled) return
+          setSalesCounts(counts)
+          countsLoadedRef.current = { condition: countsCondition, reloadKey }
+        } catch {
+          if (cancelled) return
+          // 세지 못했으면 숫자를 비운다 (0 이나 예전 숫자로 두지 않는다) — 다음 조회 때 다시 센다
+          setSalesCounts(null)
+          countsLoadedRef.current = null
+        }
+      }
+
+      const runs = await fetchLatestSyncRuns(userId)
+      if (cancelled) return
+      setLatestRuns(runs)
+
+      if (summaryLoadedKeyRef.current !== reloadKey) {
+        try {
+          const summary = await withOneRetry(() => fetchSyncSummary(userId))
+          if (cancelled) return
+          setSyncSummary(summary)
+          summaryLoadedKeyRef.current = reloadKey
+        } catch (err) {
+          console.error('[상품관리] 카드 요약 조회 실패:', err)
+        }
       }
     })()
     return () => { cancelled = true }
@@ -272,8 +384,15 @@ export function useCoupangManagement() {
   const setChannel = useCallback((channel: ChannelFilter) => { setFilters((f) => ({ ...f, channel })); resetPages() }, [resetPages])
   const setSales = useCallback((sales: SalesFilter) => { setFilters((f) => ({ ...f, sales })); resetPages() }, [resetPages])
   const setApproval = useCallback((approval: ApprovalFilter) => { setFilters((f) => ({ ...f, approval })); resetPages() }, [resetPages])
-  const setSearchField = useCallback((searchField: SearchField) => setFilters((f) => ({ ...f, searchField })), [])
-  const submitSearch = useCallback(() => { setFilters((f) => ({ ...f, search: searchInput.trim() })); resetPages() }, [searchInput, resetPages])
+  // [검색] — 검색어와 검색 기준을 같이 조건에 넣는다. 검색어가 비면 기준은 조건에 영향이 없어 그대로 둔다.
+  //   조건이 그대로면(같은 검색어로 다시 누름) 새로 읽기만 한다.
+  const submitSearch = useCallback(() => {
+    const search = searchInput.trim()
+    const unchanged = filters.search === search && (search === '' || filters.searchField === searchFieldInput)
+    if (unchanged) reload()
+    else setFilters((f) => ({ ...f, search, searchField: search ? searchFieldInput : f.searchField }))
+    resetPages()
+  }, [searchInput, searchFieldInput, filters.search, filters.searchField, reload, resetPages])
   const clearSearch = useCallback(() => { setSearchInput(''); setFilters((f) => ({ ...f, search: '' })); resetPages() }, [resetPages])
 
   // ══════════════════════════════════════════════════════════════
@@ -383,7 +502,7 @@ export function useCoupangManagement() {
       if (newProducts.length > 0 && !controller.signal.aborted) {
         updateProgress({ title: '새 상품 상세 받기', message: `새로 들어온 상품 ${newProducts.length.toLocaleString()}개의 옵션·가격·재고를 받습니다`, done: 0, total: newProducts.length })
         const d = await syncProductDetails(userId, newProducts, (done, total) => updateProgress({ done, total }), controller.signal)
-        detailLine = ` · 새 상품 상세 ${d.products.toLocaleString()}개 (옵션 ${d.options.toLocaleString()})${d.aborted ? ' · 중단됨' : ''}`
+        detailLine = ` · 새 상품 상세 ${d.products.toLocaleString()}개 (옵션 ${d.options.toLocaleString()})${d.agesFilled ? ` · 권장연령 ${d.agesFilled.toLocaleString()}개 입력` : ''}${d.aborted ? ' · 중단됨' : ''}`
         result.errors.push(...d.failed)
       }
       finishProgress(
@@ -412,6 +531,7 @@ export function useCoupangManagement() {
     } catch (err) {
       console.error('[openDetailSync] 대상 조회 실패:', err)
       setDetailScope({ open: false, counts: null })
+      alert(`상세를 받을 대상을 조회하지 못했습니다: ${loadErrorMessage(err)}`)
     }
   }, [userId, syncLocked])
 
@@ -425,7 +545,7 @@ export function useCoupangManagement() {
     try {
       const d = await syncProductDetails(userId, ids, (done, total) => updateProgress({ done, total }), controller.signal)
       finishProgress(
-        `상품 ${d.products.toLocaleString()}개 · 옵션 ${d.options.toLocaleString()}개 저장${d.aborted ? ' · 중단됨' : ''}${d.failed.length ? ` · 실패 ${d.failed.length}` : ''}`,
+        `상품 ${d.products.toLocaleString()}개 · 옵션 ${d.options.toLocaleString()}개 저장${d.agesFilled ? ` · 권장연령 ${d.agesFilled.toLocaleString()}개 입력` : ''}${d.aborted ? ' · 중단됨' : ''}${d.failed.length ? ` · 실패 ${d.failed.length}` : ''}`,
         d.failed,
       )
     } catch (err) {
@@ -448,13 +568,15 @@ export function useCoupangManagement() {
   const runDetailForProduct = useCallback((itemId: string) => runDetailSync([itemId], '이 상품 다시 받기', false), [runDetailSync])
 
   // ── 3) 판매상태 확인 ──
-  const runStatusCheck = useCallback(async (target: 'selected' | 'page' | 'stale') => {
+  const runStatusCheck = useCallback(async (target: 'selected' | 'stale') => {
     if (!userId || syncLocked) return
     let ids: string[]
     if (target === 'selected') ids = selectedRows.map((r) => r.option_id)
-    else if (target === 'page') ids = rows.map((r) => r.option_id)
-    else ids = await fetchStaleStatusOptionIds(userId, STATUS_CHECK_STALE_BATCH)
-    if (ids.length === 0) return
+    else {
+      try { ids = await fetchStaleStatusOptionIds(userId, STATUS_CHECK_STALE_BATCH) }
+      catch (err) { alert(`확인할 옵션을 조회하지 못했습니다: ${loadErrorMessage(err)}`); return }
+    }
+    if (ids.length === 0) { alert('확인할 옵션이 없습니다.'); return }
     const controller = startProgress('status', '판매상태 확인', `옵션 ${ids.length.toLocaleString()}개를 쿠팡에서 확인합니다 (옵션당 1회 호출)`)
     updateProgress({ total: ids.length })
     try {
@@ -463,7 +585,7 @@ export function useCoupangManagement() {
     } catch (err) {
       finishProgress('실패', [err instanceof Error ? err.message : String(err)])
     }
-  }, [userId, syncLocked, selectedRows, rows, startProgress, updateProgress, finishProgress])
+  }, [userId, syncLocked, selectedRows, startProgress, updateProgress, finishProgress])
 
   // ══════════════════════════════════════════════════════════════
   // 변경 작업 (가격 · 재고 · 할인율 기준가 · 판매 재개/중지)
@@ -553,15 +675,8 @@ export function useCoupangManagement() {
   }, [userId, busy, patchRow])
 
   // ══════════════════════════════════════════════════════════════
-  // 분류 · 비고 · 삭제
+  // 분류 · 비고
   // ══════════════════════════════════════════════════════════════
-
-  const changePackageType = useCallback(async (optionId: string, packageType: string) => {
-    if (!userId) return
-    patchRow(optionId, { package_type: packageType })       // 낙관적 반영
-    try { await updatePackageType(userId, optionId, packageType) }
-    catch (err) { console.error('분류 저장 오류:', err); reload() }
-  }, [userId, patchRow, reload])
 
   const startNote = useCallback((row: CoupangProductRow) => setNoteEditing({ optionId: row.option_id, value: row.note ?? '' }), [])
   const setNoteValue = useCallback((value: string) => setNoteEditing((n) => (n ? { ...n, value } : n)), [])
@@ -587,13 +702,6 @@ export function useCoupangManagement() {
       alert(`분류 변경 실패: ${err instanceof Error ? err.message : String(err)}`)
     }
   }, [userId, selectedRows, reload])
-
-  const deleteRow = useCallback(async (optionId: string) => {
-    if (!userId) return
-    if (!confirm('이 옵션 행을 삭제할까요? (쿠팡에는 영향 없음 · 다음 동기화 때 다시 들어옵니다)')) return
-    try { await deleteProductRow(userId, optionId); reload() }
-    catch (err) { alert(`삭제 실패: ${err instanceof Error ? err.message : String(err)}`) }
-  }, [userId, reload])
 
   // ══════════════════════════════════════════════════════════════
   // 엑셀 · 라벨
@@ -634,17 +742,82 @@ export function useCoupangManagement() {
     }
   }, [userId, busy, startProgress, updateProgress, finishProgress])
 
+  /**
+   * 행 → 인쇄 항목 (바코드 없는 행 제외) + 직접 입력 라벨 정보(혼용률 · 권장연령).
+   * 조회에 실패하면 throw — 값을 모르는 채로 찍지 않는다
+   */
+  const buildLabelItems = useCallback(async (targets: CoupangProductRow[]) => {
+    const converted = toLabelPrintItems(targets)
+    if (userId && converted.items.length > 0) await applyLabelInfo(converted.items, userId)
+    return converted
+  }, [userId])
+
+  // ── 선택 › [라벨출력] — 모달에서 템플릿 · 프린터를 보고 인쇄 ──
+  //   라벨 정보(성인 = 혼용률, 키즈 = 혼용률 + 권장연령)가 빠진 항목은 빼고 연다
   const printLabels = useCallback(async () => {
-    const { items, skipped } = toLabelPrintItems(selectedRows)
-    if (items.length === 0) { alert('선택한 항목에 바코드가 없어 라벨을 출력할 수 없습니다.'); return }
-    if (skipped > 0) alert(`바코드가 없는 ${skipped}개 항목은 제외하고 ${items.length}개만 출력합니다.`)
-    // 혼용률: 쿠팡 고시정보 값(행의 composition) → 상품정보 화면 직접 입력값이 있으면 그쪽으로
-    if (userId) {
-      try { await applyManualComposition(items, userId) }
-      catch (err) { console.error('[printLabels] 직접 입력 혼용률 조회 실패 — 쿠팡 값으로 인쇄:', err) }
+    let built: Awaited<ReturnType<typeof buildLabelItems>>
+    try { built = await buildLabelItems(selectedRows) }
+    catch (err) { alert(`라벨 정보를 조회하지 못했습니다: ${loadErrorMessage(err)}`); return }
+    if (built.items.length === 0) { alert('선택한 항목에 바코드가 없어 라벨을 출력할 수 없습니다.'); return }
+    const { printable, blocked } = splitPrintableLabelItems(built.items)
+    if (blocked.length > 0) alert(blockedLabelSummary(blocked))
+    if (printable.length === 0) return
+    if (built.skipped > 0) alert(`바코드가 없는 ${built.skipped}개 항목은 제외하고 ${printable.length}개만 출력합니다.`)
+    setLabelItems(printable)
+  }, [selectedRows, buildLabelItems])
+
+  // ── 옵션 줄 🖨 — 모달 없이 지금 라벨 설정(기본 템플릿 · 이 PC 프린터)대로 라벨 스티커 1장 ──
+  //   템플릿이나 프린터가 정해지지 않았으면 사유를 알리고 모달을 연다 (거기서 고르고 인쇄)
+  //   바코드나 라벨 정보가 없는 옵션은 찍지 않는다 — 단추도 잠겨 있다 (labelStateOf)
+
+  /** 옵션 줄의 라벨 상태 — 성인/키즈 · 🖨 를 누를 수 없는 사유 (규칙은 labelInfoRules.resolveLabelInfo) */
+  const labelStateOf = useCallback((row: CoupangProductRow): RowLabelState => {
+    const barcode = row.barcode?.trim()
+    if (!barcode) return { audience: null, blockReason: '바코드가 없어 라벨을 출력할 수 없습니다' }
+    const info = labelInfoByBarcode === 'failed' ? undefined : labelInfoByBarcode.get(barcode)
+    const resolved = resolveLabelInfo({
+      noticeCategory: row.notice_category,
+      coupangComposition: row.composition,
+      manualComposition: info?.composition,
+      recommendedAge: info?.age,
+    })
+    // 직접 입력값을 읽지 못했으면 잠그지 않는다 (인쇄 직전에 다시 확인한다)
+    if (labelInfoByBarcode === 'failed') return { audience: resolved.audience, blockReason: null }
+    return { audience: resolved.audience, blockReason: resolved.blockReason ? `${resolved.blockReason} — ${LABEL_INFO_HINT}` : null }
+  }, [labelInfoByBarcode])
+
+  const printLabelNow = useCallback(async (row: CoupangProductRow) => {
+    if (labelPrint?.state === 'printing') return
+    const account = getCurrentLabelAccount()
+    if (!account) { alert('로그인 정보가 없습니다. 다시 로그인해 주세요.'); return }
+    if (labelDoneTimerRef.current != null) { window.clearTimeout(labelDoneTimerRef.current); labelDoneTimerRef.current = null }
+    setLabelPrint({ optionId: row.option_id, state: 'printing' })
+    let done = false
+    try {
+      const { items } = await buildLabelItems([row])
+      if (items.length === 0) { alert('바코드가 없어 라벨을 출력할 수 없습니다.'); return }
+      // 인쇄 직전 값으로 다시 확인 (단추 잠금은 목록을 읽을 때의 값이다)
+      const blocked = labelItemBlockReason(items[0])
+      if (blocked) { alert(`${blocked}.\n${LABEL_INFO_HINT}.`); return }
+      const result = await quickPrintLabels({ items, accountId: account.id, labelType: QUICK_LABEL_TYPE, printedBy: account.username })
+      if (result.success) { done = true; return }
+      alert(printErrorText(QUICK_LABEL_TYPE, result))
+      if (result.errorKey && LABEL_SETUP_ERRORS.has(result.errorKey)) setLabelItems(items)
+    } catch (err) {
+      alert(`라벨 정보를 조회하지 못했습니다: ${loadErrorMessage(err)}`)
+    } finally {
+      if (done) {
+        setLabelPrint({ optionId: row.option_id, state: 'done' })
+        labelDoneTimerRef.current = window.setTimeout(() => { labelDoneTimerRef.current = null; setLabelPrint(null) }, LABEL_DONE_FLASH_MS)
+      } else {
+        setLabelPrint(null)
+      }
     }
-    setLabelItems(items)
-  }, [selectedRows, userId])
+  }, [labelPrint, buildLabelItems])
+
+  useEffect(() => () => {
+    if (labelDoneTimerRef.current != null) window.clearTimeout(labelDoneTimerRef.current)
+  }, [])
 
   // ══════════════════════════════════════════════════════════════
   // 상세 패널
@@ -655,7 +828,7 @@ export function useCoupangManagement() {
   return {
     userId,
     // 조회
-    filters, searchInput, setSearchInput, setChannel, setSales, setApproval, setSearchField, submitSearch, clearSearch,
+    filters, searchInput, setSearchInput, searchFieldInput, setSearchFieldInput, setChannel, setSales, setApproval, submitSearch, clearSearch,
     rows, groups, loading, loadError, salesCounts, syncSummary, reload,
     // 페이지 (상품 단위 · 이전/다음)
     page, productsPerPage: PRODUCTS_PER_PAGE, hasNextPage: !!nextCursor, hasPrevPage: page > 1,
@@ -669,12 +842,12 @@ export function useCoupangManagement() {
     runListSync, openDetailSync, detailScope, closeDetailScope, confirmDetailScope, runDetailForProduct, runStatusCheck,
     // 변경
     changeKind, openChange, closeChange, applyChange, applyInline,
-    // 분류 · 비고 · 삭제
-    changePackageType, noteEditing, startNote, setNoteValue, commitNote,
-    classifyOpen, setClassifyOpen, submitClassify, deleteRow,
+    // 분류 · 비고
+    noteEditing, startNote, setNoteValue, commitNote,
+    classifyOpen, setClassifyOpen, submitClassify,
     // 엑셀 · 라벨
     excelUpload, uploadPriceExcel, uploadClassify, excelClassifyResult, setExcelClassifyResult, exportExcel,
-    labelItems, setLabelItems, printLabels,
+    labelItems, setLabelItems, printLabels, labelPrint, printLabelNow, labelStateOf,
     // 상세 패널
     detailItemId, setDetailItemId, detailGroup,
   }

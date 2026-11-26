@@ -3,6 +3,7 @@
    - [정보] 탭: 저장된 행(si_coupang_items)으로 바로 그리고, 상태 변경 이력만 쿠팡 API 로 받는다
    - [수정] 탭: 쿠팡 최신 상세를 받아 배송·반품(즉시) · 상품 정보·옵션(재승인)을 고친다
      (CoupangProductEditForm — 탭을 열 때만 쿠팡을 부른다)
+   - [라벨] 탭: 바코드 있는 옵션의 라벨 정보(혼용률 · 권장연령)를 보고 고친다 (CoupangProductLabelTab — 탭을 열 때만 읽는다)
    ================================================================ */
 
 import React, { useEffect, useState } from 'react'
@@ -13,6 +14,7 @@ import { isCompositionNoticeName } from '../../services/coupangNotices'
 import { num, won, deliveryChargeLabel, shortDateTime } from './format'
 import CoupangProductEditForm from './CoupangProductEditForm'
 import { useCoupangProductEdit } from './useCoupangProductEdit'
+import CoupangProductLabelTab from './CoupangProductLabelTab'
 
 interface Props {
   group: CoupangProductGroup
@@ -24,7 +26,7 @@ interface Props {
   onChanged: () => void
 }
 
-type PanelTab = 'info' | 'edit'
+type PanelTab = 'info' | 'edit' | 'label'
 
 /** [수정] 탭 — 이 컴포넌트가 그려질 때만 쿠팡 최신 상세를 받는다 */
 const EditTab: React.FC<{ userId: string; itemId: string; onChanged: () => void }> = ({ userId, itemId, onChanged }) => {
@@ -81,7 +83,7 @@ const CoupangProductDetailPanel: React.FC<Props> = ({ group, userId, busy, onClo
   return (
     <>
       <div className="cp-panel-overlay" onClick={onClose} aria-hidden="true" />
-      <aside className={`cp-panel${tab === 'edit' ? ' cp-panel-wide' : ''}`} role="dialog" aria-label="상품 상세">
+      <aside className={`cp-panel${tab === 'info' ? '' : ' cp-panel-wide'}`} role="dialog" aria-label="상품 상세">
         <header className="cp-panel-head">
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6, minWidth: 0 }}>
             <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
@@ -112,11 +114,16 @@ const CoupangProductDetailPanel: React.FC<Props> = ({ group, userId, busy, onClo
         <div className="cp-panel-tabs" role="tablist">
           <button type="button" role="tab" aria-selected={tab === 'info'} className={tab === 'info' ? 'is-active' : ''} onClick={() => setTab('info')}>정보</button>
           <button type="button" role="tab" aria-selected={tab === 'edit'} className={tab === 'edit' ? 'is-active' : ''} onClick={() => setTab('edit')}>수정</button>
+          <button type="button" role="tab" aria-selected={tab === 'label'} className={tab === 'label' ? 'is-active' : ''} onClick={() => setTab('label')}>라벨</button>
         </div>
 
         {tab === 'edit' ? (
           <div className="cp-panel-body">
             <EditTab userId={userId} itemId={group.itemId} onChanged={onChanged} />
+          </div>
+        ) : tab === 'label' ? (
+          <div className="cp-panel-body">
+            <CoupangProductLabelTab userId={userId} itemId={group.itemId} onChanged={onChanged} />
           </div>
         ) : (
         <div className="cp-panel-body">

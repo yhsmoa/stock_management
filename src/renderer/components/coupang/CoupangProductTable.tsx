@@ -4,11 +4,15 @@
    - 상품은 기본으로 접혀 있고, 머리줄을 누르면 옵션이 펼쳐진다 (옵션은 옵션명 순 — 훅에서 정렬).
      접힌 상태에서도 머리줄에 조건에 맞는 옵션 수 · 가격 범위 · 재고 합을 보여 준다.
    - 머리줄의 "옵션 N개 · 판매중 M" 은 조건과 무관한 상품 전체 옵션 기준(summary)
+   - 표 머리 첫 칸 = 모두 펼치기 / 모두 접기 (전부 펼쳐져 있으면 접기)
+   - 옵션 줄 '라벨' 칸 🖨 = 모달 없이 지금 라벨 설정대로 라벨 스티커 1장.
+     바코드나 라벨 정보(성인 = 혼용률, 키즈 = 혼용률 + 권장연령)가 없는 옵션은 흑백으로 잠긴다
+     (대상 · 사유는 labelState — 훅의 labelStateOf). 키즈 옵션은 옵션명 옆에 '키즈' 표시
    ================================================================ */
 
 import React, { useState } from 'react'
 import type { CoupangProductGroup, CoupangProductRow } from '../../types/coupangProduct'
-import { PACKAGE_TYPE_OPTIONS, productKind, rowChannel } from '../../types/coupangProduct'
+import { productKind, rowChannel } from '../../types/coupangProduct'
 import { won, num, relativeTime } from './format'
 import CoupangInlineCell from './CoupangInlineCell'
 import { inlineEditBlock, type InlineField } from './editRules'
@@ -22,8 +26,6 @@ interface Props {
   // 페이지 (상품 단위 · 이전/다음)
   page: number
   productsPerPage: number
-  /** 지금 조건에 맞는 옵션 수 (판매상태 칩 건수에서). 아직 모르면 null */
-  optionCount: number | null
   hasPrev: boolean
   hasNext: boolean
   onPrev: () => void
@@ -41,11 +43,14 @@ interface Props {
   onInline: (row: CoupangProductRow, field: InlineField, value?: number) => Promise<void>
   onOpenDetail: (itemId: string) => void
   onFetchDetail: (itemId: string) => void
-  onPackageType: (optionId: string, value: string) => void
+  /** 옵션 줄 🖨 진행 표시 — 인쇄 중 / 방금 보냄 */
+  labelPrint: { optionId: string; state: 'printing' | 'done' } | null
+  onPrintLabel: (row: CoupangProductRow) => void
+  /** 옵션 줄의 라벨 상태 — 성인/키즈(바코드가 없으면 null) · 🖨 를 누를 수 없는 사유 */
+  labelState: (row: CoupangProductRow) => { audience: 'adult' | 'kids' | null; blockReason: string | null }
   onStartNote: (row: CoupangProductRow) => void
   onNoteValue: (value: string) => void
   onCommitNote: () => void
-  onDelete: (optionId: string) => void
 }
 
 // ── 아이콘 ────────────────────────────────────────────────────────
@@ -62,9 +67,10 @@ const PanelIcon = () => (
     <rect x="3" y="4" width="18" height="16" rx="2" /><path d="M14 4v16" />
   </svg>
 )
-const TrashIcon = () => (
+/** 모두 펼치기(아래로 두 겹) / 모두 접기(위로 두 겹) */
+const ExpandAllIcon = ({ open }: { open: boolean }) => (
   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
-    <path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3" />
+    {open ? <path d="M6 11l6-6 6 6M6 19l6-6 6 6" /> : <path d="M6 5l6 6 6-6M6 13l6 6 6-6" />}
   </svg>
 )
 
@@ -139,41 +145,40 @@ function isInteractive(target: EventTarget | null): boolean {
 
 const CoupangProductTable: React.FC<Props> = ({
   groups, loading, error, selected, noteEditing,
-  page, productsPerPage, optionCount, hasPrev, hasNext, onPrev, onNext, onFirst,
+  page, productsPerPage, hasPrev, hasNext, onPrev, onNext, onFirst,
   expanded, onToggleExpand, onExpandAll, onCollapseAll,
   onToggleOption, onToggleRows, onInline, onOpenDetail, onFetchDetail,
-  onPackageType, onStartNote, onNoteValue, onCommitNote, onDelete,
+  labelPrint, onPrintLabel, labelState, onStartNote, onNoteValue, onCommitNote,
 }) => {
-  const openCount = groups.filter((g) => expanded.has(g.itemId)).length
+  const allOpen = groups.length > 0 && groups.every((g) => expanded.has(g.itemId))
+  const expandAllLabel = allOpen ? '모두 접기' : '모두 펼치기'
 
   return (
     <>
-      {/* ── 목록 도구 막대 — 펼치기 / 접기 ── */}
-      <div className="cp-list-toolbar">
-        <div className="cp-num">
-          {page}페이지 · 상품 {num(groups.length)}개
-          {optionCount != null && ` · 조건에 맞는 옵션 전체 ${num(optionCount)}개`}
-        </div>
-        <div className="cp-list-toolbar-actions">
-          <button type="button" className="cp-btn cp-btn-xs" disabled={groups.length === 0 || openCount === groups.length} onClick={onExpandAll}>모두 펼치기</button>
-          <button type="button" className="cp-btn cp-btn-xs" disabled={openCount === 0} onClick={onCollapseAll}>모두 접기</button>
-        </div>
-      </div>
-
-      <div className="cp-list">
+      <div className={`cp-list${loading && groups.length > 0 ? ' is-loading' : ''}`} aria-busy={loading}>
         <div className="cp-list-inner">
           <div className="cp-grid cp-list-head" role="row">
-            <div />
+            <div>
+              <button
+                type="button"
+                className="cp-expand-all-btn"
+                disabled={groups.length === 0}
+                aria-label={expandAllLabel}
+                title={expandAllLabel}
+                onClick={allOpen ? onCollapseAll : onExpandAll}
+              >
+                <ExpandAllIcon open={allOpen} />
+              </button>
+            </div>
             <div>옵션명</div>
             <div>옵션 ID</div>
             <div className="cp-right">판매가 / 기준가</div>
             <div className="cp-right">재고</div>
             <div>판매상태</div>
             <div>바코드 · 상품코드</div>
-            <div>분류</div>
+            <div className="cp-center">라벨</div>
             <div>비고</div>
             <div className="cp-right">상태 확인</div>
-            <div />
           </div>
 
           {error && <div className="cp-list-empty" style={{ color: '#B91C1C' }}>{error}</div>}
@@ -266,6 +271,14 @@ const CoupangProductTable: React.FC<Props> = ({
                   const checkedAt = row.status_checked_at && row.excel_synced_at
                     ? (row.status_checked_at > row.excel_synced_at ? row.status_checked_at : row.excel_synced_at)
                     : row.status_checked_at ?? row.excel_synced_at
+                  const printState = labelPrint?.optionId === row.option_id ? labelPrint.state : null
+                  const rowLabel = labelState(row)
+                  const labelBlocked = rowLabel.blockReason
+                  const labelTitle = labelBlocked
+                    ? labelBlocked
+                    : printState === 'printing' ? '라벨을 보내는 중…'
+                      : printState === 'done' ? '라벨 1장을 프린터로 보냈습니다'
+                        : `${rowLabel.audience === 'kids' ? '키즈' : '성인'} 라벨 스티커 1장 바로 출력 (지금 라벨 설정대로)`
                   return (
                     <div key={row.option_id} className={`cp-grid cp-option${checked ? ' is-selected' : ''}`} role="row">
                       <input
@@ -278,6 +291,7 @@ const CoupangProductTable: React.FC<Props> = ({
                       <div className="cp-option-name">
                         <span title={row.option_name ?? ''}>{row.option_name ?? '—'}</span>
                         <span className={`cp-badge cp-badge-sm ${ch === 'RG' ? 'cp-badge-rg' : 'cp-badge-mp'}`}>{ch === 'RG' ? '로켓' : '일반'}</span>
+                        {rowLabel.audience === 'kids' && <span className="cp-badge cp-badge-sm cp-badge-kids" title="키즈 라벨 양식으로 출력됩니다 (혼용률 + 권장연령 필요)">키즈</span>}
                       </div>
                       <div className="cp-mono">{row.option_id}</div>
                       <div className="cp-right cp-num">
@@ -314,16 +328,17 @@ const CoupangProductTable: React.FC<Props> = ({
                         <div className="cp-mono cp-ellipsis" title={row.barcode ?? ''}>{row.barcode || '—'}</div>
                         <div className="cp-ellipsis" style={{ color: '#6B7280' }} title={row.item_code ?? ''}>{row.item_code || '—'}</div>
                       </div>
-                      <div>
-                        <select
-                          className="cp-package-select"
-                          value={row.package_type ?? ''}
-                          aria-label="분류"
-                          onChange={(e) => onPackageType(row.option_id, e.target.value)}
+                      <div className="cp-center">
+                        <button
+                          type="button"
+                          className={`cp-label-btn${printState === 'done' ? ' is-done' : ''}`}
+                          disabled={!!labelBlocked || labelPrint?.state === 'printing'}
+                          aria-label={`${row.option_name ?? row.option_id} 라벨 출력`}
+                          title={labelTitle}
+                          onClick={() => onPrintLabel(row)}
                         >
-                          {!row.package_type && <option value="">—</option>}
-                          {PACKAGE_TYPE_OPTIONS.map((opt) => <option key={opt} value={opt}>{opt}</option>)}
-                        </select>
+                          {printState === 'printing' ? '…' : printState === 'done' ? '✓' : '🖨️'}
+                        </button>
                       </div>
                       <div onClick={() => { if (!editing) onStartNote(row) }}>
                         {editing ? (
@@ -341,9 +356,6 @@ const CoupangProductTable: React.FC<Props> = ({
                         )}
                       </div>
                       <div className="cp-checked-at" title={checkedAt ?? ''}>{relativeTime(checkedAt)}</div>
-                      <div className="cp-row-menu">
-                        <button type="button" className="cp-row-delete" aria-label="행 삭제" onClick={() => onDelete(row.option_id)}><TrashIcon /></button>
-                      </div>
                     </div>
                   )
                 })}

@@ -158,6 +158,100 @@ function drawLine(
   }
 }
 
+// ── 모델명 배지 (TextElement.model_badge) ──
+//   모델명 = 첫 콤마 앞부분의 마지막 단어가 영문+숫자 조합 (아이엠몽 로켓 modelBadge 와 같은 규칙). 없으면 null
+export function findModelBadge(text: string): string | null {
+  const s = String(text || '');
+  const ci = s.indexOf(',');
+  if (ci <= 0) return null;
+  const m = s.slice(0, ci).match(/(\S+)\s*$/);
+  if (!m) return null;
+  const t = m[1];
+  return /^[A-Za-z0-9]+$/.test(t) && /[A-Za-z]/.test(t) && /\d/.test(t) ? t : null;
+}
+interface Badge { token: string; padPx: number }
+/** 배지 좌우 여백 (dots) — 글자 크기에 비례 */
+function badgePad(fontPx: number): number {
+  return Math.max(2, Math.round(fontPx * 0.18));
+}
+/** 줄 안에서 배지 단어 위치 (앞은 줄 시작 또는 공백, 뒤는 영숫자가 아닌 글자 또는 줄 끝). 없으면 -1 */
+function badgeIndex(line: string, token: string): number {
+  let from = 0;
+  while (true) {
+    const i = line.indexOf(token, from);
+    if (i < 0) return -1;
+    const before = i === 0 ? ' ' : line[i - 1];
+    const after = line[i + token.length] ?? ' ';
+    if (/\s/.test(before) && !/[A-Za-z0-9]/.test(after)) return i;
+    from = i + 1;
+  }
+}
+/** 배지 여백까지 포함한 줄 폭 */
+/** 배지 안 글자는 굵게 — 지금 글꼴 문자열에 bold 를 넣는다 (이미 굵으면 그대로) */
+function boldFont(font: string): string {
+  return /(^|\s)(bold|[6-9]00)\s/.test(font) ? font : font.replace(/^(italic\s+)?/, (m) => `${m}bold `);
+}
+/** 배지 안 모델명의 폭 (굵은 글씨 기준) */
+function badgeTokenWidth(ctx: CanvasRenderingContext2D, token: string, lsPx: number): number {
+  const prev = ctx.font;
+  ctx.font = boldFont(prev);
+  const w = measureLine(ctx, token, lsPx);
+  ctx.font = prev;
+  return w;
+}
+function measureLineB(ctx: CanvasRenderingContext2D, text: string, lsPx: number, badge?: Badge | null): number {
+  const w = measureLine(ctx, text, lsPx);
+  if (!badge || badgeIndex(text, badge.token) < 0) return w;
+  // 모델명 부분만 굵은 글씨 폭으로 바꾸고 배지 좌우 여백을 더한다
+  return w - measureLine(ctx, badge.token, lsPx) + badgeTokenWidth(ctx, badge.token, lsPx) + badge.padPx * 2;
+}
+/** 배지가 있는 줄 그리기 — 앞 글 · [검정 둥근 상자 + 흰 모델명] · 뒤 글 */
+function drawLineB(
+  ctx: CanvasRenderingContext2D,
+  text: string,
+  x: number,
+  y: number,
+  lsPx: number,
+  fontPx: number,
+  invert: boolean,
+  badge?: Badge | null
+): void {
+  const i = badge ? badgeIndex(text, badge.token) : -1;
+  if (!badge || i < 0) {
+    drawLine(ctx, text, x, y, lsPx);
+    return;
+  }
+  const before = text.slice(0, i);
+  const tok = badge.token;
+  const after = text.slice(i + tok.length);
+  const fg = invert ? '#fff' : '#000';
+  const bg = invert ? '#000' : '#fff';
+  if (before) drawLine(ctx, before, x, y, lsPx);
+  const bx = x + (before ? measureLine(ctx, before, lsPx) + lsPx : 0);
+  const tw = badgeTokenWidth(ctx, tok, lsPx);
+  const top = y - Math.round(fontPx * 0.08);
+  const h = Math.round(fontPx * 1.18);
+  const w = tw + badge.padPx * 2;
+  // 검정 둥근 상자 + 굵은 흰 글씨 (2026-10-21 — 테두리만으로 바꿨다가 현장 의견으로 되돌림. 흰 글씨는 굵게 해 1비트 인쇄에서도 또렷하게)
+  const r = Math.max(1, Math.round(fontPx * 0.2));
+  ctx.fillStyle = fg;
+  const anyCtx = ctx as CanvasRenderingContext2D & { roundRect?: (x: number, y: number, w: number, h: number, r: number) => void };
+  if (typeof anyCtx.roundRect === 'function') {
+    ctx.beginPath();
+    anyCtx.roundRect(bx, top, w, h, r);
+    ctx.fill();
+  } else {
+    ctx.fillRect(bx, top, w, h);
+  }
+  const prevFont = ctx.font;
+  ctx.font = boldFont(prevFont);
+  ctx.fillStyle = bg;
+  drawLine(ctx, tok, bx + badge.padPx, y, lsPx);
+  ctx.font = prevFont;
+  ctx.fillStyle = fg;
+  if (after) drawLine(ctx, after, bx + w + lsPx, y, lsPx);
+}
+
 /**
  * 자동 줄바꿈 — 인쇄와 미리보기가 "같은 줄 나눔"을 쓰도록 공용으로 노출한다.
  *
@@ -170,13 +264,14 @@ export function wrapTextLines(
   font: string,
   maxWidthPx: number,
   maxLines?: number,
-  letterSpacingPx = 0
+  letterSpacingPx = 0,
+  badge?: Badge | null
 ): string[] {
   const ctx = getMeasureCtx();
   if (!ctx || !text) return text ? [text] : [];
   ctx.font = font;
 
-  const width = (s: string) => measureLine(ctx, s, letterSpacingPx);
+  const width = (s: string) => measureLineB(ctx, s, letterSpacingPx, badge);
   const lines: string[] = [];
 
   for (const paragraph of text.split(/\r?\n/)) {
@@ -295,7 +390,8 @@ function paintLines(
   lsPx: number,
   align: TextAlign,
   vAlign: TextVAlign,
-  invert: boolean
+  invert: boolean,
+  badge?: Badge | null
 ): HTMLCanvasElement | null {
   const canvas = newCanvas(widthPx, heightPx);
   if (!canvas) return null;
@@ -317,7 +413,7 @@ function paintLines(
         : 0;
 
   lines.forEach((line, i) => {
-    const lw = measureLine(ctx, line, lsPx);
+    const lw = measureLineB(ctx, line, lsPx, badge);
     const x =
       align === 'center'
         ? Math.max(0, (widthPx - lw) / 2)
@@ -325,7 +421,7 @@ function paintLines(
           ? Math.max(0, widthPx - lw)
           : 0;
     // 베이스라인 top 기준에서 글꼴 위쪽 여백을 약간 보정
-    drawLine(ctx, line, x, yOffset + i * lineH + Math.round(fontPx * 0.12), lsPx);
+    drawLineB(ctx, line, x, yOffset + i * lineH + Math.round(fontPx * 0.12), lsPx, fontPx, invert, badge);
   });
   return canvas;
 }
@@ -342,14 +438,16 @@ function fitFontPt(
   boxH: number,
   lsPx: number,
   lineGap: number,
-  dpi: number
+  dpi: number,
+  badgeToken: string | null = null
 ): number {
   const minPt = Math.max(1, el.min_pt ?? DEFAULT_MIN_PT);
   let pt = el.size_pt;
   while (pt > minPt) {
     const fontPx = Math.max(1, ptToDots(pt, dpi));
     const lineH = Math.max(1, Math.ceil(fontPx * lineGap));
-    const lines = wrapTextLines(text, fontOf(el, fontPx), maxW, undefined, lsPx);
+    const badge = badgeToken ? { token: badgeToken, padPx: badgePad(fontPx) } : null;
+    const lines = wrapTextLines(text, fontOf(el, fontPx), maxW, undefined, lsPx, badge);
     if (lines.length * lineH <= boxH) return pt;
     pt = Math.round((pt - SHRINK_STEP_PT) * 100) / 100;
   }
@@ -373,6 +471,7 @@ export function rasterText(
   const vAlign = el.v_align ?? 'top';
   const boxMode = isTextBox(el);
   const overflow = el.overflow ?? 'shrink';
+  const badgeToken = el.model_badge ? findModelBadge(text) : null;
 
   const key = [
     'txt',
@@ -392,6 +491,7 @@ export function rasterText(
     el.max_lines ?? 0,
     el.invert ? 1 : 0,
     el.rotate ?? 0,
+    badgeToken ?? '',
   ].join('|');
 
   return cached(key, () => {
@@ -404,17 +504,18 @@ export function rasterText(
       const usedPt =
         overflow === 'clip'
           ? el.size_pt
-          : fitFontPt(el, text, maxW, boxH, lsPx, lineGap, dpi);
+          : fitFontPt(el, text, maxW, boxH, lsPx, lineGap, dpi, badgeToken);
       const fontPx = Math.max(1, ptToDots(usedPt, dpi));
       const font = fontOf(el, fontPx);
       const lineH = Math.max(1, Math.ceil(fontPx * lineGap));
+      const badge = badgeToken ? { token: badgeToken, padPx: badgePad(fontPx) } : null;
 
-      const allLines = wrapTextLines(text, font, maxW, undefined, lsPx);
+      const allLines = wrapTextLines(text, font, maxW, undefined, lsPx, badge);
       const fitLines = Math.floor(boxH / lineH);
       const visible = allLines.slice(0, Math.max(0, fitLines));
 
       const canvas = paintLines(
-        visible, maxW, boxH, fontPx, lineH, font, lsPx, align, vAlign, !!el.invert
+        visible, maxW, boxH, fontPx, lineH, font, lsPx, align, vAlign, !!el.invert, badge
       );
       if (!canvas) return null;
       const out = rotateCanvas(canvas, el.rotate ?? 0);
@@ -435,13 +536,14 @@ export function rasterText(
     const fontPx = Math.max(1, ptToDots(el.size_pt, dpi));
     const font = fontOf(el, fontPx);
     mctx.font = font;
+    const badge = badgeToken ? { token: badgeToken, padPx: badgePad(fontPx) } : null;
 
     const lines = el.wrap
-      ? wrapTextLines(text, font, maxW, el.max_lines, lsPx)
+      ? wrapTextLines(text, font, maxW, el.max_lines, lsPx, badge)
       : text.split(/\r?\n/).slice(0, el.max_lines && el.max_lines > 0 ? el.max_lines : undefined);
     if (lines.length === 0) return null;
 
-    const widest = Math.ceil(Math.max(...lines.map((l) => measureLine(mctx, l, lsPx))));
+    const widest = Math.ceil(Math.max(...lines.map((l) => measureLineB(mctx, l, lsPx, badge))));
     // 정렬이 걸려 있거나 폭을 명시했으면 블록 폭을 기준으로, 아니면 내용 폭에 맞춘다
     const useBlock = !!el.max_w_mm || align !== 'left';
     const widthPx = Math.max(1, useBlock ? maxW : Math.min(widest, maxW));
@@ -449,7 +551,7 @@ export function rasterText(
     const heightPx = Math.max(1, lineH * lines.length);
 
     const canvas = paintLines(
-      lines, widthPx, heightPx, fontPx, lineH, font, lsPx, align, 'top', !!el.invert
+      lines, widthPx, heightPx, fontPx, lineH, font, lsPx, align, 'top', !!el.invert, badge
     );
     if (!canvas) return null;
     const out = rotateCanvas(canvas, el.rotate ?? 0);

@@ -1,5 +1,7 @@
 /* ================================================================
-   상품관리 — 필터 줄: 구분(전체·일반·로켓) · 판매상태 칩 · 승인 · 검색
+   상품관리 — 필터 줄: 구분(전체·일반·로켓) · 판매상태 칩 · 승인 · 지금 목록 요약 · 검색
+   - 검색 기준 · 검색어는 [검색] 을 눌러야 적용된다 (입력 중 값은 searchField · searchInput)
+   - 목록 요약 = 페이지 · 이 페이지 상품 수 · 조건에 맞는 옵션 수 (건수를 아직 못 받았으면 옵션 수는 뺀다)
    ================================================================ */
 
 import React from 'react'
@@ -17,7 +19,13 @@ import { num } from './format'
 interface Props {
   filters: CoupangProductFilters
   counts: SalesCounts | null
+  /** 입력 중인 검색 기준 · 검색어 (적용된 값은 filters) */
+  searchField: SearchField
   searchInput: string
+  // 지금 목록 요약
+  page: number
+  productCount: number
+  loading: boolean
   onChannel: (v: ChannelFilter) => void
   onSales: (v: SalesFilter) => void
   onApproval: (v: ApprovalFilter) => void
@@ -42,7 +50,7 @@ const SALES: { key: SalesFilter; label: string }[] = [
 ]
 
 const CoupangFilterBar: React.FC<Props> = ({
-  filters, counts, searchInput,
+  filters, counts, searchField, searchInput, page, productCount, loading,
   onChannel, onSales, onApproval, onSearchField, onSearchInput, onSubmitSearch, onClearSearch,
 }) => (
   <div className="cp-filter-row">
@@ -84,11 +92,16 @@ const CoupangFilterBar: React.FC<Props> = ({
       >
         승인 대기 · 반려
       </button>
+      <div className="cp-list-info cp-num" aria-live="polite">
+        {loading
+          ? '불러오는 중…'
+          : `${page}페이지 · 상품 ${num(productCount)}${counts ? ` · 옵션 ${num(counts[filters.sales])}` : ''}`}
+      </div>
     </div>
 
     <div className="cp-search">
       <label htmlFor="cp-search-field" style={{ position: 'absolute', width: 1, height: 1, overflow: 'hidden', clip: 'rect(0 0 0 0)' }}>검색 기준</label>
-      <select id="cp-search-field" value={filters.searchField} onChange={(e) => onSearchField(e.target.value as SearchField)}>
+      <select id="cp-search-field" value={searchField} onChange={(e) => onSearchField(e.target.value as SearchField)}>
         {(Object.keys(SEARCH_FIELD_LABELS) as SearchField[]).map((k) => (
           <option key={k} value={k}>{SEARCH_FIELD_LABELS[k]}</option>
         ))}
@@ -96,7 +109,7 @@ const CoupangFilterBar: React.FC<Props> = ({
       <input
         type="search"
         value={searchInput}
-        placeholder={`${SEARCH_FIELD_LABELS[filters.searchField]} 검색`}
+        placeholder={`${SEARCH_FIELD_LABELS[searchField]} 검색`}
         aria-label="검색어"
         onChange={(e) => onSearchInput(e.target.value)}
         onKeyDown={(e) => { if (e.key === 'Enter') onSubmitSearch() }}
