@@ -286,6 +286,11 @@ function orderedAtMs(r: PersonalOrderRow): number {
   return Number.isFinite(t) ? t : 0
 }
 
+/** [바코드 연결] 대상 — 바코드가 빈 주문 줄 */
+function barcodeLinkTargets(rows: PersonalOrderRow[]): PersonalOrderRow[] {
+  return rows.filter((r) => !r.barcode)
+}
+
 // ── 출고준비 배정 (rowKey → 값) ─────────────────────────────────────
 //   형식 · 규칙은 services/outboundPrepService.ts (OutboundAlloc)
 //   boxStr 은 출고엑셀 등록상품명 접두(boxPrefixOf) — 형식을 바꾸면 엑셀이 바뀐다
@@ -514,12 +519,14 @@ export function usePersonalOrder() {
     }
   }, [getUserInfo])
 
-  // ── [업데이트] 핸들러 ─────────────────────────────────────────
-  const handleUpdate = useCallback(async () => {
+  // ── [주문 업데이트] 본문 ─────────────────────────────────────────
+  //   성공하면 다시 읽은 주문 목록, 실패·취소면 null 을 돌려준다.
+  //   성공 뒤 진행 모달을 닫을지는 호출 측이 정한다 — [주문 & 바코드] 는 닫지 않고 바코드 연결로 잇는다.
+  const runOrderUpdate = useCallback(async (): Promise<PersonalOrderRow[] | null> => {
     const { userId, vendorId } = getUserInfo()
     if (!userId || !vendorId) {
       alert('로그인 정보를 확인해 주세요.')
-      return
+      return null
     }
 
     // ── 진행 모달 초기화 ──────────────────────────────────────
@@ -572,7 +579,7 @@ export function usePersonalOrder() {
           updateStep(3, 'error', '사용자 취소')
           setProgressStatus('저장을 취소했습니다. DB 는 변경되지 않았습니다.')
           setTimeout(() => closeProgress(), 1500)
-          return
+          return null
         }
         result = await savePersonalOrders(rows, userId, { forcePrune: true })
       }
@@ -580,7 +587,7 @@ export function usePersonalOrder() {
         updateStep(3, 'error')
         setProgressStatus(`저장 실패: ${result.error}`)
         alert(`저장 실패: ${result.error}`)
-        return
+        return null
       }
       updateStep(
         3,
@@ -656,8 +663,7 @@ export function usePersonalOrder() {
       updateStep(6, 'done')
 
       setProgressStatus(`${result.count}건 업데이트 완료`)
-      // 완료 메시지를 잠깐 보여준 후 자동 닫기
-      setTimeout(() => closeProgress(), 1200)
+      return freshData
     } catch (err: any) {
       console.error('업데이트 실패:', err)
       setProgressSteps((prev) =>
@@ -665,10 +671,16 @@ export function usePersonalOrder() {
       )
       setProgressStatus(`실패: ${err.message}`)
       alert(`업데이트 실패: ${err.message}`)
+      return null
     } finally {
       setUpdating(false)
     }
   }, [getUserInfo, loadFulfillmentData, updateStep, closeProgress])
+
+  // ── [주문 업데이트] 핸들러 — 완료 메시지를 잠깐 보여준 후 자동 닫기 ──
+  const handleUpdate = useCallback(async () => {
+    if (await runOrderUpdate()) setTimeout(() => closeProgress(), 1200)
+  }, [runOrderUpdate, closeProgress])
 
   // ── [주문확인] 핸들러 (결제완료 → 상품준비중) ──────────────────
   const handleAcknowledge = useCallback(async () => {
@@ -1423,15 +1435,16 @@ export function usePersonalOrder() {
   // ── [바코드 연결] 핸들러 ──────────────────────────────────────────
   const [barcodeLoading, setBarcodeLoading] = useState(false)
 
-  const handleBarcodeLink = useCallback(async () => {
+  //   rows 를 받는 이유: [주문 & 바코드] 는 업데이트 직후의 목록으로 돌려야 하는데,
+  //   그 시점의 items 는 아직 업데이트 전 값(클로저)이라 다시 읽은 목록을 직접 넘긴다.
+  const runBarcodeLink = useCallback(async (rows: PersonalOrderRow[]) => {
     const { userId } = getUserInfo()
     if (!userId) {
       alert('로그인 정보를 확인해 주세요.')
       return
     }
 
-    // 바코드 없는 주문만 대상
-    const targets = items.filter((r) => !r.barcode)
+    const targets = barcodeLinkTargets(rows)
     if (targets.length === 0) {
       alert('바코드가 없는 주문이 없습니다.')
       return
@@ -1499,7 +1512,23 @@ export function usePersonalOrder() {
     } finally {
       setBarcodeLoading(false)
     }
-  }, [items, getUserInfo, updateStep, closeProgress])
+  }, [getUserInfo, updateStep, closeProgress])
+
+  const handleBarcodeLink = useCallback(() => runBarcodeLink(items), [items, runBarcodeLink])
+
+  // ── [주문 & 바코드] 핸들러 — [주문 업데이트] → [바코드 연결] 을 차례로 ──
+  //   업데이트가 실패·취소되면 바코드 연결로 넘어가지 않는다.
+  //   업데이트 뒤 바코드가 빈 주문이 없으면 바코드 연결은 건너뛰고 그대로 닫는다.
+  const handleUpdateAndBarcodeLink = useCallback(async () => {
+    const freshData = await runOrderUpdate()
+    if (!freshData) return
+    if (barcodeLinkTargets(freshData).length === 0) {
+      setProgressStatus((prev) => `${prev} · 바코드 연결 대상 없음`)
+      setTimeout(() => closeProgress(), 1200)
+      return
+    }
+    await runBarcodeLink(freshData)
+  }, [runOrderUpdate, runBarcodeLink, closeProgress])
 
   // ── [바코드 재연결 (선택)] 핸들러 ────────────────────────────────
   //   [업데이트] 가 바코드를 보존하게 되면서 잘못 붙은 바코드도 남는다.
@@ -2092,6 +2121,7 @@ export function usePersonalOrder() {
     handleRowClick,
     handleBarcodeLink,
     handleBarcodeRelink,
+    handleUpdateAndBarcodeLink,
     barcodeLoading,
     trackingMap,
     stockMap,

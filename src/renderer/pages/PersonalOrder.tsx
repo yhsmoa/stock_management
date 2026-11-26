@@ -83,6 +83,7 @@ const PersonalOrder: React.FC = () => {
     handleSearchSubmit,
     handleBarcodeLink,
     handleBarcodeRelink,
+    handleUpdateAndBarcodeLink,
     barcodeLoading,
     stockMap,
     refreshStockMap,
@@ -212,8 +213,15 @@ const PersonalOrder: React.FC = () => {
         </div>
 
         <div className="po-toolbar-right">
-          {/* ── [업데이트]: 주문 업데이트 / 바코드 연결 / 송장 업데이트 ── */}
+          {/* ── [업데이트]: 주문 & 바코드 / 주문 업데이트 / 바코드 연결 / 송장 업데이트 ── */}
           <DropdownMenu label="업데이트" align="right">
+            {/* 주문 & 바코드 = [주문 업데이트] → [바코드 연결] 을 차례로 */}
+            <DropdownItem
+              onClick={handleUpdateAndBarcodeLink}
+              disabled={updating || barcodeLoading}
+            >
+              주문 &amp; 바코드
+            </DropdownItem>
             <DropdownItem
               onClick={handleUpdate}
               disabled={updating}
